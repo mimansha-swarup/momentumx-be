@@ -1,13 +1,9 @@
-import { NextFunction, Request } from "express";
-import {
-  CustomResponse,
-  sendErrorProps,
-  sendSuccessProps,
-} from "../types/root";
+import { NextFunction, Request, Response } from "express";
+import { sendErrorProps, sendSuccessProps } from "../types/customTypes";
 
 export const responseFormatter = (
   _req: Request,
-  res: CustomResponse,
+  res: Response,
   next: NextFunction
 ) => {
   res.sendSuccess = ({
