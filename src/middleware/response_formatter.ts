@@ -8,7 +8,7 @@ export const responseFormatter = (
 ) => {
   res.sendSuccess = ({
     message = "",
-    statusCode,
+    statusCode = 200,
     meta,
     data,
   }: sendSuccessProps) => {

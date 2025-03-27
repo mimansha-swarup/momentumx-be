@@ -1,8 +1,8 @@
-import { Response } from "express";
+import { Response, Request } from "express";
 
 export interface sendSuccessProps {
-  message: string;
-  statusCode: number;
+  message?: string;
+  statusCode?: number;
   meta?: Record<string, unknown>;
   data?: Record<string, unknown>;
 }
@@ -18,9 +18,9 @@ declare global {
       sendSuccess: (props: sendSuccessProps) => void;
       sendError: (props: sendErrorProps) => void;
     }
+
+    interface Request {
+      userId?: string;
+    }
   }
 }
-// export interface CustomResponse extends Response {
-//   sendSuccess: (props: sendSuccessProps) => void;
-//   sendError: (props: sendErrorProps) => void;
-// }

@@ -2,7 +2,9 @@
   "compilerOptions": {
     "typeRoots": ["src/types", "./node_modules/@types"],
     "types": ["node", "express"],
-    "esModuleInterop": true
+        "resolveJsonModule": true,
+        "esModuleInterop": true
+     
   },
   "include": ["src", "src/types",]
   

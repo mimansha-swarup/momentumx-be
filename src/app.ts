@@ -5,6 +5,7 @@ import { responseFormatter } from "./middleware/response_formatter";
 import loggerMiddleware from "./middleware/logger_middleware";
 import rateLimiter from "./middleware/rate_limit";
 import rootRouter from "./routes";
+import { onCreateUser } from "./utlils/firebase";
 
 const app = express();
 
