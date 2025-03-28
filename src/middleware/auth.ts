@@ -21,7 +21,7 @@ export const authMiddleware = (
     .auth()
     .verifyIdToken(token)
     .then((decodedToken) => {
-      decodedToken.uid;
+      req.userId = decodedToken.uid;
       next();
     })
     .catch(() => {
