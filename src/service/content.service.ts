@@ -26,7 +26,7 @@ class ContentService {
         .replace("{niche}", userData.niche)
         .replace("{websiteContent}", userData.websiteContent);
       const result = await generateContent(TOPIC_SYSTEM_PROMPT, userPrompt);
-      return result;
+      return result?.response?.candidates?.[0]?.content?.parts?.[0]?.text;
     } catch (error) {
       console.log("error", error);
     }
@@ -41,7 +41,7 @@ class ContentService {
       console.log("error", error);
     }
     return {};
-  }
+  };
 }
 
 export default ContentService;
