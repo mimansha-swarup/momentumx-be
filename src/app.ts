@@ -10,7 +10,7 @@ import { onCreateUser } from "./utlils/firebase";
 const app = express();
 
 // app.use(authMiddleware);
-// app.use(cors());
+app.use(cors());
 app.use(express.json());
 app.use(rateLimiter);
 
