@@ -30,7 +30,7 @@ class UserController {
 
       res.sendSuccess({
         message: "Fetched onboarding data successfully",
-        data: { payload },
+        data: { ...(payload ?? {}) },
       });
     } catch (e) {
       next(e);
