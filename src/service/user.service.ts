@@ -11,14 +11,15 @@ class UserService {
     try {
       const record = { ...data, websiteContent: "" };
 
-      const websiteContent = await this.repo.getWebsiteContent(data.website);
-      console.log('websiteContent: ', websiteContent);
+      if (data.website) {
+        const websiteContent = await this.repo.getWebsiteContent(data.website);
+        console.log("websiteContent: ", websiteContent);
 
-      record.websiteContent = websiteContent;
+        record.websiteContent = websiteContent;
+      }
 
-      
-      // this.repo.update(userId, data);
-      return record
+      this.repo.update(userId, record);
+      return record;
     } catch (error) {
       console.log("error", error);
     }
@@ -38,7 +39,7 @@ class UserService {
       const record = { ...data, websiteContent: "" };
 
       const websiteContent = await this.repo.getWebsiteContent(data.website);
-      console.log('websiteContent: ', websiteContent);
+      console.log("websiteContent: ", websiteContent);
 
       record.websiteContent = websiteContent;
 
@@ -47,8 +48,7 @@ class UserService {
     } catch (error) {
       console.log("error", error);
     }
-  }
-
+  };
 }
 
 export default UserService;

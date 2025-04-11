@@ -10,21 +10,19 @@ const userRepository = new UserRepository();
 const userService = new UserService(userRepository);
 const userController = new UserController(userService);
 
+router.use(authMiddleware)
 router.patch(
   "/onboarding",
-  // authMiddleware,
   userController.saveOnboarding
 );
 
 router.get(
   "/profile",
-  // authMiddleware,
   userController.getProfile
 );
 
 router.patch(
   "/profile",
-  // authMiddleware,
   userController.updateProfile
 );
 
