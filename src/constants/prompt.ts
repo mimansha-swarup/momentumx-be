@@ -81,6 +81,7 @@ know what kind of titles are working  on youtube right now - they are from diffe
 
 Ensure that the topics are engaging, follow viral trends in {niche}, and are optimized for maximum reach. The topics should align with my brand’s services, appeal to my audience, and differentiate {brandName} from its competitors.
 
+also generate upto 10 topics
 here is Website Content:
 '''{websiteContent}'''
 

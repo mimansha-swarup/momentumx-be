@@ -9,38 +9,50 @@ import { UserRecord } from "firebase-admin/auth";
 const userService = new UserService(new UserRepository());
 class ContentService {
   private repo: ContentRepository;
-  constructor(repo: ContentRepository) {
+  private userRepo: UserRepository;
+  constructor(repo: ContentRepository, userRepo: UserRepository) {
     this.repo = repo;
+    this.userRepo = userRepo;
   }
-  generateTopics = async (uid, userRecord) => {
-    const userData = await userService.createOnboardingData(`123`, userRecord);
-    console.log("userData: ", userData);
+  generateTopics = async (userId: string) => {
     try {
+      const userRecord = await this.userRepo.get(userId);
       let userPrompt = TOPIC_USER_PROMPT.replace(
         "{brandName}",
-        userData.brandName
+        userRecord?.brandName
       )
-        .replace("{BRAND_VOICE}", userData.brandName)
-        .replace("{targetAudience}", userData.targetAudience)
-        .replace("competitors}", userData.competitors.join(", "))
-        .replace("{niche}", userData.niche)
-        .replace("{websiteContent}", userData.websiteContent);
+        .replace("{BRAND_VOICE}", userRecord?.brandName)
+        .replace("{targetAudience}", userRecord?.targetAudience)
+        .replace("competitors}", userRecord?.competitors.join(", "))
+        .replace("{niche}", userRecord?.niche)
+        .replace("{websiteContent}", userRecord?.websiteContent);
       const result = await generateContent(TOPIC_SYSTEM_PROMPT, userPrompt);
-      return result?.response?.candidates?.[0]?.content?.parts?.[0]?.text;
+      return JSON.parse(
+        result?.response?.candidates?.[0]?.content?.parts?.[0]?.text
+      );
+    } catch (error) {
+      console.log("error", error);
+    }
+    return "";
+  };
+
+  getUsersTopic = async (userId: string) => {
+    try {
+      const doc = await this.repo.getTopicsByUid(userId);
+      return doc?.data?.map((data) => ({
+        ...data,
+        createdAt: data?.createdAt?.toDate(),
+      }));
     } catch (error) {
       console.log("error", error);
     }
     return {};
   };
 
-  getUsersTopic = async (userId: string) => {
+  saveTopics = (userId: string, data: unknown[]) => {
     try {
-      const doc = await this.repo.getTopicsByUid(userId);
-      return doc;
-    } catch (error) {
-      console.log("error", error);
-    }
-    return {};
+      this.repo.saveTopics(userId, data);
+    } catch (error) {}
   };
 }
 

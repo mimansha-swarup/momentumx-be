@@ -1,6 +1,6 @@
 import { Firestore } from "firebase-admin/firestore";
 import { COLLECTIONS } from "../constants/collection";
-import { db } from "../config/firebase";
+import { db, firebase } from "../config/firebase";
 
 class ContentRepository {
   private collection: `${COLLECTIONS}`;
@@ -20,22 +20,26 @@ class ContentRepository {
 
   getTopicsByUid = async (userId: string) => {
     try {
-      const doc = await this.db
-        .collection(this.collection)
-        .where("", "==", userId)  // get this logic fixed
-        .get();
+      const doc = await this.db.collection(this.collection).doc(userId).get();
+      // .where("", "==", userId) // get this logic fixed
+      // .get();
       return doc.data();
     } catch (error) {
       console.log("error", error);
     }
   };
 
-  saveTopics = async (userId: string, data: unknown) => {
+  saveTopics = async (userId: string, data: unknown[]) => {
     try {
       await this.db
         .collection(this.collection)
         .doc(userId)
-        .set(data as Record<string, unknown>);
+        .set(
+          {
+            data: firebase.firestore.FieldValue.arrayUnion(...data),
+          },
+          { merge: true }
+        );
     } catch (error) {
       console.log("error", error);
     }

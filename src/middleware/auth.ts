@@ -11,7 +11,7 @@ export const authMiddleware = (
     return;
   }
   const [bearer, token] = req.headers.authorization?.split(" ");
-  console.log("token: ", token);
+
 
   if (bearer !== "Bearer" || !token) {
     res.status(401).send("Unauthorized");

@@ -39,7 +39,6 @@ class UserService {
       const record = { ...data, websiteContent: "" };
 
       const websiteContent = await this.repo.getWebsiteContent(data.website);
-      console.log("websiteContent: ", websiteContent);
 
       record.websiteContent = websiteContent;
 
