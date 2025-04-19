@@ -11,12 +11,14 @@ export const responseFormatter = (
     statusCode = 200,
     meta,
     data,
+    warning = "",
   }: sendSuccessProps) => {
     res.status(statusCode).json({
       success: true,
       data,
       message,
       meta,
+      warning,
     });
   };
 

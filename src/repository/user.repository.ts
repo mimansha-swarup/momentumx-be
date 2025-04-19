@@ -14,7 +14,7 @@ class UserRepository {
 
   update = async (userId: string, data: unknown) => {
     try {
-      console.log("userId: ", userId);
+
       if (!userId) {
         throw new Error("userId is required");
       }
@@ -42,7 +42,6 @@ class UserRepository {
     try {
       const res = await fetch(url);
       const html = await res.text();
-      console.log("html: ", html);
 
       return extractTextFromHTML(html);
     } catch (error) {
