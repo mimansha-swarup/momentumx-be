@@ -4,14 +4,16 @@ import { db, firebase } from "../config/firebase";
 
 class ContentRepository {
   private collection: `${COLLECTIONS}`;
+  private script_collection: `${COLLECTIONS}`;
   private db: Firestore;
   constructor() {
     this.db = db;
     this.collection = COLLECTIONS.TOPICS;
+    this.script_collection = COLLECTIONS.SCRIPTS;
   }
-  getTopics = async (userId: string) => {
+  getTopics = async (topicId: string) => {
     try {
-      const doc = await this.db.collection(this.collection).doc(userId).get();
+      const doc = await this.db.collection(this.collection).doc(topicId).get();
       return doc.data();
     } catch (error) {
       console.log("error", error);
@@ -20,28 +22,82 @@ class ContentRepository {
 
   getTopicsByUid = async (userId: string) => {
     try {
-      const doc = await this.db.collection(this.collection).doc(userId).get();
-      // .where("", "==", userId) // get this logic fixed
-      // .get();
-      return doc.data();
+      const snapshot = await this.db
+        .collection(this.collection)
+        .where("createdBy", "==", userId)
+        .orderBy("createdAt", "desc")
+        .get();
+      const docs = snapshot.docs.map((doc) => {
+        const data = doc.data();
+        return {
+          ...data,
+          id: doc.id,
+          createdAt: data.createdAt?.toDate(),
+        };
+      });
+
+      return docs;
+    } catch (error) {
+      console.log("error in repo", error);
+    }
+  };
+
+  batchSaveTopics = async (dataList: unknown[]) => {
+    const batch = db.batch();
+    const collectionRef = db.collection(this.collection);
+    dataList?.forEach((data) => {
+      const newDocRef = collectionRef.doc();
+      batch.set(newDocRef, { ...(data as {}), id: newDocRef.id });
+    });
+    try {
+      await batch.commit();
+      console.log("✅ Successfully added all documents");
+    } catch (err) {
+      console.error("❌ Failed to batch create documents", err);
+      throw err;
+    }
+  };
+
+  updateTopic = async (topicId: string, data: Record<string, unknown>) => {
+    try {
+      await this.db
+        .collection(this.collection)
+        .doc(topicId)
+        .update(data, );
+    } catch (error) {
+      console.log("error", error);
+    }
+  };
+  saveScript = async (scriptId: string, data: unknown) => {
+    try {
+      await this.db
+        .collection(this.script_collection)
+        .doc(scriptId)
+        .set(data, { merge: true });
     } catch (error) {
       console.log("error", error);
     }
   };
 
-  saveTopics = async (userId: string, data: unknown[]) => {
+  getScriptsByUid = async (userId: string) => {
     try {
-      await this.db
-        .collection(this.collection)
-        .doc(userId)
-        .set(
-          {
-            data: firebase.firestore.FieldValue.arrayUnion(...data),
-          },
-          { merge: true }
-        );
+      const snapshot = await this.db
+        .collection(this.script_collection)
+        .where("createdBy", "==", userId)
+        .orderBy("createdAt", "desc")
+        .get();
+      const docs = snapshot.docs.map((doc) => {
+        const data = doc.data();
+        return {
+          ...data,
+          id: doc.id,
+          createdAt: data.createdAt?.toDate(),
+        };
+      });
+
+      return docs;
     } catch (error) {
-      console.log("error", error);
+      console.log("error in repo", error);
     }
   };
 }

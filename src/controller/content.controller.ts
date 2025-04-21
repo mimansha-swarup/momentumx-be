@@ -1,7 +1,7 @@
 import { NextFunction, Request, Response } from "express";
 import ContentService from "../service/content.service";
-import UserService from "../service/user.service";
-import { randomUUID } from "crypto";
+import { formatGeneratedScript, formatGeneratedTitle } from "../utlils/content";
+import { firebase } from "../config/firebase";
 
 class ContentController {
   private service: ContentService;
@@ -12,22 +12,26 @@ class ContentController {
 
   generateTopics = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const data = await this.service.generateTopics(req.userId);
-      const modifiedData = (data?.items || []).map((title: string) => ({
-        id: randomUUID(),
-        title: title,
-        createdBy: req.userId,
-        createdAt: new Date(),
-      }));
+      const token = req.query.token || "";
+      if (!token) {
+        return res.sendError({ message: "Unauthorized" });
+      }
+
+      const decodedToken = await firebase.auth().verifyIdToken(token as string);
+      const uid = decodedToken.uid;
+
+      const data = await this.service.generateTopics(uid, res);
+      const modifiedData = (data || [])?.map((record) =>
+        formatGeneratedTitle(record, uid)
+      );
+
 
       if (!modifiedData?.length) {
         throw new Error("Unable to generate at the moment");
       }
-      this.service.saveTopics(req.userId, modifiedData);
-      res.sendSuccess({
-        message: "Titles generated successfully",
-        data: modifiedData,
-      });
+      this.service.saveBatchTopics(modifiedData);
+
+
     } catch (e) {
       next(e);
     }
@@ -36,7 +40,8 @@ class ContentController {
   retrieveTopics = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const data = await this.service.getUsersTopic(req.userId);
-      
+
+
       res.sendSuccess({
         message: "successfully retrieved topics",
         data,
@@ -45,6 +50,54 @@ class ContentController {
       next(error);
     }
   };
+
+  generateScript = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const token = req.query.token || "";
+      const scriptId = req.params.scriptId
+      if (!token) {
+        return res.sendError({ message: "Unauthorized" });
+      }
+
+      const decodedToken = await firebase.auth().verifyIdToken(token as string);
+      const uid = decodedToken.uid;
+      await this.service.generateScripts(uid, scriptId, res );
+      
+   
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  retrieveScripts = async (
+    req: Request,
+    res: Response,
+    next: NextFunction) =>{
+    try {
+      const data = await this.service.getUsersScript(req.userId);
+      res.sendSuccess({
+        message: "successfully retrieved scripts",
+        data,
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  // retrieveScriptById = async (
+  //   req: Request,
+  //   res: Response,
+  //   next: NextFunction) =>{
+  //   try {
+  //     const data = await this.service.getScriptById(req.userId, req.params.id);
+  //     res.sendSuccess({
+  //       message: "successfully retrieved script",
+  //       data,
+  //     });
+  //   } catch (error) {
+  //     next(error);
+  //   }
+  // };
 }
 
 export default ContentController;
