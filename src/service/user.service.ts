@@ -15,7 +15,7 @@ class UserService {
         const websiteContent = await this.repo.getWebsiteContent(data.website);
         console.log("websiteContent: ", websiteContent);
 
-        record.websiteContent = websiteContent;
+        record.websiteContent = websiteContent || "";
       }
 
       this.repo.update(userId, record);
@@ -40,7 +40,7 @@ class UserService {
 
       const websiteContent = await this.repo.getWebsiteContent(data.website);
 
-      record.websiteContent = websiteContent;
+      record.websiteContent = websiteContent || "";
 
       await this.repo.update(userId, record);
       return record;

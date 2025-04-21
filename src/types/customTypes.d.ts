@@ -2,6 +2,7 @@ import { Response, Request } from "express";
 
 export interface sendSuccessProps {
   message?: string;
+  warning?: string;
   statusCode?: number;
   meta?: Record<string, unknown>;
   data?: Record<string, unknown>;

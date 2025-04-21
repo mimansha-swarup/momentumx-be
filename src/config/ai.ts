@@ -1,24 +1,11 @@
-import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
+import { GenerationConfig, GoogleGenerativeAI } from "@google/generative-ai";
 
 const genAI = new GoogleGenerativeAI(process.env.API_KEY);
-const genAIModel = (systemPrompt: string) =>
+const genAIModel = (systemPrompt: string, generationConfig: GenerationConfig) =>
   genAI.getGenerativeModel({
     model: "gemini-2.0-flash",
     systemInstruction: systemPrompt,
-    generationConfig: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: SchemaType.OBJECT,
-        properties: {
-          items: {
-            type: SchemaType.ARRAY,
-            items: {
-              type: SchemaType.STRING,
-            },
-          },
-        },
-      },
-    },
+    generationConfig
   });
 
 export default genAIModel;
