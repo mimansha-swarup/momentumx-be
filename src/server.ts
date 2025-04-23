@@ -1,7 +1,10 @@
 import app from "./app";
 
-const port = 3000;
+if (process.env.NODE_ENV !== "LOCAL") {
+  const port = 3000;
+  app.listen(port, () => {
+    console.log(`The server is running at ${port}`);
+  });
+}
 
-app.listen(port, () => {
-  console.log(`The server is running at ${port}`);
-});
+export default app;
