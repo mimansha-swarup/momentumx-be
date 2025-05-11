@@ -98,11 +98,11 @@ class ContentService {
       ]);
 
       console.log("titleRecord: ", titleRecord);
-      let userPrompt = SCRIPT_USER_PROMPT.replace(
+      const userPrompt = SCRIPT_USER_PROMPT.replace(
         "{brandName}",
         userRecord?.brandName
       )
-        .replace("{BRAND_VOICE}", userRecord?.brandName)
+        .replace("{brandName}", userRecord?.brandName)
         .replace("{targetAudience}", userRecord?.targetAudience)
         .replace("{competitors}", userRecord?.competitors.join(", "))
         .replace("{niche}", userRecord?.niche)
@@ -132,7 +132,8 @@ class ContentService {
         }
       }
 
-      res.write(`event: done\ndata: [done]\n\n`);
+      res.write(`event: done\n`);
+      res.write(`data: [done]\n\n`);
       res.end();
 
       console.log("accumulatedRes: ", accumulatedRes);
