@@ -1,6 +1,7 @@
 import { Firestore } from "firebase-admin/firestore";
 import { COLLECTIONS } from "../constants/collection";
 import { db, firebase } from "../config/firebase";
+import { IGetTopicByUserIdArgs } from "../types/repository/content";
 
 class ContentRepository {
   private collection: `${COLLECTIONS}`;
@@ -11,7 +12,7 @@ class ContentRepository {
     this.collection = COLLECTIONS.TOPICS;
     this.script_collection = COLLECTIONS.SCRIPTS;
   }
-  getTopics = async (topicId: string) => {
+  getTopic = async (topicId: string) => {
     try {
       const doc = await this.db.collection(this.collection).doc(topicId).get();
       return doc.data();
@@ -20,10 +21,59 @@ class ContentRepository {
     }
   };
 
-  getTopicsByUid = async (userId: string) => {
+  getTopics = async ({
+    userId,
+    limit = 10,
+    cursor,
+    filters,
+  }: IGetTopicByUserIdArgs) => {
+    try {
+      let query = this.db
+        .collection(this.collection)
+        .where("createdBy", "==", userId);
+      
+        // Filtering
+      if (filters.hasOwnProperty("isScriptGenerated")) {
+        query = query.where(
+          "isScriptGenerated",
+          "==",
+          filters.isScriptGenerated
+        );
+      }
+
+      // Searching
+      if (filters.searchText) {
+        // Firestore does NOT support contains search or case-insensitive search directly
+        // This is a workaround — in production, use Algolia or full-text search engine
+        query = query.orderBy("title"); 
+        query = query
+          .startAt(filters.searchText)
+          .endAt(filters.searchText + "\uf8ff");
+      } else {
+        query = query
+          .orderBy("createdAt", "desc")
+          .orderBy(firebase.firestore.FieldPath.documentId(), "desc");
+      }
+      query = query.limit(limit);
+      if (cursor) {
+        const { createdAt, docId } = cursor;
+        query = query.startAfter(
+          firebase.firestore.Timestamp.fromDate(new Date(createdAt)),
+          docId
+        );
+      }
+      const snapshot = await query.get();
+
+      return snapshot.docs.map((doc) => doc.data());
+    } catch (error) {
+      console.log("error in repo", error);
+    }
+  };
+
+  getScripts = async (userId: string) => {
     try {
       const snapshot = await this.db
-        .collection(this.collection)
+        .collection(this.script_collection)
         .where("createdBy", "==", userId)
         .orderBy("createdAt", "desc")
         .get();
@@ -60,10 +110,7 @@ class ContentRepository {
 
   updateTopic = async (topicId: string, data: Record<string, unknown>) => {
     try {
-      await this.db
-        .collection(this.collection)
-        .doc(topicId)
-        .update(data, );
+      await this.db.collection(this.collection).doc(topicId).update(data);
     } catch (error) {
       console.log("error", error);
     }
@@ -79,27 +126,7 @@ class ContentRepository {
     }
   };
 
-  getScriptsByUid = async (userId: string) => {
-    try {
-      const snapshot = await this.db
-        .collection(this.script_collection)
-        .where("createdBy", "==", userId)
-        .orderBy("createdAt", "desc")
-        .get();
-      const docs = snapshot.docs.map((doc) => {
-        const data = doc.data();
-        return {
-          ...data,
-          id: doc.id,
-          createdAt: data.createdAt?.toDate(),
-        };
-      });
 
-      return docs;
-    } catch (error) {
-      console.log("error in repo", error);
-    }
-  };
 }
 
 export default ContentRepository;

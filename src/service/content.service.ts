@@ -15,6 +15,7 @@ import {
   GENERATION_CONFIG_SCRIPTS,
   GENERATION_CONFIG_TITLES,
 } from "../constants/firebase";
+import { IGetTopicByUserIdArgs } from "../types/repository/content";
 
 //  createOnboardingData
 const userService = new UserService(new UserRepository());
@@ -74,10 +75,38 @@ class ContentService {
     }
   };
 
-  getUsersTopic = async (userId: string) => {
+  getPaginatedUsersTopics = async ({
+    userId,
+    limit,
+    cursor,
+    filters,
+  }: IGetTopicByUserIdArgs) => {
     try {
-      const doc = await this.repo.getTopicsByUid(userId);
-      return doc;
+      const docs = await this.repo.getTopics({
+        userId,
+        limit,
+        cursor,
+        filters,
+      });
+      const lastDoc = docs[docs.length - 1];
+
+      const nextCursor = lastDoc
+        ? {
+            createdAt: lastDoc.createdAt.toDate().toISOString(),
+            docId: lastDoc.id,
+          }
+        : null;
+
+      return {
+        meta: {
+          nextCursor,
+          hasNextPage: !!nextCursor,
+        },
+        lists: docs?.map((doc) => ({
+          ...doc,
+          createdAt: doc.createdAt.toDate().toISOString(),
+        })),
+      };
     } catch (error) {
       console.log("error", error);
     }
@@ -94,10 +123,9 @@ class ContentService {
     try {
       const [userRecord, titleRecord] = await Promise.all([
         this.userRepo.get(userId),
-        this.repo.getTopics(scriptId),
+        this.repo.getTopic(scriptId),
       ]);
 
-      console.log("titleRecord: ", titleRecord);
       let userPrompt = SCRIPT_USER_PROMPT.replace(
         "{brandName}",
         userRecord?.brandName
@@ -155,7 +183,7 @@ class ContentService {
 
   getUsersScript = async (userId: string) => {
     try {
-      const doc = await this.repo.getScriptsByUid(userId);
+      const doc = await this.repo.getScripts(userId);
       return doc;
     } catch (error) {
       console.log("error", error);
