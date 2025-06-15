@@ -12,11 +12,25 @@ class ContentController {
 
   retrieveTopics = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { limit = 10, cursor, filters = {} } = req.body;
+      const {
+        limit = "10",
+        createdAt = "",
+        docId = "",
+        searchText = "",
+        isScriptGenerated = "",
+      } = req.query;
+      const cursor = {
+        createdAt: createdAt as string,
+        docId: docId as string,
+      };
+      const filters = {
+        searchText: searchText as string,
+        isScriptGenerated: Boolean(isScriptGenerated),
+      };
 
       const data = await this.service.getPaginatedUsersTopics({
         userId: req.userId,
-        limit,
+        limit: parseInt(limit as string, 10),
         cursor,
         filters,
       });
@@ -42,27 +56,23 @@ class ContentController {
     }
   };
 
-
   generateTopics = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const token = req.query.token || "";
-      if (!token) {
-        return res.sendError({ message: "Unauthorized" });
-      }
-
-      const decodedToken = await firebase.auth().verifyIdToken(token as string);
-      const uid = decodedToken.uid;
-
-      const data = await this.service.generateTopics(uid, res);
+      const data = await this.service.generateTopics(req.userId);
       const modifiedData = (data || [])?.map((record) =>
-        formatGeneratedTitle(record, uid)
+        formatGeneratedTitle(record, req.userId)
       );
 
       if (!modifiedData?.length) {
         throw new Error("Unable to generate at the moment");
       }
-      this.service.saveBatchTopics(modifiedData);
+      const updatedData = this.service.saveBatchTopics(modifiedData);
+      res.sendSuccess({
+        message: "successfully generated topics",
+        data: updatedData,
+      });
     } catch (e) {
+      console.log("e: ", e);
       next(e);
     }
   };
@@ -83,21 +93,20 @@ class ContentController {
     }
   };
 
-  
-  // retrieveScriptById = async (
-  //   req: Request,
-  //   res: Response,
-  //   next: NextFunction) =>{
-  //   try {
-  //     const data = await this.service.getScriptById(req.userId, req.params.id);
-  //     res.sendSuccess({
-  //       message: "successfully retrieved script",
-  //       data,
-  //     });
-  //   } catch (error) {
-  //     next(error);
-  //   }
-  // };
+  retrieveScriptById = async (
+    req: Request,
+    res: Response,
+    next: NextFunction) =>{
+    try {
+      const data = await this.service.getScriptById( req.params.scriptId);
+      res.sendSuccess({
+        message: "successfully retrieved script",
+        data,
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
 }
 
 export default ContentController;

@@ -12,12 +12,12 @@ const userRepository = new UserRepository();
 const contentService = new ContentService(contentRepository, userRepository);
 const contentController = new ContentController(contentService);
 
-router.get("/stream/topics", contentController.generateTopics);
 router.get("/stream/scripts/:scriptId", contentController.generateScript);
 router.use(authMiddleware);
 
+router.get("/stream/topics", contentController.generateTopics);
 router.get("/topics", contentController.retrieveTopics);
 router.get("/scripts", contentController.retrieveScripts);
-// router.get("/scripts/:scriptId", contentController.retrieveScriptById);
+router.get("/script/:scriptId", contentController.retrieveScriptById);
 
 export default router;

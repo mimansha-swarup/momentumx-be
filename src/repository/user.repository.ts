@@ -14,7 +14,6 @@ class UserRepository {
 
   update = async (userId: string, data: unknown) => {
     try {
-
       if (!userId) {
         throw new Error("userId is required");
       }
@@ -22,8 +21,6 @@ class UserRepository {
         .collection(this.collection)
         .doc(userId)
         .update(data as Record<string, unknown>);
-
-      console.log();
     } catch (error) {
       console.log("error", error);
     }

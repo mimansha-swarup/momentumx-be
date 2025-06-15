@@ -1,3 +1,4 @@
+import { stats } from "../constants/collection";
 import UserRepository from "../repository/user.repository";
 
 class UserService {
@@ -8,20 +9,18 @@ class UserService {
   }
 
   createOnboardingData = async (userId: string, data: IOnboardingPayload) => {
+    const record = { ...data, websiteContent: "", stats };
     try {
-      const record = { ...data, websiteContent: "" };
-
       if (data.website) {
         const websiteContent = await this.repo.getWebsiteContent(data.website);
-        console.log("websiteContent: ", websiteContent);
 
         record.websiteContent = websiteContent || "";
       }
-
-      this.repo.update(userId, record);
       return record;
     } catch (error) {
       console.log("error", error);
+    } finally {
+      this.repo.update(userId, record);
     }
   };
 

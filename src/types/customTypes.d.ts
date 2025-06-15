@@ -5,7 +5,7 @@ export interface sendSuccessProps {
   warning?: string;
   statusCode?: number;
   meta?: Record<string, unknown>;
-  data?: Record<string, unknown>;
+  data?: unknown;
 }
 
 export interface sendErrorProps

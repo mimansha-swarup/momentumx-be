@@ -31,9 +31,12 @@ class ContentRepository {
       let query = this.db
         .collection(this.collection)
         .where("createdBy", "==", userId);
-      
-        // Filtering
-      if (filters.hasOwnProperty("isScriptGenerated")) {
+
+      // Optional filtering
+      if (
+        filters.hasOwnProperty("isScriptGenerated") &&
+        filters?.isScriptGenerated
+      ) {
         query = query.where(
           "isScriptGenerated",
           "==",
@@ -41,27 +44,27 @@ class ContentRepository {
         );
       }
 
-      // Searching
       if (filters.searchText) {
-        // Firestore does NOT support contains search or case-insensitive search directly
-        // This is a workaround — in production, use Algolia or full-text search engine
-        query = query.orderBy("title"); 
+        // Prefix search using title
+        query = query.orderBy("title");
         query = query
           .startAt(filters.searchText)
           .endAt(filters.searchText + "\uf8ff");
-      } else {
+      }
+
+      // Pagination
+      else if (cursor?.createdAt && cursor?.docId) {
+        // Default ordering if no search
         query = query
           .orderBy("createdAt", "desc")
           .orderBy(firebase.firestore.FieldPath.documentId(), "desc");
-      }
-      query = query.limit(limit);
-      if (cursor) {
-        const { createdAt, docId } = cursor;
         query = query.startAfter(
-          firebase.firestore.Timestamp.fromDate(new Date(createdAt)),
-          docId
+          firebase.firestore.Timestamp.fromDate(new Date(cursor.createdAt)),
+          cursor.docId
         );
       }
+
+      query = query.limit(limit);
       const snapshot = await query.get();
 
       return snapshot.docs.map((doc) => doc.data());
@@ -91,17 +94,39 @@ class ContentRepository {
       console.log("error in repo", error);
     }
   };
+  getScriptById = async (scriptId: string) => {
+    try {
+      const snapshot = await this.db
+        .collection(this.script_collection)
+        .doc(scriptId)
+        .get();
 
-  batchSaveTopics = async (dataList: unknown[]) => {
+      if (!snapshot.exists) {
+        return null;
+      }
+
+      const data = snapshot.data();
+      data.createdAt = data.createdAt?.toDate();
+
+      return data;
+    } catch (error) {
+      console.log("error in repo", error);
+    }
+  };
+
+  batchSaveTopics = (dataList: unknown[]) => {
     const batch = db.batch();
     const collectionRef = db.collection(this.collection);
-    dataList?.forEach((data) => {
+
+    const updatedDataList = dataList?.map((data) => {
       const newDocRef = collectionRef.doc();
-      batch.set(newDocRef, { ...(data as {}), id: newDocRef.id });
+      const dataWithId = { ...(data as {}), id: newDocRef.id };
+      batch.set(newDocRef, dataWithId);
+      return dataWithId;
     });
     try {
-      await batch.commit();
-      console.log("✅ Successfully added all documents");
+      batch.commit();
+      return updatedDataList;
     } catch (err) {
       console.error("❌ Failed to batch create documents", err);
       throw err;
@@ -125,8 +150,6 @@ class ContentRepository {
       console.log("error", error);
     }
   };
-
-
 }
 
 export default ContentRepository;
