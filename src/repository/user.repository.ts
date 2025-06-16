@@ -20,7 +20,7 @@ class UserRepository {
       await this.db
         .collection(this.collection)
         .doc(userId)
-        .create(data as Record<string, unknown>);
+        .set(data as Record<string, unknown>, { merge: true });
     } catch (error) {
       console.log("error", error);
     }
