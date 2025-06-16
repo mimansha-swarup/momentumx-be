@@ -1,5 +1,5 @@
-import { stats } from "../constants/collection";
-import UserRepository from "../repository/user.repository";
+import { stats } from "../constants/collection.js";
+import UserRepository from "../repository/user.repository.js";
 
 class UserService {
   private repo: UserRepository;

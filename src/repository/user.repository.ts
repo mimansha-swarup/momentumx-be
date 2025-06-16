@@ -1,7 +1,7 @@
 import { Firestore } from "firebase-admin/firestore";
-import { db } from "../config/firebase";
-import { COLLECTIONS } from "../constants/collection";
-import { extractTextFromHTML } from "../utlils/regex";
+import { db } from "../config/firebase.js";
+import { COLLECTIONS } from "../constants/collection.js";
+import { extractTextFromHTML } from "../utlils/regex.js";
 
 class UserRepository {
   private db: Firestore;

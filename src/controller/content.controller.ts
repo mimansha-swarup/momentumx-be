@@ -1,7 +1,7 @@
 import { NextFunction, Request, Response } from "express";
-import ContentService from "../service/content.service";
-import { formatGeneratedScript, formatGeneratedTitle } from "../utlils/content";
-import { firebase } from "../config/firebase";
+import ContentService from "../service/content.service.js";
+import { formatGeneratedScript, formatGeneratedTitle } from "../utlils/content.js";
+import { firebase } from "../config/firebase.js";
 
 class ContentController {
   private service: ContentService;

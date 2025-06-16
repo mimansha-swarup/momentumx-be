@@ -4,18 +4,18 @@ import {
   SCRIPT_USER_PROMPT,
   TOPIC_SYSTEM_PROMPT,
   TOPIC_USER_PROMPT,
-} from "../constants/prompt";
+} from "../constants/prompt.js";
 
-import ContentRepository from "../repository/content.repository";
-import UserRepository from "../repository/user.repository";
-import { generateStreamingContent } from "../utlils/ai";
-import { formatGeneratedScript } from "../utlils/content";
+import ContentRepository from "../repository/content.repository.js";
+import UserRepository from "../repository/user.repository.js";
+import { generateStreamingContent } from "../utlils/ai.js";
+import { formatGeneratedScript } from "../utlils/content.js";
 import {
   GENERATION_CONFIG_SCRIPTS,
   GENERATION_CONFIG_TITLES,
-} from "../constants/firebase";
-import { IGetTopicByUserIdArgs } from "../types/repository/content";
-import { firebase } from "../config/firebase";
+} from "../constants/firebase.js";
+import { IGetTopicByUserIdArgs } from "../types/repository/content.js";
+import { firebase } from "../config/firebase.js";
 
 //  createOnboardingData
 class ContentService {

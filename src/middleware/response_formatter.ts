@@ -1,5 +1,5 @@
 import { NextFunction, Request, Response } from "express";
-import { sendErrorProps, sendSuccessProps } from "../types/customTypes";
+import { sendErrorProps, sendSuccessProps } from "../types/customTypes.js";
 
 export const responseFormatter = (
   _req: Request,

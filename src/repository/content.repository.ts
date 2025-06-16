@@ -1,7 +1,7 @@
 import { Firestore } from "firebase-admin/firestore";
-import { COLLECTIONS } from "../constants/collection";
-import { db, firebase } from "../config/firebase";
-import { IGetTopicByUserIdArgs } from "../types/repository/content";
+import { COLLECTIONS } from "../constants/collection.js";
+import { db, firebase } from "../config/firebase.js";
+import { IGetTopicByUserIdArgs } from "../types/repository/content.js";
 
 class ContentRepository {
   private collection: `${COLLECTIONS}`;

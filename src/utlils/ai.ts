@@ -1,5 +1,5 @@
 import { GenerationConfig } from "@google/generative-ai";
-import genAIModel from "../config/ai";
+import genAIModel from "../config/ai.js";
 
 
 export const generateContent = (systemPrompt: string, userPrompt: string, generationConfig: GenerationConfig) => {
