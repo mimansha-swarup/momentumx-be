@@ -12,5 +12,10 @@
       "dest": "src/api/index.ts",
       "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
     }
-  ]
+  ],
+  "functions": {
+    "src/api/index.ts": {
+      "runtime": "@vercel/node@3.0.0"
+    }
+  }
 }
