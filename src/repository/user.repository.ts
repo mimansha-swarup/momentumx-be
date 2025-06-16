@@ -20,7 +20,7 @@ class UserRepository {
       await this.db
         .collection(this.collection)
         .doc(userId)
-        .update(data as Record<string, unknown>);
+        .set(data as Record<string, unknown>, { merge: true });
     } catch (error) {
       console.log("error", error);
     }
@@ -38,11 +38,13 @@ class UserRepository {
   getWebsiteContent = async (url: string) => {
     try {
       const res = await fetch(url);
-      const html = await res.text();
+      const html = await res?.text();
 
       return extractTextFromHTML(html);
     } catch (error) {
-      console.log("error: ", error);
+      console.log("error:  at getWebsiteContent", error);
+    } finally {
+      return "";
     }
   };
 }
