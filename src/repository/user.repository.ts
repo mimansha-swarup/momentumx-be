@@ -12,6 +12,19 @@ class UserRepository {
     this.collection = COLLECTIONS.USERS;
   }
 
+  add = async (userId: string, data: unknown) => {
+    try {
+      if (!userId) {
+        throw new Error("userId is required");
+      }
+      await this.db
+        .collection(this.collection)
+        .doc(userId)
+        .create(data as Record<string, unknown>);
+    } catch (error) {
+      console.log("error", error);
+    }
+  };
   update = async (userId: string, data: unknown) => {
     try {
       if (!userId) {
@@ -20,7 +33,7 @@ class UserRepository {
       await this.db
         .collection(this.collection)
         .doc(userId)
-        .set(data as Record<string, unknown>, { merge: true });
+        .update(data as Record<string, unknown>);
     } catch (error) {
       console.log("error", error);
     }

@@ -20,7 +20,7 @@ class UserService {
     } catch (error) {
       console.log("error", error);
     } finally {
-      this.repo.update(userId, record);
+      this.repo.add(userId, record);
     }
   };
 
