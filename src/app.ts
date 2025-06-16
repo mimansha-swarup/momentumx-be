@@ -1,10 +1,10 @@
 import express, { Request, Response } from "express";
 import cors from "cors";
-import { authMiddleware } from "./middleware/auth";
-import { responseFormatter } from "./middleware/response_formatter";
-import loggerMiddleware from "./middleware/logger_middleware";
-import rateLimiter from "./middleware/rate_limit";
-import rootRouter from "./routes";
+// import { authMiddleware } from "./middleware/auth";
+import { responseFormatter } from "./middleware/response_formatter.js";
+import loggerMiddleware from "./middleware/logger_middleware.js";
+import rateLimiter from "./middleware/rate_limit.js";
+import rootRouter from "./routes/index.js";
 
 const app = express();
 

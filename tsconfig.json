@@ -1,12 +1,28 @@
+// {
+//   "compilerOptions": {
+//     "typeRoots": ["src/types", "./node_modules/@types"],
+//     "types": ["node", "express"],
+//         "resolveJsonModule": true,
+//         "esModuleInterop": true
+     
+//   },
+//   "include": ["src", "src/types", "server.ts",]
+  
+// }
+
 {
   "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "node",
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "outDir": "dist",
+    "strict": true,
+    "baseUrl": ".",
     "typeRoots": ["src/types", "./node_modules/@types"],
     "types": ["node", "express"],
-        "resolveJsonModule": true,
-        "esModuleInterop": true
-     
   },
-  "include": ["src", "src/types",]
-  
+  "include": ["src"]
 }
-

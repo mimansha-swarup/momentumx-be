@@ -4,20 +4,20 @@ import {
   SCRIPT_USER_PROMPT,
   TOPIC_SYSTEM_PROMPT,
   TOPIC_USER_PROMPT,
-} from "../constants/prompt";
-import ContentRepository from "../repository/content.repository";
-import UserRepository from "../repository/user.repository";
-import { generateStreamingContent } from "../utlils/ai";
-import { createChunkHandler } from "../utlils/regex";
-import UserService from "./user.service";
-import { formatGeneratedScript, formatGeneratedTitle } from "../utlils/content";
+} from "../constants/prompt.js";
+
+import ContentRepository from "../repository/content.repository.js";
+import UserRepository from "../repository/user.repository.js";
+import { generateStreamingContent } from "../utlils/ai.js";
+import { formatGeneratedScript } from "../utlils/content.js";
 import {
   GENERATION_CONFIG_SCRIPTS,
   GENERATION_CONFIG_TITLES,
-} from "../constants/firebase";
+} from "../constants/firebase.js";
+import { IGetTopicByUserIdArgs } from "../types/repository/content.js";
+import { firebase } from "../config/firebase.js";
 
 //  createOnboardingData
-const userService = new UserService(new UserRepository());
 class ContentService {
   private repo: ContentRepository;
   private userRepo: UserRepository;
@@ -25,7 +25,46 @@ class ContentService {
     this.repo = repo;
     this.userRepo = userRepo;
   }
-  generateTopics = async (userId: string, res: Response) => {
+
+  getPaginatedUsersTopics = async ({
+    userId,
+    limit,
+    cursor,
+    filters,
+  }: IGetTopicByUserIdArgs) => {
+    try {
+      const docs = await this.repo.getTopics({
+        userId,
+        limit,
+        cursor,
+        filters,
+      });
+      const lastDoc = docs[docs.length - 1];
+
+      const nextCursor = lastDoc
+        ? {
+            createdAt: lastDoc.createdAt.toDate().toISOString(),
+            docId: lastDoc.id,
+          }
+        : null;
+
+      return {
+        meta: {
+          nextCursor,
+          hasNextPage: limit === docs.length,
+        },
+        lists: docs?.map((doc) => ({
+          ...doc,
+          createdAt: doc.createdAt.toDate().toISOString(),
+        })),
+      };
+    } catch (error) {
+      console.log("error", error);
+    }
+    return {};
+  };
+
+  generateTopics = async (userId: string) => {
     try {
       const userRecord = await this.userRepo.get(userId);
       let userPrompt = TOPIC_USER_PROMPT.replace(
@@ -46,59 +85,41 @@ class ContentService {
 
       let accumulatedRes = "";
 
-      res.setHeader("Content-Type", "text/event-stream");
-      res.setHeader("Cache-Control", "no-cache");
-      res.setHeader("Connection", "keep-alive");
-      res.flushHeaders();
-
-      const handleChunk = createChunkHandler((title) => {
-        res.write(
-          `data: ${JSON.stringify(formatGeneratedTitle(title, userId))}\n\n`
-        );
-      });
-
       for await (const chunk of result.stream) {
         const part = chunk.text();
         if (part) {
           accumulatedRes += part;
-          handleChunk(part);
         }
       }
 
-      res.write(`event: done\ndata: [done]\n\n`);
-      res.end();
+      const parsedRes = JSON.parse(accumulatedRes) as string[];
 
-      return JSON.parse(accumulatedRes) as string[];
+      this.userRepo.update(userId, {
+        "stats.topics": firebase.firestore.FieldValue.increment(parsedRes.length),
+      });
+
+      return parsedRes;
     } catch (error) {
       console.log("error", error);
     }
-  };
-
-  getUsersTopic = async (userId: string) => {
-    try {
-      const doc = await this.repo.getTopicsByUid(userId);
-      return doc;
-    } catch (error) {
-      console.log("error", error);
-    }
-    return {};
   };
 
   saveBatchTopics = (data: unknown[]) => {
     try {
-      this.repo.batchSaveTopics(data);
-    } catch (error) {}
+      return this.repo.batchSaveTopics(data);
+    } catch (error) {
+      console.log("error: ", error);
+    }
   };
 
   generateScripts = async (userId: string, scriptId: string, res: Response) => {
     try {
       const [userRecord, titleRecord] = await Promise.all([
         this.userRepo.get(userId),
-        this.repo.getTopics(scriptId),
+        this.repo.getTopic(scriptId),
       ]);
 
-      console.log("titleRecord: ", titleRecord);
-      const userPrompt = SCRIPT_USER_PROMPT.replace(
+      let userPrompt = SCRIPT_USER_PROMPT.replace(
         "{brandName}",
         userRecord?.brandName
       )
@@ -125,10 +146,8 @@ class ContentService {
       for await (const chunk of result.stream) {
         const part = chunk.text();
         if (part) {
-          console.log("part: ", part);
           accumulatedRes += part;
           res.write(`data: ${JSON.stringify(part)}\n\n`);
-          // handleChunk(part);
         }
       }
 
@@ -136,7 +155,6 @@ class ContentService {
       res.write(`data: [done]\n\n`);
       res.end();
 
-      console.log("accumulatedRes: ", accumulatedRes);
       const formattedData = formatGeneratedScript(
         titleRecord?.title,
         titleRecord?.id,
@@ -147,6 +165,10 @@ class ContentService {
         isScriptGenerated: true,
       });
       await this.repo.saveScript(titleRecord?.id, formattedData);
+       this.userRepo.update(userId, {
+        "stats.scripts": firebase.firestore.FieldValue.increment(1),
+      });
+
       return accumulatedRes;
     } catch (error) {
       console.log("error", error);
@@ -156,12 +178,21 @@ class ContentService {
 
   getUsersScript = async (userId: string) => {
     try {
-      const doc = await this.repo.getScriptsByUid(userId);
+      const doc = await this.repo.getScripts(userId);
       return doc;
     } catch (error) {
       console.log("error", error);
     }
     return {};
+  };
+
+  getScriptById = async (scriptId: string) => {
+    try {
+      const doc = await this.repo.getScriptById(scriptId);
+      return doc;
+    } catch (error) {
+      console.log("error", error);
+    }
   };
 }
 

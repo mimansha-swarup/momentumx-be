@@ -1,7 +1,7 @@
 import { Firestore } from "firebase-admin/firestore";
-import { db } from "../config/firebase";
-import { COLLECTIONS } from "../constants/collection";
-import { extractTextFromHTML } from "../utlils/regex";
+import { db } from "../config/firebase.js";
+import { COLLECTIONS } from "../constants/collection.js";
+import { extractTextFromHTML } from "../utlils/regex.js";
 
 class UserRepository {
   private db: Firestore;
@@ -14,7 +14,6 @@ class UserRepository {
 
   update = async (userId: string, data: unknown) => {
     try {
-
       if (!userId) {
         throw new Error("userId is required");
       }
@@ -22,8 +21,6 @@ class UserRepository {
         .collection(this.collection)
         .doc(userId)
         .update(data as Record<string, unknown>);
-
-      console.log();
     } catch (error) {
       console.log("error", error);
     }

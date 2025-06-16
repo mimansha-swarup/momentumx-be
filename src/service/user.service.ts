@@ -1,4 +1,5 @@
-import UserRepository from "../repository/user.repository";
+import { stats } from "../constants/collection.js";
+import UserRepository from "../repository/user.repository.js";
 
 class UserService {
   private repo: UserRepository;
@@ -8,20 +9,18 @@ class UserService {
   }
 
   createOnboardingData = async (userId: string, data: IOnboardingPayload) => {
+    const record = { ...data, websiteContent: "", stats };
     try {
-      const record = { ...data, websiteContent: "" };
-
       if (data.website) {
         const websiteContent = await this.repo.getWebsiteContent(data.website);
-        console.log("websiteContent: ", websiteContent);
 
         record.websiteContent = websiteContent || "";
       }
-
-      this.repo.update(userId, record);
       return record;
     } catch (error) {
       console.log("error", error);
+    } finally {
+      this.repo.update(userId, record);
     }
   };
 

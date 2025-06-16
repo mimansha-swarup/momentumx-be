@@ -1,9 +1,9 @@
 import { Router } from "express";
-import ContentRepository from "../../repository/content.repository";
-import ContentService from "../../service/content.service";
-import ContentController from "../../controller/content.controller";
-import UserRepository from "../../repository/user.repository";
-import { authMiddleware } from "../../middleware/auth";
+import ContentRepository from "../../repository/content.repository.js";
+import ContentService from "../../service/content.service.js";
+import ContentController from "../../controller/content.controller.js";
+import UserRepository from "../../repository/user.repository.js";
+import { authMiddleware } from "../../middleware/auth.js";
 
 const router = Router();
 
@@ -12,12 +12,12 @@ const userRepository = new UserRepository();
 const contentService = new ContentService(contentRepository, userRepository);
 const contentController = new ContentController(contentService);
 
-router.get("/stream/topics", contentController.generateTopics);
 router.get("/stream/scripts/:scriptId", contentController.generateScript);
 router.use(authMiddleware);
 
+router.get("/stream/topics", contentController.generateTopics);
 router.get("/topics", contentController.retrieveTopics);
 router.get("/scripts", contentController.retrieveScripts);
-// router.get("/scripts/:scriptId", contentController.retrieveScriptById);
+router.get("/script/:scriptId", contentController.retrieveScriptById);
 
 export default router;
