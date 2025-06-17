@@ -49,16 +49,18 @@ class UserRepository {
   };
 
   getWebsiteContent = async (url: string) => {
+    let html = "";
     try {
       const res = await fetch(url);
-      const html = await res?.text();
+      if (res) {
+        html = await res?.text();
 
-      return extractTextFromHTML(html);
+        return extractTextFromHTML(html);
+      }
     } catch (error) {
       console.log("error:  at getWebsiteContent", error);
-    } finally {
-      return "";
     }
+    return html;
   };
 }
 
