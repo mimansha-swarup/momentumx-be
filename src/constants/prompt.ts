@@ -114,10 +114,11 @@ Important:
 
 export const SCRIPT_USER_PROMPT = `
 Here's a YouTube video title: "{title}"
-Write a 10-minute script for this video. Follow the structure and tone described above.
+Write a 10-minute script for this title. Follow the structure and tone described.
 Rebuild the story from scratch — don't generalize. Assume this is a personal, first-person narrative.
 Make sure the script sounds lived-in, raw, and human — like someone telling you what actually happened.
 End every paragraph with a line that encourages the viewer to stay.
+keep the script context around the title  use below data points like user Name, Niche, Audience, websiteContent etc to make script personalize
 
 
 User Profile:

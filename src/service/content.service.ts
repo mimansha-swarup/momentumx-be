@@ -95,7 +95,9 @@ class ContentService {
       const parsedRes = JSON.parse(accumulatedRes) as string[];
 
       this.userRepo.update(userId, {
-        "stats.topics": firebase.firestore.FieldValue.increment(parsedRes.length),
+        "stats.topics": firebase.firestore.FieldValue.increment(
+          parsedRes.length
+        ),
       });
 
       return parsedRes;
@@ -128,7 +130,7 @@ class ContentService {
         .replace("{competitors}", userRecord?.competitors.join(", "))
         .replace("{niche}", userRecord?.niche)
         .replace("{websiteContent}", userRecord?.websiteContent)
-        .replace("{topic}", titleRecord?.title);
+        .replace("{title}", titleRecord?.title);
 
       const result = await generateStreamingContent(
         SCRIPT_SYSTEM_PROMPT,
@@ -165,7 +167,7 @@ class ContentService {
         isScriptGenerated: true,
       });
       await this.repo.saveScript(titleRecord?.id, formattedData);
-       this.userRepo.update(userId, {
+      this.userRepo.update(userId, {
         "stats.scripts": firebase.firestore.FieldValue.increment(1),
       });
 

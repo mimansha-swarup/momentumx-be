@@ -21,7 +21,7 @@ declare global {
     }
 
     interface Request {
-      userId?: string;
+      userId: string;
     }
   }
 }
