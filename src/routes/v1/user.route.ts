@@ -10,20 +10,10 @@ const userRepository = new UserRepository();
 const userService = new UserService(userRepository);
 const userController = new UserController(userService);
 
-router.use(authMiddleware)
-router.patch(
-  "/onboarding",
-  userController.saveOnboarding
-);
+router.use(authMiddleware);
+router.patch("/onboarding", userController.saveOnboarding);
 
-router.get(
-  "/profile",
-  userController.getProfile
-);
+router.get("/profile", userController.getProfile);
 
-router.patch(
-  "/profile",
-  userController.updateProfile
-);
-
+router.patch("/profile", userController.updateProfile);
 export default router;

@@ -23,3 +23,25 @@ export const formatGeneratedScript = (
     script,
   };
 };
+
+export function formatCreatorsData(creator) {
+  // If it's a single object, wrap it in an array for uniform handling
+  const list = [
+    { url: creator?.userName, titles: creator?.userTitle },
+    ...creator.competitors,
+  ];
+
+  let result = "";
+
+  for (const creator of list) {
+    const { url, titles = [] } = creator;
+
+    result += `\n\n Video's of ${url}\n`;
+    result += titles.map((title, i) => `   ${i + 1}. ${title}`).join("\n");
+    result += "\n";
+  }
+
+  return result.trim();
+}
+
+

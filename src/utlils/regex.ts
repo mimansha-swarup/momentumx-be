@@ -11,7 +11,6 @@ export function extractTextFromHTML(htmlWithTags: string) {
   return text.replace(/\s+/g, " ").trim();
 }
 
-
 // utils/streamParser.ts
 export function createChunkHandler(onTitle: (title: string) => void) {
   let buffer = "";
@@ -34,4 +33,26 @@ export function createChunkHandler(onTitle: (title: string) => void) {
 
     buffer = buffer.slice(lastIndex);
   };
+}
+
+export function extractChannelInfo(url: string) {
+  const patterns = {
+    // Case 1: Direct channel ID
+    channel:
+      /(?:https?:\/\/)?(?:www\.)?youtube\.com\/channel\/([a-zA-Z0-9_-]{24})/,
+
+    // Case 2: Handle format
+    handle: /(?:https?:\/\/)?(?:www\.)?youtube\.com\/@([a-zA-Z0-9._-]+)/,
+
+    // Case 3: Custom URL or legacy username
+    custom:
+      /(?:https?:\/\/)?(?:www\.)?youtube\.com\/(?:c|user)\/([a-zA-Z0-9._-]+)/,
+  };
+
+  for (const [type, regex] of Object.entries(patterns)) {
+    const match = url.match(regex);
+    if (match) return { type, value: match[1] };
+  }
+
+  return null;
 }

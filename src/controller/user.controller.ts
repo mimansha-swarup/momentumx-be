@@ -14,10 +14,10 @@ class UserController {
         req.userId,
         req.body
       );
-      const iSWebsiteParsed = !!payload?.websiteContent 
+      const iSWebsiteParsed = !!payload?.websiteContent;
       res.sendSuccess({
-        warning: !iSWebsiteParsed ? " Website content is not parsed": "",
-        message:"Onboarded  successfully" ,
+        warning: !iSWebsiteParsed ? " Website content is not parsed" : "",
+        message: "Onboarded  successfully",
         data: { payload },
       });
     } catch (e) {

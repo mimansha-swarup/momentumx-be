@@ -7,6 +7,7 @@ export const getUserObject = (user: UserRecord) => {
     email: user.email || "",
     photoURL: user.photoURL || "",
     createdAt: firestore.FieldValue.serverTimestamp(),
+    
   };
 };
 export const enum COLLECTIONS {

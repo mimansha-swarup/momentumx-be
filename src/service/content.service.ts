@@ -8,8 +8,11 @@ import {
 
 import ContentRepository from "../repository/content.repository.js";
 import UserRepository from "../repository/user.repository.js";
-import { generateStreamingContent } from "../utlils/ai.js";
-import { formatGeneratedScript } from "../utlils/content.js";
+import { generateContent, generateStreamingContent } from "../utlils/ai.js";
+import {
+  formatCreatorsData,
+  formatGeneratedScript,
+} from "../utlils/content.js";
 import {
   GENERATION_CONFIG_SCRIPTS,
   GENERATION_CONFIG_TITLES,
@@ -77,13 +80,18 @@ class ContentService {
         .replace("{niche}", userRecord?.niche)
         .replace("{websiteContent}", userRecord?.websiteContent);
 
-      const result = await generateStreamingContent(
+      const text = formatCreatorsData(userRecord);
+
+      const result = await generateContent(
         TOPIC_SYSTEM_PROMPT,
         userPrompt,
-        GENERATION_CONFIG_TITLES
+        GENERATION_CONFIG_TITLES,
+        "text/plain",
+        text
       );
 
       let accumulatedRes = "";
+
 
       for await (const chunk of result.stream) {
         const part = chunk.text();
@@ -112,6 +120,11 @@ class ContentService {
     } catch (error) {
       console.log("error: ", error);
     }
+  };
+
+  editTopics = async (titleId: string, resBody: Record<string, string>) => {
+    await this.repo.updateTopic(titleId, resBody);
+    return resBody;
   };
 
   generateScripts = async (userId: string, scriptId: string, res: Response) => {

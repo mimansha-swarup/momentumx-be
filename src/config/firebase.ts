@@ -3,11 +3,8 @@ import firebase from "firebase-admin";
 
 let serviceAccount: firebase.ServiceAccount;
 // if (process.env.FIREBASE_SERVICE_ACCOUNT_BASE64) {
-  const buff = Buffer.from(
-    process.env.FIREBASE_SERVICE_ACCOUNT_BASE64,
-    "base64"
-  );
-  serviceAccount = JSON.parse(buff.toString("utf-8"));
+const buff = Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_BASE64, "base64");
+serviceAccount = JSON.parse(buff.toString("utf-8"));
 // } else {
 //   serviceAccount = serviceAccountJSON as firebase.ServiceAccount;
 // }

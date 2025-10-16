@@ -17,6 +17,8 @@ router.use(authMiddleware);
 
 router.get("/stream/topics", contentController.generateTopics);
 router.get("/topics", contentController.retrieveTopics);
+router.patch("/topics/edit/:topicId", contentController.editTopic);
+
 router.get("/scripts", contentController.retrieveScripts);
 router.get("/script/:scriptId", contentController.retrieveScriptById);
 

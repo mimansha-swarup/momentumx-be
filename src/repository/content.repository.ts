@@ -140,6 +140,7 @@ class ContentRepository {
       console.log("error", error);
     }
   };
+
   saveScript = async (scriptId: string, data: unknown) => {
     try {
       await this.db

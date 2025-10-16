@@ -1,6 +1,8 @@
 import { NextFunction, Request, Response } from "express";
 import ContentService from "../service/content.service.js";
-import { formatGeneratedScript, formatGeneratedTitle } from "../utlils/content.js";
+import {
+  formatGeneratedTitle,
+} from "../utlils/content.js";
 import { firebase } from "../config/firebase.js";
 
 class ContentController {
@@ -77,6 +79,15 @@ class ContentController {
     }
   };
 
+  editTopic = async (req: Request, res: Response) => {
+    const topicId = req.params.scriptId;
+    await this.service.editTopics(topicId, req.body);
+    res.sendSuccess({
+      message: "Title updated successfully",
+      data: req.body,
+    });
+  };
+
   generateScript = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const token = req.query.token || "";
@@ -96,9 +107,10 @@ class ContentController {
   retrieveScriptById = async (
     req: Request,
     res: Response,
-    next: NextFunction) =>{
+    next: NextFunction
+  ) => {
     try {
-      const data = await this.service.getScriptById( req.params.scriptId);
+      const data = await this.service.getScriptById(req.params.scriptId);
       res.sendSuccess({
         message: "successfully retrieved script",
         data,
