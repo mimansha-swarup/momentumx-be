@@ -1,8 +1,6 @@
 import { NextFunction, Request, Response } from "express";
 import ContentService from "../service/content.service.js";
-import {
-  formatGeneratedTitle,
-} from "../utlils/content.js";
+import { formatGeneratedTitle } from "../utlils/content.js";
 import { firebase } from "../config/firebase.js";
 
 class ContentController {
@@ -80,7 +78,7 @@ class ContentController {
   };
 
   editTopic = async (req: Request, res: Response) => {
-    const topicId = req.params.scriptId;
+    const topicId = req.params.topicId;
     await this.service.editTopics(topicId, req.body);
     res.sendSuccess({
       message: "Title updated successfully",

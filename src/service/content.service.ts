@@ -58,7 +58,11 @@ class ContentService {
         },
         lists: docs?.map((doc) => ({
           ...doc,
-          createdAt: doc.createdAt.toDate().toISOString(),
+          createdAt:
+            typeof doc.createdAt === "string"
+              ? doc.createdAt
+              : doc.createdAt?.toDate()?.toISOString(),
+          updatedAt: doc?.updatedAt,
         })),
       };
     } catch (error) {
@@ -91,7 +95,6 @@ class ContentService {
       );
 
       let accumulatedRes = "";
-
 
       for await (const chunk of result.stream) {
         const part = chunk.text();
