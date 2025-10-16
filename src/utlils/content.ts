@@ -43,5 +43,3 @@ export function formatCreatorsData(creator) {
 
   return result.trim();
 }
-
-

@@ -44,7 +44,7 @@ class UserService {
         titles: settledTitle[idx]?.value || [],
       }));
 
-      record.userTitle = userTitle?.value;
+      record.userTitle = userTitle?.value || [];
 
       record.websiteContent = (websiteContent?.value as string) || "";
 
@@ -97,7 +97,7 @@ class UserService {
         titles: settledTitle[idx]?.value || [],
       }));
 
-      record.userTitle = userTitle?.value;
+      record.userTitle = userTitle?.value || [];
 
       record.websiteContent = (websiteContent?.value as string) || "";
       await this.repo.update(userId, record);
