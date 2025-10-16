@@ -1,4 +1,4 @@
-import ExtractRepository from "src/repository/extract.repository.js";
+import ExtractRepository from "../repository/extract.repository.js";
 import { stats } from "../constants/collection.js";
 import UserRepository from "../repository/user.repository.js";
 import ExtractService from "./extract.service.js";

@@ -1,4 +1,4 @@
-import { extractChannelInfo } from "src/utlils/regex.js";
+import { extractChannelInfo } from "../utlils/regex.js";
 import ExtractRepository from "../repository/extract.repository.js";
 
 class ExtractService {
