@@ -41,6 +41,6 @@ export const generateStreamingContent = (
   const result = genAIModel(
     systemPrompt,
     generationConfig
-  ).generateContentStream(userPrompt);
+  ).generateContent(userPrompt);
   return result;
 };

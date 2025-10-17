@@ -154,20 +154,22 @@ class ContentService {
         GENERATION_CONFIG_SCRIPTS
       );
 
-      let accumulatedRes = "";
+      let accumulatedRes =
+        result?.response?.candidates?.[0]?.content?.parts?.[0]?.text;
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("Connection", "keep-alive");
       res.flushHeaders();
 
-      for await (const chunk of result.stream) {
-        const part = chunk.text();
-        if (part) {
-          accumulatedRes += part;
-          res.write(`data: ${JSON.stringify(part)}\n\n`);
-        }
-      }
+      // for await (const chunk of result.stream) {
+      //   const part = chunk.text();
+      //   if (part) {
+      //     accumulatedRes += part;
+      //     res.write(`data: ${JSON.stringify(part)}\n\n`);
+      //   }
+      // }
+      res.write(`data: ${JSON.stringify(accumulatedRes)}\n\n`);
 
       res.write(`event: done\n`);
       res.write(`data: [done]\n\n`);
