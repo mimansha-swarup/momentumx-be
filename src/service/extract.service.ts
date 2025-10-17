@@ -21,7 +21,7 @@ class ExtractService {
         : `forUsername=${info.value}`;
 
     const channelRes = await this.repo.retrieveChannelId(param);
-
+    console.log(info.value, ":", JSON.stringify(channelRes));
     return channelRes.items?.[0]?.id || null;
   };
 

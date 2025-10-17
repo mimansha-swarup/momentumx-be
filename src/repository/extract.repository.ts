@@ -12,6 +12,7 @@ class ExtractRepository {
       const data = await res.json();
       const title = data?.items?.map((videoItem) => videoItem?.snippet?.title);
 
+      console.log(channelId, ":", title);
       return title;
     } catch (error) {
       console.log("error:  at getYTContent", error);
