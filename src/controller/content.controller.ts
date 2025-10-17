@@ -13,7 +13,7 @@ class ContentController {
   retrieveTopics = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const {
-        limit = "10",
+        limit = "9",
         createdAt = "",
         docId = "",
         searchText = "",

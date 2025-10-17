@@ -23,7 +23,7 @@ class ContentRepository {
 
   getTopics = async ({
     userId,
-    limit = 10,
+    limit = 8,
     cursor,
     filters,
   }: IGetTopicByUserIdArgs) => {
