@@ -21,5 +21,6 @@ router.patch("/topics/edit/:topicId", contentController.editTopic);
 
 router.get("/scripts", contentController.retrieveScripts);
 router.get("/script/:scriptId", contentController.retrieveScriptById);
+router.patch("/script/edit/:scriptId", contentController.editScript);
 
 export default router;

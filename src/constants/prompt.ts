@@ -146,6 +146,7 @@ Important:
 - Do not include any intro text like "Okay", "Here's your script", or any title or YouTube Video Script:.
 - Do not add any headings, titles, or labels such as "YouTube Video Script" or "Intro".
 - Only return the script content. Nothing else.
+- response shall be in html format not in markdown format
 `;
 
 export const SCRIPT_USER_PROMPT = `
@@ -164,4 +165,6 @@ Niche: {niche}
 Audience: {targetAudience}
 Key Competitor: {competitors}
 website content: {websiteContent}
+
+response shall be in html format not in markdown format
 `;

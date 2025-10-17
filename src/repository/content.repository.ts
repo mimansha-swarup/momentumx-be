@@ -135,7 +135,22 @@ class ContentRepository {
 
   updateTopic = async (topicId: string, data: Record<string, unknown>) => {
     try {
-      await this.db.collection(this.collection).doc(topicId).update(data);
+      await this.db
+        .collection(this.collection)
+        .doc(topicId)
+        .set(data, { merge: true });
+    } catch (error) {
+      console.log("error", error);
+    }
+  };
+
+  editScript = async (scriptId: string, data: Record<string, unknown>) => {
+    try {
+      console.log("data", data);
+      await this.db
+        .collection(this.script_collection)
+        .doc(scriptId)
+        .set(data, { merge: true });
     } catch (error) {
       console.log("error", error);
     }

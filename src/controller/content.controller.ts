@@ -82,7 +82,16 @@ class ContentController {
     await this.service.editTopics(topicId, req.body);
     res.sendSuccess({
       message: "Title updated successfully",
-      data: req.body,
+      data: { ...req.body, id: topicId },
+    });
+  };
+
+  editScript = async (req: Request, res: Response) => {
+    const scriptId = req.params.scriptId;
+    await this.service.editScript(scriptId, req.body);
+    res.sendSuccess({
+      message: "Title updated successfully",
+      data: { ...req.body, scriptId },
     });
   };
 

@@ -130,6 +130,11 @@ class ContentService {
     return resBody;
   };
 
+  editScript = async (scriptId: string, resBody: Record<string, string>) => {
+    await this.repo.editScript(scriptId, resBody);
+    return resBody;
+  };
+
   generateScripts = async (userId: string, scriptId: string, res: Response) => {
     try {
       const [userRecord, titleRecord] = await Promise.all([
