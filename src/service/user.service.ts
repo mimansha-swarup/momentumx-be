@@ -26,8 +26,14 @@ class UserService {
           )
         );
       }
+      let websiteContent;
       const settledList = await Promise.allSettled(asyncList);
-      const [websiteContent, userId, ...competitorId] = settledList;
+      if (data.website) {
+        websiteContent = settledList[0];
+        settledList.shift();
+      }
+
+      const [userId, ...competitorId] = settledList;
 
       asyncList.length = 0;
 
@@ -45,6 +51,7 @@ class UserService {
       }));
 
       record.userTitle = userTitle?.value || [];
+      record.channelId = userId?.value || "";
 
       record.websiteContent = (websiteContent?.value as string) || "";
 
@@ -80,7 +87,13 @@ class UserService {
         );
       }
       const settledList = await Promise.allSettled(asyncList);
-      const [websiteContent, userYTId, ...competitorId] = settledList;
+
+      let websiteContent;
+      if (data.website) {
+        websiteContent = settledList[0];
+        settledList.shift();
+      }
+      const [userYTId, ...competitorId] = settledList;
 
       asyncList.length = 0;
 
@@ -98,7 +111,7 @@ class UserService {
       }));
 
       record.userTitle = userTitle?.value || [];
-
+      record.channelId = userYTId?.value || "";
       record.websiteContent = (websiteContent?.value as string) || "";
       await this.repo.update(userId, record);
       return record;
