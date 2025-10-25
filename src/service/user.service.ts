@@ -2,6 +2,7 @@ import ExtractRepository from "../repository/extract.repository.js";
 import { stats } from "../constants/collection.js";
 import UserRepository from "../repository/user.repository.js";
 import ExtractService from "./extract.service.js";
+import { formatUserData } from "src/utlils/content.js";
 
 class UserService {
   private repo: UserRepository;
@@ -13,47 +14,13 @@ class UserService {
   }
 
   createOnboardingData = async (userId: string, data: IOnboardingPayload) => {
-    const record = { ...data, websiteContent: "", stats };
+    let record;
     try {
-      const asyncList: Promise<unknown>[] = [];
-      if (data.website) {
-        asyncList.push(this.repo.getWebsiteContent(data.website));
-      }
-      if (data.competitors) {
-        asyncList.push(
-          ...[data.userName, ...record.competitors]?.map((competitorUrl) =>
-            this.extractService.retrieveChannelId(competitorUrl)
-          )
-        );
-      }
-      let websiteContent;
-      const settledList = await Promise.allSettled(asyncList);
-      if (data.website) {
-        websiteContent = settledList[0];
-        settledList.shift();
-      }
-
-      const [userId, ...competitorId] = settledList;
-
-      asyncList.length = 0;
-
-      asyncList.push(
-        ...[{ value: userId.value }, ...competitorId]?.map((competitor) =>
-          this.extractService.getTopTenTitle(competitor.value)
-        )
+      record = await formatUserData(
+        { ...data, stats },
+        this.extractService,
+        this.repo
       );
-      const [userTitle, ...settledTitle] = await Promise.allSettled(asyncList);
-
-      record.competitors = data.competitors?.map((url, idx) => ({
-        url,
-        id: competitorId[idx]?.value || "",
-        titles: settledTitle[idx]?.value || [],
-      }));
-
-      record.userTitle = userTitle?.value || [];
-      record.channelId = userId?.value || "";
-
-      record.websiteContent = (websiteContent?.value as string) || "";
 
       return record;
     } catch (error) {
@@ -73,46 +40,8 @@ class UserService {
   };
 
   updateProfile = async (userId: string, data: IOnboardingPayload) => {
-    const record = { ...data, websiteContent: "" };
     try {
-      const asyncList: Promise<unknown>[] = [];
-      if (data.website) {
-        asyncList.push(this.repo.getWebsiteContent(data.website));
-      }
-      if (data.competitors) {
-        asyncList.push(
-          ...[data.userName, ...record.competitors]?.map((competitorUrl) =>
-            this.extractService.retrieveChannelId(competitorUrl)
-          )
-        );
-      }
-      const settledList = await Promise.allSettled(asyncList);
-
-      let websiteContent;
-      if (data.website) {
-        websiteContent = settledList[0];
-        settledList.shift();
-      }
-      const [userYTId, ...competitorId] = settledList;
-
-      asyncList.length = 0;
-
-      asyncList.push(
-        ...[{ value: userYTId.value }, ...competitorId]?.map((competitor) =>
-          this.extractService.getTopTenTitle(competitor.value)
-        )
-      );
-      const [userTitle, ...settledTitle] = await Promise.allSettled(asyncList);
-
-      record.competitors = data.competitors?.map((url, idx) => ({
-        url,
-        id: competitorId[idx]?.value || "",
-        titles: settledTitle[idx]?.value || [],
-      }));
-
-      record.userTitle = userTitle?.value || [];
-      record.channelId = userYTId?.value || "";
-      record.websiteContent = (websiteContent?.value as string) || "";
+      const record = await formatUserData(data, this.extractService, this.repo);
       await this.repo.update(userId, record);
       return record;
     } catch (error) {

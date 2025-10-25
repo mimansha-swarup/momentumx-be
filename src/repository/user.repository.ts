@@ -22,7 +22,7 @@ class UserRepository {
         .doc(userId)
         .set(data as Record<string, unknown>, { merge: true });
     } catch (error) {
-      console.log("error", error);
+      console.log("error in add", error);
     }
   };
   update = async (userId: string, data: unknown) => {

@@ -21,8 +21,12 @@ class ExtractService {
         : `forUsername=${info.value}`;
 
     const channelRes = await this.repo.retrieveChannelId(param);
-    console.log(info.value, ":", JSON.stringify(channelRes));
-    return channelRes.items?.[0]?.id || null;
+    const channel = channelRes?.items?.[0];
+
+    return {
+      id: channel?.id,
+      description: channel?.brandingSettings?.channel?.description,
+    };
   };
 
   getTopTenTitle = async (channelId: string) => {

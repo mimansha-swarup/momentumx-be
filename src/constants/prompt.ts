@@ -85,11 +85,11 @@ Generate 10 titles total:
 ### 🌐 PHASE 5: CONTEXTUAL RELEVANCE
 
 Each title must:
-- Align with {brandName}'s niche: {niche}.
+- Align with niche: {niche}.
 - Speak to the target audience: {targetAudience}.
 - Reflect content on {website}.
 - Integrate at least one 2025 trend keyword related to {niche} (e.g., AI agents, Skool, Make.com, YouTube Shorts, solopreneur systems, etc.).
-- Distinguish {brandName} from {competitors} using insight, not fluff.
+- Distinguish from {competitors} using insight, not fluff.
 
 ---
 
@@ -106,7 +106,7 @@ Each title must:
 When ready, output ONLY the final 10 titles — no explanations, no numbering, no quotes.`;
 
 export const TOPIC_USER_PROMPT = `
-Generate high-performing YouTube video titles for my brand, {brandName}, which focuses on {niche}.  
+Generate high-performing YouTube video titles, which focuses on {niche}.  
 Our website is {website}, and it features content such as:  
 '''{websiteContent}'''
 
@@ -116,7 +116,7 @@ These topics should:
 - Resonate with my audience's goals and pain points.
 - Reflect current 2025 YouTube trends within {niche}.
 - Use emotional storytelling and curiosity without misleading.
-- Position {brandName} as an authority and trend leader.
+- Position {userName} as an authority and trend leader.
 
 Please follow the expert system prompt's structure to output 10 optimized titles.
 `;
@@ -158,8 +158,7 @@ keep the script context around the title  use below data points like user Name, 
 
 
 User Profile:
-Name: {userName}
-Brand: {brandName} 
+channel Link: {userName}
 Niche: {niche}
 Audience: {targetAudience}
 Key Competitor: {competitors}

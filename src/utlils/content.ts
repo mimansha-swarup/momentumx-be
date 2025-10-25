@@ -1,4 +1,7 @@
 import { randomUUID } from "crypto";
+import { DocumentData } from "firebase-admin/firestore";
+import UserRepository from "src/repository/user.repository";
+import ExtractService from "src/service/extract.service";
 
 export const formatGeneratedTitle = (title: string, userId: string) => {
   return {
@@ -24,7 +27,7 @@ export const formatGeneratedScript = (
   };
 };
 
-export function formatCreatorsData(creator) {
+export function formatCreatorsData(creator: DocumentData) {
   // If it's a single object, wrap it in an array for uniform handling
   const list = [
     { url: creator?.userName, titles: creator?.userTitle },
@@ -39,7 +42,105 @@ export function formatCreatorsData(creator) {
     result += `\n\n Video's of ${url}\n`;
     result += titles.map((title, i) => `   ${i + 1}. ${title}`).join("\n");
     result += "\n";
+    result += `
+    A list of proven YouTube title templates (bookmark this):
+
+Action-Based Formats:
+
+"How to [Result] in 2025 [FROM $0 TO [Desired End Result]]"
+“How to Use [common software tool] - 2025 Full Tutorial”
+"How to [common searched part of your process]"
+"STOP doing [Old Way], Do This Instead to [Result]"
+
+Educational Formats:
+
+"[Niche] Has Changed in 2025... Here's Everything You Need to Know"
+"Is [Niche] a Scam?"
+The BEST Way to [Result] in 2025
+
+Social Proof Formats:
+
+‘How [Name] Went From X to Y - Case Study Breakdown
+\n
+    `;
   }
 
   return result.trim();
+}
+
+export async function formatUserData(
+  data: IOnboardingPayload,
+  extractService: ExtractService,
+  repo: UserRepository
+) {
+  const record: IOnboardingPayload &
+    Partial<{
+      competitor: { title: string; url: string; id: string }[];
+      userTitle: string[];
+      websiteContent: string;
+      channelId: string;
+    }> = { ...data };
+
+  const asyncList: Promise<unknown>[] = [];
+  if (data.website) {
+    asyncList.push(repo.getWebsiteContent(data.website));
+  }
+  if (data.competitors) {
+    asyncList.push(
+      ...[data.userName, ...record.competitors]?.map((competitorUrl) =>
+        extractService.retrieveChannelId(competitorUrl)
+      )
+    );
+  }
+  const settledList = await Promise.allSettled(asyncList);
+
+  let websiteContent;
+  if (data.website) {
+    websiteContent = settledList[0];
+    settledList.shift();
+  }
+  const [userYTId, ...competitorId] = settledList;
+
+  asyncList.length = 0;
+
+  asyncList.push(
+    ...[{ value: userYTId.value }, ...competitorId]?.map((competitor) =>
+      extractService.getTopTenTitle(competitor.value?.id)
+    )
+  );
+  const [userTitle, ...settledTitle] = await Promise.allSettled(asyncList);
+
+  record.competitors = data.competitors?.map((url: string, idx: number) => {
+    const idResult = competitorId[idx];
+    const titleResult = settledTitle[idx];
+
+    return {
+      url,
+      id:
+        idResult && idResult.status === "fulfilled"
+          ? (idResult.value?.id as string)
+          : "",
+      titles:
+        titleResult && titleResult.status === "fulfilled"
+          ? (titleResult.value as string[])
+          : [],
+    };
+  });
+
+  record.userTitle =
+    userTitle && userTitle.status === "fulfilled"
+      ? (userTitle.value as string[])
+      : [];
+  record.channelId =
+    userYTId?.status === "fulfilled" ? (userYTId?.value?.id as string) : "";
+  record.description =
+    userYTId?.status === "fulfilled"
+      ? (userYTId?.value?.description as string)
+      : "";
+  record.websiteContent =
+    websiteContent?.status === "fulfilled"
+      ? (websiteContent?.value as string)
+      : "";
+
+  return record;
 }
