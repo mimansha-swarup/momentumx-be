@@ -72,6 +72,19 @@ class ContentRepository {
       console.log("error in repo", error);
     }
   };
+  getAllTopics = async ({ userId = "" }) => {
+    try {
+      let query = this.db
+        .collection(this.collection)
+        .where("createdBy", "==", userId);
+
+      const snapshot = await query.get();
+
+      return snapshot.docs.map((doc) => doc.data());
+    } catch (error) {
+      console.log("error in repo", error);
+    }
+  };
 
   getScripts = async (userId: string) => {
     try {
@@ -146,7 +159,6 @@ class ContentRepository {
 
   editScript = async (scriptId: string, data: Record<string, unknown>) => {
     try {
-      console.log("data", data);
       await this.db
         .collection(this.script_collection)
         .doc(scriptId)

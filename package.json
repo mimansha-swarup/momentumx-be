@@ -10,7 +10,7 @@
     "dev": "npx tsx --env-file=.env src/server.ts",
     "dev:watch": "npx tsx --env-file=.env --watch src/server.ts"
   },
-  "author": "Mimansha, Jatin",
+  "author": "Mimansha",
   "license": "ISC",
   "dependencies": {
     "@google/generative-ai": "^0.24.0",
@@ -24,6 +24,7 @@
     "firebase-functions": "^6.3.2",
     "googleapis": "^144.0.0",
     "helmet": "^8.0.0",
+    "ml-kmeans": "^6.0.0",
     "nodemon": "^3.1.9"
   },
   "devDependencies": {

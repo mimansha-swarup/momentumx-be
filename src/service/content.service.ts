@@ -12,6 +12,7 @@ import { generateContent, generateStreamingContent } from "../utlils/ai.js";
 import {
   formatCreatorsData,
   formatGeneratedScript,
+  getClusteredTitles,
 } from "../utlils/content.js";
 import {
   GENERATION_CONFIG_SCRIPTS,
@@ -73,6 +74,8 @@ class ContentService {
 
   generateTopics = async (userId: string) => {
     try {
+      const similarTitles = await getClusteredTitles(userId, this.repo);
+
       const userRecord = await this.userRepo.get(userId);
       let userPrompt = TOPIC_USER_PROMPT.replace(
         "{brandName}",
@@ -84,8 +87,9 @@ class ContentService {
         .replace("{niche}", userRecord?.niche)
         .replace("{websiteContent}", userRecord?.websiteContent);
 
-      const text = formatCreatorsData(userRecord);
+      const text = formatCreatorsData(userRecord, similarTitles.flat());
 
+      console.log("test sdfs \n", text);
       const result = await generateContent(
         TOPIC_SYSTEM_PROMPT,
         userPrompt,

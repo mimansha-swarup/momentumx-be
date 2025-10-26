@@ -59,9 +59,17 @@ class ContentController {
   generateTopics = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const data = await this.service.generateTopics(req.userId);
-      const modifiedData = (data || [])?.map((record) =>
-        formatGeneratedTitle(record, req.userId)
+      const modifiedDataResults = await Promise.allSettled(
+        (data || [])?.map(
+          async (record) =>  formatGeneratedTitle(record, req.userId)
+        )
       );
+  
+      // Filter out failed ones, keep only successful
+      const modifiedData = modifiedDataResults
+        .filter((result) => result.status === "fulfilled")
+        .map((result) => (result).value);
+  
 
       if (!modifiedData?.length) {
         throw new Error("Unable to generate at the moment");

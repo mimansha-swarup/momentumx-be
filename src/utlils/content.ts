@@ -1,15 +1,20 @@
 import { randomUUID } from "crypto";
 import { DocumentData } from "firebase-admin/firestore";
+import { kmeans } from "ml-kmeans";
+import { embeddingModel } from "src/config/ai";
+import ContentRepository from "src/repository/content.repository";
 import UserRepository from "src/repository/user.repository";
 import ExtractService from "src/service/extract.service";
 
-export const formatGeneratedTitle = (title: string, userId: string) => {
+export const formatGeneratedTitle = async (title: string, userId: string) => {
+  const embedding = await embeddingModel.embedContent(title);
   return {
     id: randomUUID(),
     title,
     createdBy: userId || "",
     createdAt: new Date(),
     isScriptGenerated: false,
+    embedding: embedding.embedding.values,
   };
 };
 export const formatGeneratedScript = (
@@ -27,7 +32,10 @@ export const formatGeneratedScript = (
   };
 };
 
-export function formatCreatorsData(creator: DocumentData) {
+export function formatCreatorsData(
+  creator: DocumentData,
+  similarTitles: string[]
+) {
   // If it's a single object, wrap it in an array for uniform handling
   const list = [
     { url: creator?.userName, titles: creator?.userTitle },
@@ -39,30 +47,39 @@ export function formatCreatorsData(creator: DocumentData) {
   for (const creator of list) {
     const { url, titles = [] } = creator;
 
-    result += `\n\n Video's of ${url}\n`;
+    result += `\n\n High-performing titles from the channel: ${url}\n`;
     result += titles.map((title, i) => `   ${i + 1}. ${title}`).join("\n");
     result += "\n";
-    result += `
-    A list of proven YouTube title templates (bookmark this):
+  }
+  result += `
+    A list of proven YouTube title templates (Example that works):
 
-Action-Based Formats:
+    Action-Based Formats:
 
-"How to [Result] in 2025 [FROM $0 TO [Desired End Result]]"
-“How to Use [common software tool] - 2025 Full Tutorial”
-"How to [common searched part of your process]"
-"STOP doing [Old Way], Do This Instead to [Result]"
+    "How to [Result] in 2025 [FROM $0 TO [Desired End Result]]"
+    “How to Use [common software tool] - 2025 Full Tutorial”
+    "How to [common searched part of your process]"
+    "STOP doing [Old Way], Do This Instead to [Result]"
 
-Educational Formats:
+    Educational Formats:
 
-"[Niche] Has Changed in 2025... Here's Everything You Need to Know"
-"Is [Niche] a Scam?"
-The BEST Way to [Result] in 2025
+    "[Niche] Has Changed in 2025... Here's Everything You Need to Know"
+    "Is [Niche] a Scam?"
+    The BEST Way to [Result] in 2025
 
-Social Proof Formats:
+    Social Proof Formats:
 
-‘How [Name] Went From X to Y - Case Study Breakdown
-\n
-    `;
+    ‘How [Name] Went From X to Y - Case Study Breakdown
+  \n
+  `;
+  if (similarTitles.length) {
+    result += `\n \n 
+  Avoid Similar Titles that has been already generated: \n
+`;
+
+    result += similarTitles
+      .map((title, i) => `   ${i + 1}. ${title}`)
+      .join("\n");
   }
 
   return result.trim();
@@ -143,4 +160,37 @@ export async function formatUserData(
       : "";
 
   return record;
+}
+
+export async function getClusteredTitles(
+  userId: string,
+  repo: ContentRepository
+) {
+  // 1️⃣ Fetch all titles + embeddings
+  const titleRecord = await repo.getAllTopics({ userId });
+  const k = Math.min(8, Math.ceil(titleRecord.length / 20));
+  // console.log("ttitleRecord", titleRecord)
+  const titles: string[] = titleRecord?.map((doc) => doc.title) || [];
+  const embeddings: number[][] = titleRecord?.map((doc) => doc.embedding) || [];
+
+  console.log(titles.length, "swarup");
+  if (titles.length <= k) {
+    // If fewer titles than clusters, return all titles as one cluster
+    return [titles];
+  }
+
+  // 2️⃣ Run KMeans clustering
+  const { clusters } = kmeans(embeddings, k);
+
+  // 3️⃣ Group titles by cluster
+  const clusteredTitles = Array.from({ length: k }, () => []);
+  clusters.forEach((clusterIndex, i) => {
+    clusteredTitles[clusterIndex].push(titles[i]);
+  });
+
+  // 4️⃣ Optionally: pick top N titles per cluster to feed AI
+  const topN = 10;
+  const result = clusteredTitles.map((cluster) => cluster.slice(0, topN));
+
+  return result;
 }
