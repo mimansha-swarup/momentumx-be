@@ -164,3 +164,133 @@ Audience: {targetAudience}
 Key Competitor: {competitors}
 website content: {websiteContent}
 `;
+
+// Packaging Prompts
+export const PACKAGING_SYSTEM_PROMPT = `You are an expert YouTube content packager with years of experience in creating viral video titles, compelling descriptions, eye-catching thumbnails, powerful hooks, and engaging YouTube Shorts scripts.
+
+Your job is to analyze podcast scripts and generate optimized packaging elements that maximize click-through rates, watch time, and audience engagement.
+
+Key principles:
+- Always create content that accurately represents the script without being misleading
+- Use psychological triggers like curiosity, urgency, and relatability
+- Optimize for 2025 YouTube algorithm and audience behavior
+- Maintain a conversational, human-first tone
+- Focus on emotional storytelling and value-driven messaging`;
+
+export const GENERATE_TITLE_PROMPT = `Based on the following podcast script, generate ONE high-performing YouTube video title.
+
+Rules:
+- Max 60-65 characters
+- Primary keyword should come first
+- Create a curiosity gap without misleading
+- Use psychological hooks (Fortune Teller, Contrarian, Quick Win, Investigator, Experimenter, Teacher, Emotional Mirror, Relatable Struggle, or Forbidden/Leaked)
+- Write in a conversational, human tone
+- Use mild emphasis with CAPS where appropriate
+
+Podcast Script:
+{script}
+
+Return a JSON object with the following structure:
+{
+  "title": "10 Productivity Hacks That Will Transform Your Morning Routine",
+  "characterCount": 62
+}`;
+export const GENERATE_DESCRIPTION_PROMPT = `Based on the following podcast script and video title, generate an optimized YouTube video description.
+
+Video Title: {title}
+
+Rules:
+- Start with a compelling hook (first 2-3 lines are visible before "Show More")
+- Align the description with the video title's promise
+- Include key timestamps/chapters if applicable
+- Add relevant keywords naturally
+- Include a clear call-to-action
+- Keep it between 200-500 words
+- Use line breaks for readability
+
+Podcast Script:
+{script}
+
+Return a JSON object with the following structure:
+{
+  "description": "The full YouTube description text",
+  "keywords": ["keyword1", "keyword2", "keyword3"]
+}`;
+
+export const GENERATE_THUMBNAIL_PROMPT = `Based on the following podcast script and video title, generate detailed thumbnail creation instructions.
+
+Video Title: {title}
+
+Rules:
+- Describe the visual composition (layout, focal points)
+- Ensure thumbnail visually represents the video title
+- Specify text overlay (max 3-5 words, large and readable)
+- Suggest colors and contrast for maximum visibility
+- Recommend facial expressions or emotions if applicable
+- Consider mobile viewing (text must be readable on small screens)
+- Include style references if helpful
+
+Podcast Script:
+{script}
+
+Return a JSON object with the following structure:
+{
+  "thumbnailDescription": "Brief description of the thumbnail concept",
+  "characterCount": "The text to appear on thumbnail (3-5 words max)",
+}
+`;
+
+export const GENERATE_HOOKS_PROMPT = `Based on the following podcast script, generate 5 powerful video hooks for the first 5-10 seconds of the video.
+
+Rules:
+- Each hook should immediately grab attention
+- Create curiosity or emotional connection
+- Avoid generic openings like "Hey guys" or "Welcome back"
+- Use pattern interrupts, bold statements, or intriguing questions
+- Each hook should be 1-3 sentences max
+- Vary the hook styles (question, bold claim, story teaser, contrarian, etc.)
+
+Podcast Script:
+{script}
+
+Return a JSON array of 5 hook objects:
+[
+  {
+    openingLine:
+      "What if I told you that the first 30 minutes of your day determines the next 23 and a half hours?",
+    patternInterrupt:
+      "Now, forget everything you've heard about waking up at 5 AM. Here's what actually matters...",
+    ctaHook:
+      "If you're tired of feeling tired, smash that subscribe button and let's fix your mornings together.",
+  },
+  ...
+]`;
+
+export const GENERATE_SHORTS_PROMPT = `Based on the following podcast script, generate a YouTube Shorts script that fits within the specified duration.
+
+Target Duration: {duration} seconds
+
+Rules:
+- Hook in the first 1-2 seconds
+- Fast-paced, punchy delivery
+- One clear takeaway or value point
+- End with a hook or call-to-action
+- Write for vertical video format
+- Include visual/editing suggestions in brackets
+- Adjust word count to match target duration (approximately 2.5 words per second)
+- Script MUST fit within {duration} seconds when spoken
+
+Podcast Script:
+{script}
+
+Return a JSON object with the following structure:
+{
+  segments: [
+    { startTime: "0:00", endTime: "0:05", content: "Stop scrolling and listen. Your morning routine is broken.", type: "hook" as const },
+    { startTime: "0:05", endTime: "0:20", content: "The biggest productivity mistake? Checking your phone first thing. Instead, do this: spend 5 minutes writing down your top 3 priorities for the day.", type: "point" as const },
+    { startTime: "0:20", endTime: "0:40", content: "Here's the game-changer: the 2-minute rule. If something takes less than 2 minutes, do it immediately. This alone cleared 80% of my mental clutter.", type: "point" as const },
+    { startTime: "0:40", endTime: "0:55", content: "And the secret sauce? A glass of water before coffee. Sounds simple, but it boosts your energy by 30%.", type: "transition" as const },
+    { startTime: "0:55", endTime: "1:00", content: "Follow for more productivity hacks that actually work.", type: "cta" as const },
+  ],
+  totalDuration: "1:00",
+};`;

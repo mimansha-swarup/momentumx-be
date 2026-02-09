@@ -2,6 +2,7 @@ export const enum COLLECTIONS {
   USERS = "users",
   SCRIPTS = "scripts",
   TOPICS = "topics",
+  PACKAGING = "packaging",
 }
 
 export const stats = {

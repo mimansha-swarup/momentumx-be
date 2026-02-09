@@ -13,3 +13,7 @@ export const GENERATION_CONFIG_TITLES: GenerationConfig = {
 export const GENERATION_CONFIG_SCRIPTS: GenerationConfig = {
   responseMimeType: "text/plain",
 };
+
+export const GENERATION_CONFIG_PACKAGING: GenerationConfig = {
+  responseMimeType: "application/json",
+};
