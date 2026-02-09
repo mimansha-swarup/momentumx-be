@@ -8,6 +8,6 @@ const genAIModel = (systemPrompt: string, generationConfig: GenerationConfig) =>
     generationConfig,
   });
 export const embeddingModel = genAI.getGenerativeModel({
-  model: "embedding-001",
+  model: "gemini-embedding-001",
 });
 export default genAIModel;

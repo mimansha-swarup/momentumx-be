@@ -21,7 +21,7 @@ export const formatGeneratedScript = (
   title: string,
   id: string,
   script: string,
-  userId: string
+  userId: string,
 ) => {
   return {
     id: id,
@@ -34,12 +34,12 @@ export const formatGeneratedScript = (
 
 export function formatCreatorsData(
   creator: DocumentData,
-  similarTitles: string[]
+  similarTitles: string[],
 ) {
   // If it's a single object, wrap it in an array for uniform handling
   const list = [
     { url: creator?.userName, titles: creator?.userTitle },
-    ...creator.competitors,
+    // ...creator.competitors,
   ];
 
   let result = "";
@@ -88,7 +88,7 @@ export function formatCreatorsData(
 export async function formatUserData(
   data: IOnboardingPayload,
   extractService: ExtractService,
-  repo: UserRepository
+  repo: UserRepository,
 ) {
   const record: IOnboardingPayload &
     Partial<{
@@ -105,8 +105,8 @@ export async function formatUserData(
   if (data.competitors) {
     asyncList.push(
       ...[data.userName, ...record.competitors]?.map((competitorUrl) =>
-        extractService.retrieveChannelId(competitorUrl)
-      )
+        extractService.retrieveChannelId(competitorUrl),
+      ),
     );
   }
   const settledList = await Promise.allSettled(asyncList);
@@ -122,8 +122,8 @@ export async function formatUserData(
 
   asyncList.push(
     ...[{ value: userYTId.value }, ...competitorId]?.map((competitor) =>
-      extractService.getTopTenTitle(competitor.value?.id)
-    )
+      extractService.getTopTenTitle(competitor.value?.id),
+    ),
   );
   const [userTitle, ...settledTitle] = await Promise.allSettled(asyncList);
 
@@ -164,7 +164,7 @@ export async function formatUserData(
 
 export async function getClusteredTitles(
   userId: string,
-  repo: ContentRepository
+  repo: ContentRepository,
 ) {
   // 1️⃣ Fetch all titles + embeddings
   const titleRecord = await repo.getAllTopics({ userId });

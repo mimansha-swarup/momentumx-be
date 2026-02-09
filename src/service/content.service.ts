@@ -79,23 +79,22 @@ class ContentService {
       const userRecord = await this.userRepo.get(userId);
       let userPrompt = TOPIC_USER_PROMPT.replace(
         "{brandName}",
-        userRecord?.brandName
+        userRecord?.brandName,
       )
         .replace("{BRAND_VOICE}", userRecord?.brandName)
         .replace("{targetAudience}", userRecord?.targetAudience)
-        .replace("{competitors}", userRecord?.competitors.join(", "))
+        .replace("{competitors}", userRecord?.competitors?.join(", "))
         .replace("{niche}", userRecord?.niche)
         .replace("{websiteContent}", userRecord?.websiteContent);
 
       const text = formatCreatorsData(userRecord, similarTitles.flat());
 
-      console.log("test sdfs \n", text);
       const result = await generateContent(
         TOPIC_SYSTEM_PROMPT,
         userPrompt,
         GENERATION_CONFIG_TITLES,
         "text/plain",
-        text
+        text,
       );
 
       let accumulatedRes = "";
@@ -111,7 +110,7 @@ class ContentService {
 
       this.userRepo.update(userId, {
         "stats.topics": firebase.firestore.FieldValue.increment(
-          parsedRes.length
+          parsedRes.length,
         ),
       });
 
@@ -148,7 +147,7 @@ class ContentService {
 
       let userPrompt = SCRIPT_USER_PROMPT.replace(
         "{brandName}",
-        userRecord?.brandName
+        userRecord?.brandName,
       )
         .replace("{brandName}", userRecord?.brandName)
         .replace("{targetAudience}", userRecord?.targetAudience)
@@ -160,7 +159,7 @@ class ContentService {
       const result = await generateStreamingContent(
         SCRIPT_SYSTEM_PROMPT,
         userPrompt,
-        GENERATION_CONFIG_SCRIPTS
+        GENERATION_CONFIG_SCRIPTS,
       );
 
       let accumulatedRes = "";
@@ -186,7 +185,7 @@ class ContentService {
         titleRecord?.title,
         titleRecord?.id,
         accumulatedRes,
-        userId
+        userId,
       );
       this.repo.updateTopic(titleRecord?.id, {
         isScriptGenerated: true,

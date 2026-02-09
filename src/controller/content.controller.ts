@@ -60,16 +60,14 @@ class ContentController {
     try {
       const data = await this.service.generateTopics(req.userId);
       const modifiedDataResults = await Promise.allSettled(
-        (data || [])?.map(
-          async (record) =>  formatGeneratedTitle(record, req.userId)
-        )
+        (data || [])?.map(async (record) =>
+          formatGeneratedTitle(record, req.userId),
+        ),
       );
-  
       // Filter out failed ones, keep only successful
       const modifiedData = modifiedDataResults
         .filter((result) => result.status === "fulfilled")
-        .map((result) => (result).value);
-  
+        .map((result) => result.value);
 
       if (!modifiedData?.length) {
         throw new Error("Unable to generate at the moment");
@@ -122,7 +120,7 @@ class ContentController {
   retrieveScriptById = async (
     req: Request,
     res: Response,
-    next: NextFunction
+    next: NextFunction,
   ) => {
     try {
       const data = await this.service.getScriptById(req.params.scriptId);
