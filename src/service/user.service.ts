@@ -2,7 +2,7 @@ import ExtractRepository from "../repository/extract.repository.js";
 import { stats } from "../constants/collection.js";
 import UserRepository from "../repository/user.repository.js";
 import ExtractService from "./extract.service.js";
-import { formatUserData } from "src/utlils/content.js";
+import { formatUserData } from "../utlils/content.js";
 
 class UserService {
   private repo: UserRepository;
@@ -19,7 +19,7 @@ class UserService {
       record = await formatUserData(
         { ...data, stats },
         this.extractService,
-        this.repo
+        this.repo,
       );
 
       return record;
