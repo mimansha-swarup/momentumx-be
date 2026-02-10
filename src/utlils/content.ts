@@ -1,10 +1,10 @@
 import { randomUUID } from "crypto";
 import { DocumentData } from "firebase-admin/firestore";
 import { kmeans } from "ml-kmeans";
-import { embeddingModel } from "src/config/ai";
-import ContentRepository from "src/repository/content.repository";
-import UserRepository from "src/repository/user.repository";
-import ExtractService from "src/service/extract.service";
+import { embeddingModel } from "../config/ai";
+import ContentRepository from "../repository/content.repository";
+import UserRepository from "../repository/user.repository";
+import ExtractService from "../service/extract.service";
 
 export const formatGeneratedTitle = async (title: string, userId: string) => {
   const embedding = await embeddingModel.embedContent(title);
