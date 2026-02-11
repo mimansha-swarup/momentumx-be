@@ -1,0 +1,22 @@
+import { firebase } from "../config/firebase.js";
+export const authMiddleware = (req, res, next) => {
+    if (!req.headers.authorization) {
+        res.status(401).send("Unauthorized");
+        return;
+    }
+    const [bearer, token] = req.headers.authorization?.split(" ");
+    if (bearer !== "Bearer" || !token) {
+        res.status(401).send("Unauthorized");
+        return;
+    }
+    firebase
+        .auth()
+        .verifyIdToken(token)
+        .then((decodedToken) => {
+        req.userId = decodedToken.uid;
+        next();
+    })
+        .catch(() => {
+        res.status(403).send("Unable to authenticate");
+    });
+};

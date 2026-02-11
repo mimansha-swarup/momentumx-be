@@ -1,10 +1,10 @@
 import { randomUUID } from "crypto";
 import { DocumentData } from "firebase-admin/firestore";
 import { kmeans } from "ml-kmeans";
-import { embeddingModel } from "../config/ai";
-import ContentRepository from "../repository/content.repository";
-import UserRepository from "../repository/user.repository";
-import ExtractService from "../service/extract.service";
+import { embeddingModel } from "../config/ai.js";
+import ContentRepository from "../repository/content.repository.js";
+import UserRepository from "../repository/user.repository.js";
+import ExtractService from "../service/extract.service.js";
 
 export const formatGeneratedTitle = async (title: string, userId: string) => {
   const embedding = await embeddingModel.embedContent(title);
@@ -121,7 +121,7 @@ export async function formatUserData(
   asyncList.length = 0;
 
   asyncList.push(
-    ...[{ value: userYTId.value }, ...competitorId]?.map((competitor) =>
+    ...[{ value: userYTId.status === 'fulfilled' ? userYTId.value : undefined }, ...competitorId]?.map((competitor: any) =>
       extractService.getTopTenTitle(competitor.value?.id),
     ),
   );
@@ -135,24 +135,24 @@ export async function formatUserData(
       url,
       id:
         idResult && idResult.status === "fulfilled"
-          ? (idResult.value?.id as string)
+          ? ((idResult.value as any)?.id as string)
           : "",
       titles:
         titleResult && titleResult.status === "fulfilled"
           ? (titleResult.value as string[])
           : [],
     };
-  });
+  }) as any;
 
   record.userTitle =
     userTitle && userTitle.status === "fulfilled"
       ? (userTitle.value as string[])
       : [];
   record.channelId =
-    userYTId?.status === "fulfilled" ? (userYTId?.value?.id as string) : "";
+    userYTId?.status === "fulfilled" ? ((userYTId.value as any)?.id as string) : "";
   record.description =
     userYTId?.status === "fulfilled"
-      ? (userYTId?.value?.description as string)
+      ? ((userYTId.value as any)?.description as string)
       : "";
   record.websiteContent =
     websiteContent?.status === "fulfilled"
@@ -180,11 +180,11 @@ export async function getClusteredTitles(
   }
 
   // 2️⃣ Run KMeans clustering
-  const { clusters } = kmeans(embeddings, k);
+  const { clusters } = kmeans(embeddings, k, {});
 
   // 3️⃣ Group titles by cluster
-  const clusteredTitles = Array.from({ length: k }, () => []);
-  clusters.forEach((clusterIndex, i) => {
+  const clusteredTitles: string[][] = Array.from({ length: k }, () => []);
+  clusters.forEach((clusterIndex: number, i: number) => {
     clusteredTitles[clusterIndex].push(titles[i]);
   });
 

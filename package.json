@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
+    "vercel-build": "npm run build",
     "start": "node dist/server.js",
     "dev": "npx tsx --env-file=.env src/server.ts",
     "dev:watch": "npx tsx --env-file=.env --watch src/server.ts"

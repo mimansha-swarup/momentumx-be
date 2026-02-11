@@ -17,7 +17,7 @@ class UserService {
     let record;
     try {
       record = await formatUserData(
-        { ...data, stats },
+        { ...data, stats } as any,
         this.extractService,
         this.repo,
       );
