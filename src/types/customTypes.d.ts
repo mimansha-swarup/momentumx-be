@@ -13,6 +13,12 @@ export interface sendErrorProps
   detail?: unknown;
 }
 
+export interface IHookParagraph {
+  openingLine: string;
+  patternInterrupt: string;
+  ctaHook: string;
+}
+
 declare global {
   namespace Express {
     interface Response {
