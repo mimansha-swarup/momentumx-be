@@ -3,14 +3,14 @@ title: "Video Project — Feature Spec"
 description: "User flow, design decisions, Firestore schema, and stale cascade rules for the Video Project entity"
 date: 2026-02-27
 last_updated: 2026-02-27
-status: "draft"
+status: "implemented"
 tags: ["feature", "video-project", "spec", "phase-0"]
 ---
 
 # Video Project — Feature Spec
 
 ## Status
-Phase 0 — Designed, not yet implemented.
+Phase 0 — **Implemented** (Sprint 2). All CRUD and pipeline state-machine endpoints are live.
 
 ---
 

@@ -3,7 +3,7 @@ title: "Video Project — API Contracts"
 description: "All endpoints for creating, reading, updating, and managing Video Project pipeline state"
 date: 2026-02-27
 last_updated: 2026-02-27
-status: "draft"
+status: "implemented"
 tags: ["api", "video-project", "phase-0"]
 ---
 
@@ -26,7 +26,6 @@ All endpoints require `Authorization: Bearer <token>`. `authMiddleware` applied 
 | `DELETE` | `/v1/video-projects/:projectId` | Soft delete |
 | `PATCH` | `/v1/video-projects/:projectId/step/:stepName/start` | Mark step in_progress |
 | `PATCH` | `/v1/video-projects/:projectId/step/:stepName/complete` | Mark step completed |
-| `PATCH` | `/v1/video-projects/:projectId/step/:stepName/stale` | Apply stale cascade |
 | `PATCH` | `/v1/video-projects/:projectId/link/:resourceType` | Link saved resource ID |
 
 ---
@@ -53,7 +52,7 @@ Create a new Video Project from a selected topic. Called when the creator picks 
 {
   "success": true,
   "data": {
-    "projectId": "string",
+    "id": "string",
     "workingTitle": "string",
     "topicId": "string",
     "currentStep": "research",
@@ -102,7 +101,7 @@ List all Video Projects for the authenticated user. Powers the dashboard.
   "data": {
     "projects": [
       {
-        "projectId": "string",
+        "id": "string",
         "workingTitle": "string",
         "currentStep": "script",
         "overallStatus": "in_progress",
@@ -137,7 +136,7 @@ Get a single Video Project with full pipeline state.
 {
   "success": true,
   "data": {
-    "projectId": "string",
+    "id": "string",
     "workingTitle": "string",
     "topicId": "string",
     "scriptId": "string | null",
@@ -186,7 +185,7 @@ At least one field required. Empty body returns 400. Empty string `workingTitle`
 ```json
 {
   "success": true,
-  "data": { "projectId": "string", "workingTitle": "string", "lastUpdatedAt": "<timestamp>" }
+  "data": { "id": "string", "workingTitle": "string", "lastUpdatedAt": "<timestamp>" }
 }
 ```
 
@@ -203,7 +202,7 @@ Idempotent — if already deleted, returns 200.
 {
   "success": true,
   "message": "Project deleted successfully",
-  "data": { "projectId": "string", "isDeleted": true, "deletedAt": "<timestamp>" }
+  "data": { "id": "string", "isDeleted": true, "deletedAt": "<timestamp>" }
 }
 ```
 
@@ -222,7 +221,7 @@ Idempotent — if step is already `in_progress` or `completed`, returns 200 with
 {
   "success": true,
   "data": {
-    "projectId": "string",
+    "id": "string",
     "currentStep": "script",
     "pipeline": {
       "script": { "status": "in_progress", "startedAt": "<timestamp>", "completedAt": null }
@@ -258,35 +257,6 @@ Idempotent — if step already `completed`, returns 200.
 
 ---
 
-## PATCH `/v1/video-projects/:projectId/step/:stepName/stale`
-
-Apply stale cascade when content is regenerated. Called by other services (e.g., content service when script is regenerated), not directly by the user.
-
-Cascade rules per spec.md:
-- `script` → sets `hooks` and `packaging` to `stale`
-- `hooks` → sets `packaging` to `stale`
-- `research` → sets `script`, `hooks`, `packaging` to `stale`
-
-Only updates steps that are NOT `not_started`.
-
-### Response — `200`
-```json
-{
-  "success": true,
-  "data": {
-    "projectId": "string",
-    "overallStatus": "in_progress",
-    "pipeline": {
-      "hooks":    { "status": "stale", "startedAt": "<timestamp>", "completedAt": null },
-      "packaging": { "status": "stale", "startedAt": "<timestamp>", "completedAt": null }
-    },
-    "lastUpdatedAt": "<timestamp>"
-  }
-}
-```
-
----
-
 ## PATCH `/v1/video-projects/:projectId/link/:resourceType`
 
 Link a saved resource to the project. Called after a script, hooks batch, or packaging document is saved.
@@ -308,7 +278,7 @@ Link a saved resource to the project. Called after a script, hooks batch, or pac
 {
   "success": true,
   "data": {
-    "projectId": "string",
+    "id": "string",
     "scriptId": "string | null",
     "hooksId": "string | null",
     "packagingId": "string | null",
@@ -338,7 +308,6 @@ router.patch('/:projectId', controller.update);
 router.delete('/:projectId', controller.delete);
 router.patch('/:projectId/step/:stepName/start', controller.startStep);
 router.patch('/:projectId/step/:stepName/complete', controller.completeStep);
-router.patch('/:projectId/step/:stepName/stale', controller.markStale);
 router.patch('/:projectId/link/:resourceType', controller.linkResource);
 ```
 
@@ -350,18 +319,9 @@ app.use('/v1/video-projects', videoProjectRouter);
 
 ---
 
-## Collection Enum Addition Required
+## Collection Enum Addition
 
-```typescript
-// src/constants/collection.ts
-export enum Collection {
-  USERS = 'users',
-  TOPICS = 'topics',
-  SCRIPTS = 'scripts',
-  PACKAGING = 'packaging',
-  VIDEO_PROJECTS = 'videoProjects',  // ADD THIS
-}
-```
+✅ `VIDEO_PROJECTS = "videoProjects"` already added to `src/constants/collection.ts`.
 
 ---
 

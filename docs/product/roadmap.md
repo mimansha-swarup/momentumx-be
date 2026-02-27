@@ -20,6 +20,7 @@ All core features have been built as independent modules. **Nothing is integrate
 | Module | Built | Integrated | Notes |
 |---|---|---|---|
 | Onboarding | ✅ | ❌ | Brand setup, website scraping, YouTube + competitor ingestion |
+| Video Projects | ✅ | ❌ | CRUD + pipeline state machine (Sprint 2). Foundation for integration. |
 | Topic / Title Generation | ✅ | ❌ | AI-generated titles with KMeans clustering to avoid repetition |
 | Script Generation | ✅ | ❌ | Full ~10-min script, streamed via SSE |
 | Hooks | ✅ | ❌ | Currently lives inside Packaging module |
@@ -38,7 +39,7 @@ Onboarding → Research → Script → Hooks → Packaging
 ### Video Projects
 When a creator selects a topic from Research, a **video project** is created for that topic. All subsequent work — script, hooks, packaging — is tied to that project. This gives creators a structured workspace per video rather than a disconnected collection of generated assets.
 
-The video project lifecycle (formal stages, statuses, board view) is yet to be defined. See [Product Overview — Future Direction](./overview.md#future-direction).
+The Video Project entity is now built (Sprint 2). It holds the pipeline state machine (research → script → hooks → packaging), tracks `currentStep` and `overallStatus`, and links resources (`scriptId`, `hooksId`, `packagingId`) to the project. Integration with Research, Script, Hooks, and Packaging endpoints is the next step. See [Video Project Spec](../features/video-project/spec.md) for full schema and decisions.
 
 ### Step 1: Onboarding
 Creator sets up their brand context once. MomentumX ingests:
@@ -226,8 +227,8 @@ The thumbnail step generates design instructions, not an actual image. Creators 
 **No content calendar or pipeline view**
 No way to plan ahead, assign topics to dates, or track video status (idea → scripted → packaged → published). Important for creators publishing consistently.
 
-**Packaging disconnected from script/topic**
-The data model has no explicit link between a saved packaging and the script or topic it came from. Will create fragmentation and UX debt as the library grows.
+**Packaging disconnected from script/topic** *(Partially resolved — Sprint 2)*
+The Video Project entity now holds `scriptId`, `hooksId`, and `packagingId` references. Once integration with existing endpoints is complete (Sprint 3+), packaging will be reachable through its video project. Direct `packaging → script` foreign key still does not exist — Firestore data model gap remains until Sprint 3 wires this.
 
 **No hook or asset library**
 Generated hooks, titles, and CTAs are not saved as reusable assets. No personal swipe file or pattern library builds over time.
