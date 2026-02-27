@@ -83,22 +83,30 @@ class ContentController {
     }
   };
 
-  editTopic = async (req: Request, res: Response) => {
-    const topicId = req.params.topicId;
-    await this.service.editTopics(topicId, req.body);
-    res.sendSuccess({
-      message: "Title updated successfully",
-      data: { ...req.body, id: topicId },
-    });
+  editTopic = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const topicId = req.params.topicId;
+      await this.service.editTopics(topicId, req.userId, req.body);
+      res.sendSuccess({
+        message: "Title updated successfully",
+        data: { ...req.body, id: topicId },
+      });
+    } catch (error) {
+      next(error);
+    }
   };
 
-  editScript = async (req: Request, res: Response) => {
-    const scriptId = req.params.scriptId;
-    await this.service.editScript(scriptId, req.body);
-    res.sendSuccess({
-      message: "Title updated successfully",
-      data: { ...req.body, scriptId },
-    });
+  editScript = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const scriptId = req.params.scriptId;
+      await this.service.editScript(scriptId, req.userId, req.body);
+      res.sendSuccess({
+        message: "Title updated successfully",
+        data: { ...req.body, scriptId },
+      });
+    } catch (error) {
+      next(error);
+    }
   };
 
   generateScript = async (req: Request, res: Response, next: NextFunction) => {
@@ -123,7 +131,7 @@ class ContentController {
     next: NextFunction,
   ) => {
     try {
-      const data = await this.service.getScriptById(req.params.scriptId);
+      const data = await this.service.getScriptById(req.params.scriptId, req.userId);
       res.sendSuccess({
         message: "successfully retrieved script",
         data,

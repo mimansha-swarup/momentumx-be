@@ -112,9 +112,11 @@ class PackagingService {
     }
   };
 
-  getPackaging = async (packagingId: string) => {
+  getPackaging = async (packagingId: string, userId: string) => {
     try {
       const result = await this.repo.get(packagingId);
+      if (!result) return null;
+      if (result.createdBy !== userId) throw new Error("Unauthorized");
       return result;
     } catch (error) {
       console.log("error getting packaging", error);

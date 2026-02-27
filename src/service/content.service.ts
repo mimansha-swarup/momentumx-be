@@ -128,12 +128,18 @@ class ContentService {
     }
   };
 
-  editTopics = async (titleId: string, resBody: Record<string, string>) => {
+  editTopics = async (titleId: string, userId: string, resBody: Record<string, string>) => {
+    const topic = await this.repo.getTopic(titleId);
+    if (!topic) throw new Error("Topic not found");
+    if (topic.createdBy !== userId) throw new Error("Forbidden");
     await this.repo.updateTopic(titleId, resBody);
     return resBody;
   };
 
-  editScript = async (scriptId: string, resBody: Record<string, string>) => {
+  editScript = async (scriptId: string, userId: string, resBody: Record<string, string>) => {
+    const script = await this.repo.getScriptById(scriptId);
+    if (!script) throw new Error("Script not found");
+    if (script.createdBy !== userId) throw new Error("Forbidden");
     await this.repo.editScript(scriptId, resBody);
     return resBody;
   };
@@ -212,12 +218,15 @@ class ContentService {
     return {};
   };
 
-  getScriptById = async (scriptId: string) => {
+  getScriptById = async (scriptId: string, userId: string) => {
     try {
       const doc = await this.repo.getScriptById(scriptId);
+      if (!doc) return null;
+      if (doc.createdBy !== userId) throw new Error("Forbidden");
       return doc;
     } catch (error) {
       console.log("error", error);
+      throw error;
     }
   };
 }

@@ -172,23 +172,28 @@ Key principles:
 - Optimize for 2025 YouTube algorithm and audience behavior
 - Maintain a conversational, human-first tone
 - Focus on emotional storytelling and value-driven messaging`;
-export const GENERATE_TITLE_PROMPT = `Based on the following podcast script, generate ONE high-performing YouTube video title.
+export const GENERATE_TITLE_PROMPT = `Based on the following podcast script, generate THREE high-performing YouTube video title variations.
 
 Rules:
-- Max 60-65 characters
+- Max 60-65 characters each
 - Primary keyword should come first
 - Create a curiosity gap without misleading
-- Use psychological hooks (Fortune Teller, Contrarian, Quick Win, Investigator, Experimenter, Teacher, Emotional Mirror, Relatable Struggle, or Forbidden/Leaked)
+- Use different psychological hooks for each variation (Fortune Teller, Contrarian, Quick Win, Investigator, Experimenter, Teacher, Emotional Mirror, Relatable Struggle, or Forbidden/Leaked)
 - Write in a conversational, human tone
 - Use mild emphasis with CAPS where appropriate
+- Each title should have a distinct angle or approach
 
 Podcast Script:
 {script}
 
 Return a JSON object with the following structure:
 {
-  "title": "10 Productivity Hacks That Will Transform Your Morning Routine",
-  "characterCount": 62
+  "titles": [
+   {title: "10 Productivity Hacks That Will Transform Your Morning Routine",
+    characterCount: 62},
+    {title: "Why Your Morning Routine Is KILLING Your Productivity", characterCount: 62},
+    {title: "I Tried 10 Morning Hacks for 30 Days — Here's What Actually Works", characterCount: 62}
+  ]
 }`;
 export const GENERATE_DESCRIPTION_PROMPT = `Based on the following podcast script and video title, generate an optimized YouTube video description.
 
@@ -208,10 +213,9 @@ Podcast Script:
 
 Return a JSON object with the following structure:
 {
-  "description": "The full YouTube description text",
-  "keywords": ["keyword1", "keyword2", "keyword3"]
+  "description": "The full YouTube description text"
 }`;
-export const GENERATE_THUMBNAIL_PROMPT = `Based on the following podcast script and video title, generate detailed thumbnail creation instructions.
+export const GENERATE_THUMBNAIL_PROMPT = `Based on the following podcast script and video title, generate THREE detailed thumbnail creation instructions with different visual approaches.
 
 Video Title: {title}
 
@@ -223,14 +227,18 @@ Rules:
 - Recommend facial expressions or emotions if applicable
 - Consider mobile viewing (text must be readable on small screens)
 - Include style references if helpful
+- Each variation should have a distinct visual approach
 
 Podcast Script:
 {script}
 
 Return a JSON object with the following structure:
 {
-  "thumbnailDescription": "Brief description of the thumbnail concept",
-  "characterCount": "The text to appear on thumbnail (3-5 words max)",
+  "descriptions": [
+    "Split composition with bold red 'PRODUCTIVITY HACKS' text on left, person looking shocked on right, bright yellow background for contrast",
+    "Minimalist design with large '10X' text in center, subtle clock imagery in background, dark blue gradient with white text overlay",
+    "Before/after split screen showing messy desk vs organized workspace, 'TRANSFORM' text in bold orange, clean modern aesthetic"
+  ]
 }
 `;
 export const GENERATE_HOOKS_PROMPT = `Based on the following podcast script, generate 5 powerful video hooks for the first 5-10 seconds of the video.
@@ -246,18 +254,16 @@ Rules:
 Podcast Script:
 {script}
 
-Return a JSON array of 5 hook objects:
-[
-  {
-    openingLine:
-      "What if I told you that the first 30 minutes of your day determines the next 23 and a half hours?",
-    patternInterrupt:
-      "Now, forget everything you've heard about waking up at 5 AM. Here's what actually matters...",
-    ctaHook:
-      "If you're tired of feeling tired, smash that subscribe button and let's fix your mornings together.",
-  },
-  ...
-]`;
+Return a JSON object with hooks as an array of strings:
+{
+  "hooks": [
+    "What if I told you that the first 30 minutes of your day determines the next 23 and a half hours?",
+    "I wasted 5 years of my life following the wrong morning routine. Here's what I wish someone told me.",
+    "Stop. Before you scroll past this, ask yourself: when was the last time you felt truly productive?",
+    "Everyone talks about waking up at 5 AM. Nobody talks about what actually matters.",
+    "In the next 60 seconds, I'm going to show you the one thing that changed everything for me."
+  ]
+}`;
 export const GENERATE_SHORTS_PROMPT = `Based on the following podcast script, generate a YouTube Shorts script that fits within the specified duration.
 
 Target Duration: {duration} seconds

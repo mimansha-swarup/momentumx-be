@@ -77,11 +77,21 @@ class ContentService {
                 console.log("error: ", error);
             }
         };
-        this.editTopics = async (titleId, resBody) => {
+        this.editTopics = async (titleId, userId, resBody) => {
+            const topic = await this.repo.getTopic(titleId);
+            if (!topic)
+                throw new Error("Topic not found");
+            if (topic.createdBy !== userId)
+                throw new Error("Forbidden");
             await this.repo.updateTopic(titleId, resBody);
             return resBody;
         };
-        this.editScript = async (scriptId, resBody) => {
+        this.editScript = async (scriptId, userId, resBody) => {
+            const script = await this.repo.getScriptById(scriptId);
+            if (!script)
+                throw new Error("Script not found");
+            if (script.createdBy !== userId)
+                throw new Error("Forbidden");
             await this.repo.editScript(scriptId, resBody);
             return resBody;
         };
@@ -139,13 +149,18 @@ class ContentService {
             }
             return {};
         };
-        this.getScriptById = async (scriptId) => {
+        this.getScriptById = async (scriptId, userId) => {
             try {
                 const doc = await this.repo.getScriptById(scriptId);
+                if (!doc)
+                    return null;
+                if (doc.createdBy !== userId)
+                    throw new Error("Forbidden");
                 return doc;
             }
             catch (error) {
                 console.log("error", error);
+                throw error;
             }
         };
         this.repo = repo;

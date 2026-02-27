@@ -3,6 +3,8 @@ export const enum COLLECTIONS {
   SCRIPTS = "scripts",
   TOPICS = "topics",
   PACKAGING = "packaging",
+  VIDEO_PROJECTS = "videoProjects",
+  HOOKS = "hooks",
 }
 
 export const stats = {

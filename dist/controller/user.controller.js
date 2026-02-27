@@ -26,9 +26,9 @@ class UserController {
                 next(e);
             }
         };
-        this.updateProfile = (req, res, next) => {
+        this.updateProfile = async (req, res, next) => {
             try {
-                const payload = this.service.updateProfile(req.userId, req.body);
+                const payload = await this.service.updateProfile(req.userId, req.body);
                 res.sendSuccess({
                     message: "Profile updated successfully",
                     data: { payload },

@@ -38,9 +38,9 @@ class UserController {
     }
   };
 
-  updateProfile = (req: Request, res: Response, next: NextFunction) => {
+  updateProfile = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const payload = this.service.updateProfile(req.userId, req.body);
+      const payload = await this.service.updateProfile(req.userId, req.body);
 
       res.sendSuccess({
         message: "Profile updated successfully",

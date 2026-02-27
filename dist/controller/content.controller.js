@@ -62,21 +62,31 @@ class ContentController {
                 next(e);
             }
         };
-        this.editTopic = async (req, res) => {
-            const topicId = req.params.topicId;
-            await this.service.editTopics(topicId, req.body);
-            res.sendSuccess({
-                message: "Title updated successfully",
-                data: { ...req.body, id: topicId },
-            });
+        this.editTopic = async (req, res, next) => {
+            try {
+                const topicId = req.params.topicId;
+                await this.service.editTopics(topicId, req.userId, req.body);
+                res.sendSuccess({
+                    message: "Title updated successfully",
+                    data: { ...req.body, id: topicId },
+                });
+            }
+            catch (error) {
+                next(error);
+            }
         };
-        this.editScript = async (req, res) => {
-            const scriptId = req.params.scriptId;
-            await this.service.editScript(scriptId, req.body);
-            res.sendSuccess({
-                message: "Title updated successfully",
-                data: { ...req.body, scriptId },
-            });
+        this.editScript = async (req, res, next) => {
+            try {
+                const scriptId = req.params.scriptId;
+                await this.service.editScript(scriptId, req.userId, req.body);
+                res.sendSuccess({
+                    message: "Title updated successfully",
+                    data: { ...req.body, scriptId },
+                });
+            }
+            catch (error) {
+                next(error);
+            }
         };
         this.generateScript = async (req, res, next) => {
             try {
@@ -95,7 +105,7 @@ class ContentController {
         };
         this.retrieveScriptById = async (req, res, next) => {
             try {
-                const data = await this.service.getScriptById(req.params.scriptId);
+                const data = await this.service.getScriptById(req.params.scriptId, req.userId);
                 res.sendSuccess({
                     message: "successfully retrieved script",
                     data,

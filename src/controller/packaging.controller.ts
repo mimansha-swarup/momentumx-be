@@ -112,7 +112,7 @@ class PackagingController {
   getPackaging = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { packagingId } = req.params;
-      const data = await this.service.getPackaging(packagingId);
+      const data = await this.service.getPackaging(packagingId, req.userId);
       if (!data) {
         return res.sendError({ message: "Packaging not found", statusCode: 404 });
       }
@@ -121,6 +121,10 @@ class PackagingController {
         data,
       });
     } catch (error) {
+      const err = error as Error;
+      if (err.message === "Unauthorized") {
+        return res.sendError({ message: "Unauthorized", statusCode: 403 });
+      }
       next(error);
     }
   };
