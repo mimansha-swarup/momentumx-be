@@ -6,7 +6,7 @@ import ContentRepository from "../repository/content.repository.js";
 import UserRepository from "../repository/user.repository.js";
 import ExtractService from "../service/extract.service.js";
 
-export const formatGeneratedTitle = async (title: string, userId: string) => {
+export const formatGeneratedTitle = async (title: string, userId: string, batchId?: string) => {
   const embedding = await embeddingModel.embedContent(title);
   return {
     id: randomUUID(),
@@ -15,6 +15,10 @@ export const formatGeneratedTitle = async (title: string, userId: string) => {
     createdAt: new Date(),
     isScriptGenerated: false,
     embedding: embedding.embedding.values,
+    batchId: batchId ?? null,
+    archived: false,
+    videoProjectId: null,
+    userFeedback: null,
   };
 };
 export const formatGeneratedScript = (

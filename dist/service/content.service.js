@@ -1,11 +1,13 @@
+import { randomUUID } from "crypto";
 import { SCRIPT_SYSTEM_PROMPT, SCRIPT_USER_PROMPT, TOPIC_SYSTEM_PROMPT, TOPIC_USER_PROMPT, } from "../constants/prompt.js";
 import { generateContent, generateStreamingContent } from "../utlils/ai.js";
-import { formatCreatorsData, formatGeneratedScript, getClusteredTitles, } from "../utlils/content.js";
+import { formatCreatorsData, formatGeneratedScript, formatGeneratedTitle, getClusteredTitles, } from "../utlils/content.js";
 import { GENERATION_CONFIG_SCRIPTS, GENERATION_CONFIG_TITLES, } from "../constants/firebase.js";
 import { firebase } from "../config/firebase.js";
 //  createOnboardingData
 class ContentService {
-    constructor(repo, userRepo) {
+    constructor(repo, userRepo, videoProjectService) {
+        this.videoProjectService = videoProjectService;
         this.getPaginatedUsersTopics = async ({ userId, limit, cursor, filters, }) => {
             try {
                 const docs = await this.repo.getTopics({
@@ -69,9 +71,9 @@ class ContentService {
                 console.log("error", error);
             }
         };
-        this.saveBatchTopics = (data) => {
+        this.saveBatchTopics = async (data) => {
             try {
-                return this.repo.batchSaveTopics(data);
+                return await this.repo.batchSaveTopics(data);
             }
             catch (error) {
                 console.log("error: ", error);
@@ -162,6 +164,97 @@ class ContentService {
                 console.log("error", error);
                 throw error;
             }
+        };
+        this.regenerateAll = async (userId) => {
+            const activeTopics = await this.repo.getActiveBatch(userId);
+            // Fire stale cascade for any topics linked to a video project
+            if (this.videoProjectService) {
+                for (const topic of activeTopics) {
+                    if (topic.videoProjectId) {
+                        this.videoProjectService.markStale(topic.videoProjectId, "research").catch((err) => console.error("markStale failed for project", topic.videoProjectId, err));
+                    }
+                }
+            }
+            // Archive current active batch
+            await this.repo.archiveUserTopics(userId);
+            // Generate new titles
+            const titles = await this.generateTopics(userId);
+            if (!titles || titles.length === 0) {
+                throw new Error("Unable to generate topics at the moment");
+            }
+            const batchId = randomUUID();
+            const formattedResults = await Promise.allSettled(titles.map((title) => formatGeneratedTitle(title, userId, batchId)));
+            const formatted = formattedResults
+                .filter((r) => r.status === "fulfilled")
+                .map((r) => r.value);
+            return this.saveBatchTopics(formatted);
+        };
+        this.regenerateOne = async (userId, topicId) => {
+            const topic = await this.repo.getTopic(topicId);
+            if (!topic) {
+                const err = new Error("Topic not found");
+                err.statusCode = 404;
+                throw err;
+            }
+            if (topic.createdBy !== userId) {
+                const err = new Error("Forbidden");
+                err.statusCode = 403;
+                throw err;
+            }
+            const titles = await this.generateTopics(userId);
+            if (!titles || titles.length === 0) {
+                throw new Error("Unable to generate topics at the moment");
+            }
+            const newTitle = titles[0];
+            const formatted = await formatGeneratedTitle(newTitle, userId, topic.batchId ?? undefined);
+            await this.repo.updateTopic(topicId, {
+                title: formatted.title,
+                embedding: formatted.embedding,
+                isScriptGenerated: false,
+                videoProjectId: null,
+                userFeedback: null,
+            });
+            return { ...formatted, id: topicId };
+        };
+        this.updateFeedback = async (userId, topicId, feedback) => {
+            const topic = await this.repo.getTopic(topicId);
+            if (!topic) {
+                const err = new Error("Topic not found");
+                err.statusCode = 404;
+                throw err;
+            }
+            if (topic.createdBy !== userId) {
+                const err = new Error("Forbidden");
+                err.statusCode = 403;
+                throw err;
+            }
+            const validFeedback = ["like", "dislike", null];
+            if (!validFeedback.includes(feedback)) {
+                const err = new Error('feedback must be "like", "dislike", or null');
+                err.statusCode = 400;
+                throw err;
+            }
+            await this.repo.updateTopic(topicId, { userFeedback: feedback });
+            return { id: topicId, userFeedback: feedback };
+        };
+        this.exportTopics = async (userId) => {
+            const activeTopics = await this.repo.getActiveBatch(userId);
+            const sorted = [...activeTopics].sort((a, b) => {
+                const aTime = a.createdAt?.toDate?.()?.getTime?.() ?? 0;
+                const bTime = b.createdAt?.toDate?.()?.getTime?.() ?? 0;
+                return aTime - bTime;
+            });
+            const today = new Date().toLocaleDateString("en-US", {
+                year: "numeric",
+                month: "long",
+                day: "numeric",
+            });
+            const lines = [
+                `Research Topics — ${today}`,
+                "──────────────────────────────────",
+                ...sorted.map((t, i) => `${i + 1}. ${t.title}`),
+            ];
+            return { text: lines.join("\n"), count: sorted.length };
         };
         this.repo = repo;
         this.userRepo = userRepo;

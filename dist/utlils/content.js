@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { kmeans } from "ml-kmeans";
 import { embeddingModel } from "../config/ai.js";
-export const formatGeneratedTitle = async (title, userId) => {
+export const formatGeneratedTitle = async (title, userId, batchId) => {
     const embedding = await embeddingModel.embedContent(title);
     return {
         id: randomUUID(),
@@ -10,6 +10,10 @@ export const formatGeneratedTitle = async (title, userId) => {
         createdAt: new Date(),
         isScriptGenerated: false,
         embedding: embedding.embedding.values,
+        batchId: batchId ?? null,
+        archived: false,
+        videoProjectId: null,
+        userFeedback: null,
     };
 };
 export const formatGeneratedScript = (title, id, script, userId) => {

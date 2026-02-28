@@ -1,0 +1,16 @@
+import { Router } from "express";
+import { authMiddleware } from "../../middleware/auth.js";
+import ResearchRepository from "../../repository/research.repository.js";
+import ResearchService from "../../service/research.service.js";
+import ResearchController from "../../controller/research.controller.js";
+import UserRepository from "../../repository/user.repository.js";
+const router = Router();
+const researchRepo = new ResearchRepository();
+const userRepo = new UserRepository();
+const researchService = new ResearchService(researchRepo, userRepo);
+const researchController = new ResearchController(researchService);
+router.use(authMiddleware);
+router.get("/trending", researchController.getTrending);
+router.get("/competitors", researchController.getCompetitors);
+router.get("/keywords", researchController.getKeywords);
+export default router;

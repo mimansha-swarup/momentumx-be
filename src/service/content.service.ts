@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { Response } from "express";
 import {
   SCRIPT_SYSTEM_PROMPT,
@@ -8,10 +9,12 @@ import {
 
 import ContentRepository from "../repository/content.repository.js";
 import UserRepository from "../repository/user.repository.js";
+import VideoProjectService from "./video-project.service.js";
 import { generateContent, generateStreamingContent } from "../utlils/ai.js";
 import {
   formatCreatorsData,
   formatGeneratedScript,
+  formatGeneratedTitle,
   getClusteredTitles,
 } from "../utlils/content.js";
 import {
@@ -25,7 +28,11 @@ import { firebase } from "../config/firebase.js";
 class ContentService {
   private repo: ContentRepository;
   private userRepo: UserRepository;
-  constructor(repo: ContentRepository, userRepo: UserRepository) {
+  constructor(
+    repo: ContentRepository,
+    userRepo: UserRepository,
+    private videoProjectService?: VideoProjectService,
+  ) {
     this.repo = repo;
     this.userRepo = userRepo;
   }
@@ -120,9 +127,9 @@ class ContentService {
     }
   };
 
-  saveBatchTopics = (data: unknown[]) => {
+  saveBatchTopics = async (data: unknown[]) => {
     try {
-      return this.repo.batchSaveTopics(data);
+      return await this.repo.batchSaveTopics(data);
     } catch (error) {
       console.log("error: ", error);
     }
@@ -228,6 +235,122 @@ class ContentService {
       console.log("error", error);
       throw error;
     }
+  };
+
+  regenerateAll = async (userId: string) => {
+    const activeTopics = await this.repo.getActiveBatch(userId);
+
+    // Fire stale cascade for any topics linked to a video project
+    if (this.videoProjectService) {
+      for (const topic of activeTopics) {
+        if (topic.videoProjectId) {
+          this.videoProjectService.markStale(topic.videoProjectId, "research").catch((err) => console.error("markStale failed for project", topic.videoProjectId, err));
+        }
+      }
+    }
+
+    // Archive current active batch
+    await this.repo.archiveUserTopics(userId);
+
+    // Generate new titles
+    const titles = await this.generateTopics(userId);
+    if (!titles || titles.length === 0) {
+      throw new Error("Unable to generate topics at the moment");
+    }
+
+    const batchId = randomUUID();
+    const formattedResults = await Promise.allSettled(
+      titles.map((title) => formatGeneratedTitle(title, userId, batchId)),
+    );
+    const formatted = formattedResults
+      .filter((r) => r.status === "fulfilled")
+      .map((r) => (r as PromiseFulfilledResult<Awaited<ReturnType<typeof formatGeneratedTitle>>>).value);
+
+    return this.saveBatchTopics(formatted);
+  };
+
+  regenerateOne = async (userId: string, topicId: string) => {
+    const topic = await this.repo.getTopic(topicId);
+    if (!topic) {
+      const err = new Error("Topic not found") as Error & { statusCode: number };
+      err.statusCode = 404;
+      throw err;
+    }
+    if (topic.createdBy !== userId) {
+      const err = new Error("Forbidden") as Error & { statusCode: number };
+      err.statusCode = 403;
+      throw err;
+    }
+
+    const titles = await this.generateTopics(userId);
+    if (!titles || titles.length === 0) {
+      throw new Error("Unable to generate topics at the moment");
+    }
+
+    const newTitle = titles[0];
+    const formatted = await formatGeneratedTitle(newTitle, userId, topic.batchId ?? undefined);
+
+    await this.repo.updateTopic(topicId, {
+      title: formatted.title,
+      embedding: formatted.embedding,
+      isScriptGenerated: false,
+      videoProjectId: null,
+      userFeedback: null,
+    });
+
+    return { ...formatted, id: topicId };
+  };
+
+  updateFeedback = async (
+    userId: string,
+    topicId: string,
+    feedback: "like" | "dislike" | null,
+  ) => {
+    const topic = await this.repo.getTopic(topicId);
+    if (!topic) {
+      const err = new Error("Topic not found") as Error & { statusCode: number };
+      err.statusCode = 404;
+      throw err;
+    }
+    if (topic.createdBy !== userId) {
+      const err = new Error("Forbidden") as Error & { statusCode: number };
+      err.statusCode = 403;
+      throw err;
+    }
+
+    const validFeedback = ["like", "dislike", null];
+    if (!validFeedback.includes(feedback)) {
+      const err = new Error('feedback must be "like", "dislike", or null') as Error & { statusCode: number };
+      err.statusCode = 400;
+      throw err;
+    }
+
+    await this.repo.updateTopic(topicId, { userFeedback: feedback });
+    return { id: topicId, userFeedback: feedback };
+  };
+
+  exportTopics = async (userId: string) => {
+    const activeTopics = await this.repo.getActiveBatch(userId);
+
+    const sorted = [...activeTopics].sort((a, b) => {
+      const aTime = a.createdAt?.toDate?.()?.getTime?.() ?? 0;
+      const bTime = b.createdAt?.toDate?.()?.getTime?.() ?? 0;
+      return aTime - bTime;
+    });
+
+    const today = new Date().toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+
+    const lines = [
+      `Research Topics — ${today}`,
+      "──────────────────────────────────",
+      ...sorted.map((t, i) => `${i + 1}. ${t.title}`),
+    ];
+
+    return { text: lines.join("\n"), count: sorted.length };
   };
 }
 

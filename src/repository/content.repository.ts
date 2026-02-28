@@ -127,7 +127,7 @@ class ContentRepository {
     }
   };
 
-  batchSaveTopics = (dataList: unknown[]) => {
+  batchSaveTopics = async (dataList: unknown[]) => {
     const batch = db.batch();
     const collectionRef = db.collection(this.collection);
 
@@ -138,12 +138,41 @@ class ContentRepository {
       return dataWithId;
     });
     try {
-      batch.commit();
+      await batch.commit();
       return updatedDataList;
     } catch (err) {
       console.error("❌ Failed to batch create documents", err);
       throw err;
     }
+  };
+
+  getActiveBatch = async (userId: string) => {
+    const allTopics = await this.getAllTopics({ userId });
+    return (allTopics || []).filter((t) => t.archived !== true);
+  };
+
+  archiveUserTopics = async (userId: string, excludeBatchId?: string) => {
+    const allTopics = await this.getAllTopics({ userId });
+    const toArchive = (allTopics || []).filter(
+      (t) =>
+        t.archived !== true &&
+        t.id &&
+        (!excludeBatchId || t.batchId !== excludeBatchId)
+    );
+
+    if (toArchive.length === 0) return;
+
+    const batch = db.batch();
+    const collectionRef = db.collection(this.collection);
+
+    toArchive.forEach((topic) => {
+      batch.update(collectionRef.doc(topic.id), {
+        archived: true,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+    });
+
+    await batch.commit();
   };
 
   updateTopic = async (topicId: string, data: Record<string, unknown>) => {

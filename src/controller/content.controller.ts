@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import { NextFunction, Request, Response } from "express";
 import ContentService from "../service/content.service.js";
 import { formatGeneratedTitle } from "../utlils/content.js";
@@ -9,6 +10,23 @@ class ContentController {
   constructor(service: ContentService) {
     this.service = service;
   }
+
+  private handleError = (
+    error: unknown,
+    res: Response,
+    next: NextFunction,
+  ): void => {
+    const err = error as Error & { statusCode?: number };
+    if (err.message === "Forbidden") {
+      res.sendError({ message: "Forbidden", statusCode: 403 });
+    } else if (err.message === "Topic not found") {
+      res.sendError({ message: "Topic not found", statusCode: 404 });
+    } else if (err.statusCode) {
+      res.sendError({ message: err.message, statusCode: err.statusCode });
+    } else {
+      next(error);
+    }
+  };
 
   retrieveTopics = async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -59,9 +77,10 @@ class ContentController {
   generateTopics = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const data = await this.service.generateTopics(req.userId);
+      const batchId = randomUUID();
       const modifiedDataResults = await Promise.allSettled(
         (data || [])?.map(async (record) =>
-          formatGeneratedTitle(record, req.userId),
+          formatGeneratedTitle(record, req.userId, batchId),
         ),
       );
       // Filter out failed ones, keep only successful
@@ -72,7 +91,7 @@ class ContentController {
       if (!modifiedData?.length) {
         throw new Error("Unable to generate at the moment");
       }
-      const updatedData = this.service.saveBatchTopics(modifiedData);
+      const updatedData = await this.service.saveBatchTopics(modifiedData);
       res.sendSuccess({
         message: "successfully generated topics",
         data: updatedData,
@@ -106,6 +125,43 @@ class ContentController {
       });
     } catch (error) {
       next(error);
+    }
+  };
+
+  regenerateAll = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const data = await this.service.regenerateAll(req.userId);
+      res.sendSuccess({ message: "Topics regenerated successfully", data });
+    } catch (error) {
+      this.handleError(error, res, next);
+    }
+  };
+
+  regenerateOne = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const data = await this.service.regenerateOne(req.userId, req.params.topicId);
+      res.sendSuccess({ message: "Topic regenerated successfully", data });
+    } catch (error) {
+      this.handleError(error, res, next);
+    }
+  };
+
+  updateFeedback = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { feedback } = req.body as { feedback: "like" | "dislike" | null };
+      const data = await this.service.updateFeedback(req.userId, req.params.topicId, feedback);
+      res.sendSuccess({ message: "Feedback updated successfully", data });
+    } catch (error) {
+      this.handleError(error, res, next);
+    }
+  };
+
+  exportTopics = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const data = await this.service.exportTopics(req.userId);
+      res.sendSuccess({ message: "Topics exported successfully", data });
+    } catch (error) {
+      this.handleError(error, res, next);
     }
   };
 
