@@ -184,6 +184,55 @@ describe("PackagingService — updateFeedback", () => {
   });
 });
 
+describe("PackagingService — savePackaging with videoProjectId", () => {
+  let service: PackagingService;
+  let mockRepo: jest.Mocked<PackagingRepository>;
+
+  beforeEach(() => {
+    mockRepo = new MockPackagingRepo() as jest.Mocked<PackagingRepository>;
+    service = new PackagingService(mockRepo);
+    mockRepo.save = jest.fn().mockResolvedValue({ id: "pkg-new" });
+  });
+
+  it("saves videoProjectId on the document when provided", async () => {
+    await service.savePackaging("user-1", { title: "t" }, "proj-1");
+    const packagingData = (mockRepo.save as jest.Mock).mock.calls[0][0];
+    expect(packagingData).toMatchObject({ videoProjectId: "proj-1" });
+  });
+
+  it("does not include videoProjectId when not provided", async () => {
+    await service.savePackaging("user-1", { title: "t" });
+    const packagingData = (mockRepo.save as jest.Mock).mock.calls[0][0];
+    expect(packagingData).not.toHaveProperty("videoProjectId");
+  });
+});
+
+describe("PackagingService — generateTitle with selectedHook", () => {
+  let service: PackagingService;
+  let mockRepo: jest.Mocked<PackagingRepository>;
+
+  beforeEach(() => {
+    mockRepo = new MockPackagingRepo() as jest.Mocked<PackagingRepository>;
+    service = new PackagingService(mockRepo);
+  });
+
+  it("calls generateStreamingContent and returns parsed result", async () => {
+    const fakeTitles = [{ title: "Title A", characterCount: 55 }];
+    mockGenerate.mockResolvedValue(makeStream(JSON.stringify({ titles: fakeTitles })));
+    const result = await service.generateTitle("script text", "my hook opener");
+    expect(mockGenerate).toHaveBeenCalled();
+    expect(result).toEqual({ titles: fakeTitles });
+  });
+
+  it("works without selectedHook", async () => {
+    const fakeTitles = [{ title: "Title B", characterCount: 50 }];
+    mockGenerate.mockResolvedValue(makeStream(JSON.stringify({ titles: fakeTitles })));
+    const result = await service.generateTitle("script text");
+    expect(mockGenerate).toHaveBeenCalled();
+    expect(result).toEqual({ titles: fakeTitles });
+  });
+});
+
 describe("PackagingService — exportPackaging", () => {
   let service: PackagingService;
   let mockRepo: jest.Mocked<PackagingRepository>;
