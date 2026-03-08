@@ -110,7 +110,6 @@ With a script in hand, MomentumX generates all supporting content:
 | **Titles** | 3 variations using different psychological hook archetypes (Fortune Teller, Contrarian, Quick Win, etc.) |
 | **Description** | SEO-optimized, includes a hook visible before "Show More", relevant keywords, and a CTA |
 | **Thumbnail Brief** | 3 distinct visual concepts with layout, text overlay, color, and emotion guidance |
-| **Video Hooks** | 5 opening lines (1–3 sentences each) — varied styles: question, bold claim, story teaser, contrarian |
 | **Shorts Script** | Segmented script with start/end timestamps, written for vertical video with a CTA |
 
 ---
@@ -149,8 +148,8 @@ MomentumX is a solo tool today. Teams and agency use cases (multiple creators, s
 **Board Visual Model** *(to be decided)*
 The visual representation of the project pipeline — whether it's a Kanban board, a dashboard view, or another model — is yet to be defined and will be discussed and finalized separately.
 
-**Video Project Lifecycle** *(to be decided)*
-The formal stages a video project moves through (beyond the pipeline steps) — e.g. Draft, In Review, Scheduled, Published — are yet to be defined.
+**Video Project Lifecycle** *(defined — see pipeline-spec.md)*
+The pipeline state machine is fully defined and implemented. Each project tracks `currentStep` (research → script → hooks → packaging) and `overallStatus` (in_progress / completed / stale). Extended lifecycle stages beyond the pipeline (e.g. Scheduled, Published) are planned for a future phase.
 
 ---
 

@@ -165,7 +165,6 @@ Same shape as `PATCH /v1/user/onboarding`. Any subset of fields can be provided.
 
 ### Notes
 - Re-runs full enrichment on every call — YouTube lookups and website scraping happen again even if only `brandName` changed. No diff or selective re-enrichment.
-- `updateProfile` in the service is async but the controller does not `await` it. The response is sent before the Firestore write completes. This is a known bug — the response may return before the data is actually updated.
 
 ### Error Cases
 

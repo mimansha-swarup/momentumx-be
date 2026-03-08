@@ -2,8 +2,8 @@
 title: "Script Generation — Feature Spec"
 description: "How script generation works in the MomentumX pipeline, what's built, and what's not."
 date: 2026-02-27
-last_updated: 2026-02-27
-status: "draft"
+last_updated: 2026-03-08
+status: "implemented"
 tags: ["feature", "script", "spec"]
 ---
 
@@ -49,9 +49,9 @@ Streams a full video script for the given topic. The `:scriptId` URL parameter i
 6. After the stream ends, the full accumulated text is formatted via `formatGeneratedScript` and saved to Firestore
 7. The topic document is updated: `isScriptGenerated: true`
 
-**SSE chunk format:**
+**SSE chunk format** (chunk text is JSON-stringified via `JSON.stringify`):
 ```
-data: <chunk text>\n\n
+data: "chunk text here"\n\n
 ```
 
 Stream end signal:
@@ -60,7 +60,7 @@ event: done\n
 data: [done]\n\n
 ```
 
-**Prompt:** `SCRIPT_USER_PROMPT` in `src/constants/prompt.ts`. Injects `{brandName}`, `{targetAudience}`, `{competitors}`, `{niche}`, `{websiteContent}`, `{title}`. Uses `GENERATION_CONFIG_SCRIPTS` (plain text output config — NOT JSON).
+**Prompt:** `SCRIPT_USER_PROMPT` in `src/constants/prompt.ts`. Injects `{userName}`, `{targetAudience}`, `{competitors}`, `{niche}`, `{websiteContent}`, `{title}`. Uses `GENERATION_CONFIG_SCRIPTS` (plain text output config — NOT JSON).
 
 ### List Scripts
 
@@ -72,17 +72,13 @@ Returns all script documents owned by the authenticated user, ordered by `create
 
 `GET /v1/content/script/:scriptId`
 
-Returns a single script document by ID.
-
-**Security gap:** No ownership check is performed. Any authenticated user who knows a `scriptId` can retrieve the document. This is a known gap to fix in Phase 0.
+Returns a single script document by ID. Ownership enforced — `createdBy` must match the requesting user.
 
 ### Edit Script
 
 `PATCH /v1/content/script/edit/:scriptId`
 
-Accepts fields in the request body and merges them onto the script document. Manual edit only — not AI-assisted.
-
-**Security gap:** No ownership check. Any authenticated user who knows a `scriptId` can overwrite the script.
+Accepts fields in the request body and merges them onto the script document. Manual edit only — not AI-assisted. Ownership enforced.
 
 ---
 
@@ -95,10 +91,8 @@ Stored in the `scripts` Firestore collection. Document ID equals the `topicId` o
 | `id` | `string` | Same as the source `topicId` |
 | `title` | `string` | Title of the topic this script was generated for |
 | `createdBy` | `string` | `userId` of the owner |
-| `createdAt` | `Date` | Set at save time (client-side `new Date()` — not server-side timestamp) |
+| `createdAt` | `Timestamp` | Server-side Firestore timestamp |
 | `script` | `string` | Full script text |
-
-**Known gap:** `createdAt` uses `new Date()` instead of `firebase.firestore.FieldValue.serverTimestamp()`. This violates the Firestore conventions rule. To be fixed in Phase 0.
 
 ---
 
@@ -110,7 +104,7 @@ After a script is saved, the source topic document is updated:
 isScriptGenerated: true
 ```
 
-This is the only cross-document side effect of script generation. The formal step-state (`not_started`, `in_progress`, `completed`) is not stored anywhere — `isScriptGenerated` is the proxy the client currently uses.
+This is one of two cross-document side effects of script generation. Additionally, if the topic is linked to a video project, the Script step transitions via `startStep` (before streaming) and `linkResource` + `completeStep` (after saving) — both fire-and-forget. `isScriptGenerated` remains as a lightweight proxy for clients that do not use the video project model.
 
 ---
 
@@ -120,7 +114,7 @@ This is the only cross-document side effect of script generation. The formal ste
 
 The script document uses the `topicId` as its Firestore document ID. This creates a deterministic 1:1 relationship between a topic and its script without a foreign key field. Retrieving a script for a known topic is a direct key fetch, not a query.
 
-Tradeoff: if regeneration is added, a new version of the same script would overwrite the existing document. A versioning strategy will be needed when regeneration is built.
+Tradeoff: when a script is regenerated, the `script` field on the existing document is overwritten in place. No version history is kept.
 
 ### SSE Auth via Query Param
 
@@ -138,24 +132,29 @@ The script prompt uses `GENERATION_CONFIG_SCRIPTS` (`responseMimeType: "text/pla
 |---|---|---|
 | `GET /stream/scripts/:scriptId` | `?token=` query param | None — no check that topic belongs to requesting user |
 | `GET /scripts` | Bearer token via `authMiddleware` | Yes — filters by `createdBy == userId` |
-| `GET /script/:scriptId` | Bearer token via `authMiddleware` | No — fetches by ID without userId filter |
-| `PATCH /script/edit/:scriptId` | Bearer token via `authMiddleware` | No — updates by ID without userId check |
+| `GET /script/:scriptId` | Bearer token via `authMiddleware` | Yes — throws 403 if `createdBy !== userId` |
+| `PATCH /script/edit/:scriptId` | Bearer token via `authMiddleware` | Yes — throws 403 if `createdBy !== userId` |
+| `POST /scripts/:scriptId/regenerate` | Bearer token via `authMiddleware` | Yes — throws 403 if `createdBy !== userId` |
+| `PATCH /scripts/:scriptId/feedback` | Bearer token via `authMiddleware` | Yes — throws 403 if `createdBy !== userId` |
+| `GET /scripts/:scriptId/export` | Bearer token via `authMiddleware` | Yes — throws 403 if `createdBy !== userId` |
 
 ---
 
-## What's Not Built
+## Build Status
 
-| Feature | Status | Notes |
-|---|---|---|
-| Regenerate script | ❌ | No endpoint exists. Would require stale cascade to Hooks and Packaging. |
-| `videoProjectId` on script | ❌ | Foreign key to video project — Phase 0 |
-| Script step state tracking | ❌ | `not_started` / `in_progress` / `completed` not stored anywhere |
-| Stale cascade to Hooks/Packaging | ❌ | Defined in pipeline-spec but not implemented |
-| Ownership check on GET single script | ❌ | Security gap |
-| Ownership check on PATCH edit | ❌ | Security gap |
-| Server-side `createdAt` timestamp | ❌ | Currently `new Date()` — should be `serverTimestamp()` |
-| AI-assisted script editing | ❌ | Only manual text overwrite exists |
-| Export script | ❌ | Not built |
+| Feature | Status |
+|---|---|
+| SSE script generation | ✅ Built |
+| List scripts | ✅ Built |
+| Get single script (with ownership check) | ✅ Built |
+| Edit script (with ownership check) | ✅ Built |
+| Regenerate script (`POST /scripts/:scriptId/regenerate`) | ✅ Built |
+| Script feedback (`PATCH /scripts/:scriptId/feedback`) | ✅ Built |
+| Export script (`GET /scripts/:scriptId/export`) | ✅ Built |
+| Stale cascade on regen → Hooks + Packaging stale | ✅ Built (fire-and-forget) |
+| Script step state tracking on video project | ✅ Built (startStep / completeStep wired) |
+| Server-side `createdAt` timestamp | ✅ Built (`serverTimestamp()`) |
+| AI-assisted script editing | ❌ Not built — only manual text overwrite |
 
 ---
 

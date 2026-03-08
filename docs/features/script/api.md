@@ -2,8 +2,8 @@
 title: "Script — API Reference"
 description: "All endpoints for script generation, retrieval, and editing."
 date: 2026-02-27
-last_updated: 2026-02-27
-status: "draft"
+last_updated: 2026-03-08
+status: "implemented"
 tags: ["api", "script"]
 ---
 
@@ -23,6 +23,9 @@ All endpoints require `Authorization: Bearer <token>` except `GET /stream/script
 | `GET` | `/v1/content/scripts` | List all user scripts | ✅ Built |
 | `GET` | `/v1/content/script/:scriptId` | Get single script | ✅ Built |
 | `PATCH` | `/v1/content/script/edit/:scriptId` | Edit script text | ✅ Built |
+| `POST` | `/v1/content/scripts/:scriptId/regenerate` | Regenerate script (non-SSE) | ✅ Built |
+| `PATCH` | `/v1/content/scripts/:scriptId/feedback` | Record like/dislike on script | ✅ Built |
+| `GET` | `/v1/content/scripts/:scriptId/export` | Export script as plain text | ✅ Built |
 
 ---
 
@@ -55,9 +58,9 @@ Cache-Control: no-cache
 Connection: keep-alive
 ```
 
-Each chunk during generation:
+Each chunk during generation (chunk text is JSON-stringified):
 ```
-data: <text chunk>\n\n
+data: "chunk text here"\n\n
 ```
 
 Stream end signal:
@@ -124,7 +127,7 @@ Returns a single script document by ID.
 ### Auth
 `Authorization: Bearer <token>` — required.
 
-**Security gap:** No ownership check. Any authenticated user who knows a `scriptId` can retrieve it.
+Ownership enforced — `createdBy` must match the requesting user.
 
 ### Path Parameters
 
@@ -164,7 +167,7 @@ Merges provided fields onto the script document. Manual edit only — not AI-ass
 ### Auth
 `Authorization: Bearer <token>` — required.
 
-**Security gap:** No ownership check. Any authenticated user who knows a `scriptId` can overwrite its content.
+Ownership enforced — `createdBy` must match the requesting user.
 
 ### Path Parameters
 
@@ -212,20 +215,125 @@ Stored in the `scripts` Firestore collection. Document ID = source `topicId`.
 | `id` | `string` | Document ID, same as source `topicId` |
 | `title` | `string` | Title of the topic this script was generated for |
 | `createdBy` | `string` | `userId` of the owner |
-| `createdAt` | `Date` | Creation time (`new Date()` — not server timestamp, known gap) |
+| `createdAt` | `Timestamp` | Server-side Firestore timestamp |
 | `script` | `string` | Full script text |
 
 ---
 
-## Not Yet Built
+## POST `/v1/content/scripts/:scriptId/regenerate`
 
-| Endpoint | Status |
+Regenerates the script for a topic without SSE. Returns the full script in the response body once generation is complete.
+
+### Auth
+`Authorization: Bearer <token>` — required. Ownership enforced — `createdBy` must match the requesting user.
+
+### Path Parameters
+
+| Param | Type | Description |
+|---|---|---|
+| `scriptId` | `string` | Script document ID (equals the source `topicId`) |
+
+### Response — `200`
+
+```json
+{
+  "success": true,
+  "message": "Script regenerated successfully",
+  "data": {
+    "id": "string",
+    "title": "string",
+    "script": "string"
+  }
+}
+```
+
+### Side Effects on Completion
+- `scripts` document updated with new `script` text
+- If the script is linked to a video project, `pipeline.hooks` and `pipeline.packaging` are marked stale (fire-and-forget)
+
+### Error Cases
+
+| Status | Condition |
 |---|---|
-| Regenerate script | ❌ |
-| Script step state tracking | ❌ |
-| Ownership check on GET single script | ❌ |
-| Ownership check on PATCH edit | ❌ |
-| `videoProjectId` field on script documents | ❌ |
+| 403 | Script not owned by requesting user |
+| 404 | Script not found |
+| 500 | Gemini generation failed or Firestore write failed |
+
+---
+
+## PATCH `/v1/content/scripts/:scriptId/feedback`
+
+Records a like or dislike signal on a script. Overwrites any prior feedback value.
+
+### Auth
+`Authorization: Bearer <token>` — required. Ownership enforced.
+
+### Path Parameters
+
+| Param | Type | Description |
+|---|---|---|
+| `scriptId` | `string` | Script document ID |
+
+### Request Body
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `feedback` | `"like" \| "dislike" \| null` | Yes | `null` clears existing feedback |
+
+### Response — `200`
+
+```json
+{
+  "success": true,
+  "message": "Feedback updated",
+  "data": {
+    "id": "string",
+    "userFeedback": "like"
+  }
+}
+```
+
+### Error Cases
+
+| Status | Condition |
+|---|---|
+| 400 | `feedback` is not `"like"`, `"dislike"`, or `null` |
+| 403 | Script not owned by requesting user |
+| 404 | Script not found |
+
+---
+
+## GET `/v1/content/scripts/:scriptId/export`
+
+Returns the script as a plain-text formatted string suitable for copy-paste or download.
+
+### Auth
+`Authorization: Bearer <token>` — required. Ownership enforced.
+
+### Path Parameters
+
+| Param | Type | Description |
+|---|---|---|
+| `scriptId` | `string` | Script document ID |
+
+### Response — `200`
+
+```json
+{
+  "success": true,
+  "data": {
+    "title": "string",
+    "text": "full script text"
+  }
+}
+```
+
+### Error Cases
+
+| Status | Condition |
+|---|---|
+| 403 | Script not owned by requesting user |
+| 404 | Script not found |
 
 ---
 

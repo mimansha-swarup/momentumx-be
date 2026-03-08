@@ -9,7 +9,7 @@ tags: ["api", "hooks"]
 
 # Hooks API Reference
 
-Hooks is a standalone pipeline step. The dedicated `/v1/hooks` endpoints are live. The temporary `POST /v1/packaging/generate-hooks` endpoint still exists but is superseded.
+Hooks is a standalone pipeline step. The dedicated `/v1/hooks` endpoints are live. The legacy `POST /v1/packaging/generate-hooks` endpoint still exists for stateless generation but is deprecated — use `/v1/hooks/generate` instead.
 
 ---
 
@@ -17,9 +17,12 @@ Hooks is a standalone pipeline step. The dedicated `/v1/hooks` endpoints are liv
 
 | Method | URL | Status | Description |
 |---|---|---|---|
-| `POST` | `/v1/packaging/generate-hooks` | ✅ Built (deprecated) | Generate 5 hooks — temporary location in Packaging |
 | `POST` | `/v1/hooks/generate` | ✅ Built | Generate a 5-hook batch tied to a video project |
 | `POST` | `/v1/hooks/:hooksId/select` | ✅ Built | Select a hook index, stores it on the video project |
+| `POST` | `/v1/hooks/:hooksId/regenerate` | ✅ Built | Regenerate hooks for the same video project |
+| `PATCH` | `/v1/hooks/:hooksId/feedback` | ✅ Built | Record per-hook like/dislike |
+| `GET` | `/v1/hooks/:hooksId/export` | ✅ Built | Export hooks as plain text |
+| `POST` | `/v1/packaging/generate-hooks` | ✅ Built (deprecated) | Stateless hook generation — legacy path |
 
 ---
 
@@ -54,6 +57,7 @@ Generates 5 hook variations from a script. Saves the batch to the `hooks` Firest
       "Everyone says consistency is the key. They're missing the real reason.",
       "Stop. Before you post another video, you need to hear this."
     ],
+    "hookFeedback": {},
     "createdAt": "<timestamp>"
   }
 }
@@ -116,9 +120,142 @@ Marks a specific hook index as selected. Stores `hooksId` and `selectedHookIndex
 
 ---
 
+## POST `/v1/hooks/:hooksId/regenerate` ✅ Built
+
+Regenerates hooks for the same video project, overwriting the existing batch in place. Marks the downstream packaging document stale (fire-and-forget).
+
+### Auth
+`Authorization: Bearer <token>` — required. Ownership enforced — `createdBy` must match requesting user.
+
+### Path Parameters
+
+| Param | Type | Description |
+|---|---|---|
+| `hooksId` | `string` | ID of the hooks batch document to regenerate |
+
+### Request Body
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `script` | `string` | Yes | Full video script text (may be updated since first generation) |
+
+### Response — `200`
+
+```json
+{
+  "success": true,
+  "message": "Hooks regenerated successfully",
+  "data": {
+    "id": "hooks-batch-id",
+    "hooks": [
+      "hook variation 1",
+      "hook variation 2",
+      "hook variation 3",
+      "hook variation 4",
+      "hook variation 5"
+    ]
+  }
+}
+```
+
+### Side Effects on Completion
+- Existing hooks batch overwritten in place (`hooks` and `hookFeedback` reset)
+- If linked packaging exists, `pipeline.packaging.status` is set to `"stale"` on the video project (fire-and-forget)
+
+### Error Cases
+
+| Status | Condition |
+|---|---|
+| 400 | `script` missing |
+| 403 | Hooks batch not owned by user |
+| 404 | Hooks batch not found |
+| 500 | Gemini generation failed or Firestore write failed |
+
+---
+
+## PATCH `/v1/hooks/:hooksId/feedback` ✅ Built
+
+Records a like or dislike signal on a specific hook within the batch. Overwrites any prior feedback for that hook index.
+
+### Auth
+`Authorization: Bearer <token>` — required. Ownership enforced.
+
+### Path Parameters
+
+| Param | Type | Description |
+|---|---|---|
+| `hooksId` | `string` | ID of the hooks batch document |
+
+### Request Body
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `hookIndex` | `number` | Yes | Zero-based index (0–4) of the hook being rated |
+| `feedback` | `"like" \| "dislike" \| null` | Yes | `null` clears existing feedback for that hook |
+
+### Response — `200`
+
+```json
+{
+  "success": true,
+  "message": "Feedback updated",
+  "data": {
+    "id": "hooks-batch-id",
+    "hookFeedback": {
+      "0": "like",
+      "2": "dislike"
+    }
+  }
+}
+```
+
+### Error Cases
+
+| Status | Condition |
+|---|---|
+| 400 | `hookIndex` or `feedback` invalid |
+| 403 | Hooks batch not owned by user |
+| 404 | Hooks batch not found |
+
+---
+
+## GET `/v1/hooks/:hooksId/export` ✅ Built
+
+Returns all hooks in the batch as a plain-text formatted string suitable for copy-paste or download.
+
+### Auth
+`Authorization: Bearer <token>` — required. Ownership enforced.
+
+### Path Parameters
+
+| Param | Type | Description |
+|---|---|---|
+| `hooksId` | `string` | ID of the hooks batch document |
+
+### Response — `200`
+
+```json
+{
+  "success": true,
+  "data": {
+    "text": "Hooks — March 8, 2026\n──────────────────────────────────\n1. hook one\n2. hook two\n3. hook three\n4. hook four\n5. hook five",
+    "count": 5
+  }
+}
+```
+
+### Error Cases
+
+| Status | Condition |
+|---|---|
+| 403 | Hooks batch not owned by user |
+| 404 | Hooks batch not found |
+
+---
+
 ## POST `/v1/packaging/generate-hooks` ✅ Built (deprecated)
 
-Generates 5 hook variations from a script and title. Returns JSON — not SSE. Does not save to Firestore.
+Generates 5 hook variations from a script. Returns JSON — not SSE. Does not save to Firestore or link to a video project.
 
 **This endpoint is deprecated.** Use `POST /v1/hooks/generate` instead.
 
@@ -130,7 +267,6 @@ Generates 5 hook variations from a script and title. Returns JSON — not SSE. D
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `script` | `string` | Yes | Full video script text |
-| `title` | `string` | Yes | Video title |
 
 ### Response — `200`
 

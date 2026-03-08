@@ -2,7 +2,7 @@
 title: "Research — Feature Spec"
 description: "User flow, states, regeneration behavior, and edge cases for the Research step"
 status: "draft"
-last_updated: 2026-02-27
+last_updated: 2026-03-08
 tags: ["feature", "research", "topics", "spec"]
 ---
 
@@ -133,17 +133,16 @@ Each generated topic is saved to Firestore with:
 
 ```
 {
-  id: string           // UUID
-  title: string        // AI-generated YouTube title
-  createdBy: string    // userId
-  createdAt: Timestamp // server-side
-  isScriptGenerated: boolean  // true once a script has been generated for this topic
-  embedding: number[]  // vector embedding (gemini-embedding-001) for KMeans
-
-  // Added in Phase 0 (not yet present):
-  batchId: string
-  archived: boolean
-  videoProjectId: string | null
+  id: string                   // UUID
+  title: string                // AI-generated YouTube title
+  createdBy: string            // userId
+  createdAt: Timestamp         // server-side
+  isScriptGenerated: boolean   // true once a script has been generated for this topic
+  embedding: number[]          // vector embedding (gemini-embedding-001) for KMeans
+  batchId: string              // identifies the generation batch
+  archived: boolean            // true if this topic was superseded by Regenerate All
+  videoProjectId: string | null // set when this topic is linked to a video project
+  userFeedback: "like" | "dislike" | null  // per-topic feedback signal
 }
 ```
 
@@ -167,12 +166,7 @@ These are planned for future phases but explicitly not part of the current Resea
 
 | Feature | Notes |
 |---|---|
-| Trend discovery | What's trending in the creator's niche in real time. Not built. |
-| Keyword / SEO data | Search volume, competition data. Not built. |
-| Competitor performance analysis | Which competitor videos are performing best right now. Static data only currently. |
-| Feedback signals (thumbs up/down) | Low-friction per-card feedback. Not built. |
 | Topic refinement via follow-up prompt | "Make these more aggressive" style iteration. Not built. |
-| Export topics | Export selected topics to Google Docs or clipboard. Not built. |
 | Live competitor data refresh | Refreshing competitor channel data beyond onboarding. Not built. |
 
 ---
@@ -186,12 +180,16 @@ These are planned for future phases but explicitly not part of the current Resea
 | Paginated topic list | ✅ Built | `GET /v1/content/topics` |
 | Edit a topic title | ✅ Built | `PATCH /v1/content/topics/edit/:topicId` |
 | KMeans repetition avoidance | ✅ Built | Runs before every generation |
-| Regenerate One (slot-replace) | ❌ Not built | Needs new endpoint |
-| Video project creation on selection | ❌ Not built | Needs Phase 0 `videoProjects` collection |
-| `archived` + `batchId` fields | ❌ Not built | Phase 0 schema addition |
-| Stale cascade on Regenerate All | ❌ Not built | Phase 0 |
-| Trend discovery | ❌ Not built | Future phase |
-| Keyword / SEO data | ❌ Not built | Future phase |
+| Regenerate All | ✅ Built | `POST /v1/content/topics/regenerate-all` |
+| Regenerate One (slot-replace) | ✅ Built | `POST /v1/content/topics/:topicId/regenerate` |
+| Per-topic feedback (like/dislike) | ✅ Built | `PATCH /v1/content/topics/:topicId/feedback` |
+| Export topics | ✅ Built | `GET /v1/content/topics/export` |
+| `archived` + `batchId` fields on topics | ✅ Built | Set on generation |
+| Stale cascade on Regenerate All | ✅ Built | Marks downstream video project steps stale |
+| Trend discovery | ✅ Built | `GET /v1/research/trending` |
+| Competitor performance analysis | ✅ Built | `GET /v1/research/competitors` |
+| Keyword / SEO data | ✅ Built | `GET /v1/research/keywords` |
+| Video project creation on topic selection | ✅ Built — handled by the video projects module (`POST /v1/video-projects`) |
 
 ---
 

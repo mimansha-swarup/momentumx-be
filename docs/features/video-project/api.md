@@ -2,7 +2,7 @@
 title: "Video Project — API Contracts"
 description: "All endpoints for creating, reading, updating, and managing Video Project pipeline state"
 date: 2026-02-27
-last_updated: 2026-02-27
+last_updated: 2026-03-08
 status: "implemented"
 tags: ["api", "video-project", "phase-0"]
 ---
@@ -312,11 +312,7 @@ router.patch('/:projectId/step/:stepName/complete', controller.completeStep);
 router.patch('/:projectId/link/:resourceType', controller.linkResource);
 ```
 
-Register in `src/routes/index.ts`:
-```typescript
-import videoProjectRouter from './v1/video-project.route';
-app.use('/v1/video-projects', videoProjectRouter);
-```
+✅ Already registered in `src/routes/v1/index.ts` — `router.use("/video-projects", videoProjectRouter)`.
 
 ---
 

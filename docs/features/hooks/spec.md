@@ -2,7 +2,7 @@
 title: "Hooks Feature Spec"
 description: "How the Hooks step works — hook generation, selection mechanic, and state machine behavior"
 date: 2026-02-27
-last_updated: 2026-02-27
+last_updated: 2026-03-08
 status: "draft"
 tags: ["feature", "hooks", "spec"]
 ---
@@ -13,7 +13,7 @@ tags: ["feature", "hooks", "spec"]
 
 Hooks is Step 3 of the MomentumX content pipeline. It generates 5 hook variations from an approved script and title. The creator selects one hook, which completes the Hooks step and feeds into Packaging as context.
 
-Hooks generation is currently implemented inside the Packaging module (`POST /v1/packaging/generate-hooks`). Extracting Hooks into its own pipeline step — with a dedicated endpoint, Firestore collection, and state tracking — is Phase 0 work.
+Hooks has its own dedicated endpoints, Firestore collection, and state tracking. The standalone `POST /v1/hooks/generate` and `POST /v1/hooks/:hooksId/select` endpoints are live. The legacy `POST /v1/packaging/generate-hooks` endpoint still exists for stateless generation but is no longer the canonical path.
 
 ---
 
@@ -24,19 +24,18 @@ Hooks generation is currently implemented inside the Packaging module (`POST /v1
 | Step | 3 of 4 |
 | Requires | Completed script from the Script step |
 | Unlocks | Packaging step |
-| Completion mechanic | Creator selects one hook → `selectedHookId` stored on video project → Hooks step = `completed` |
+| Completion mechanic | Creator selects one hook → `selectedHookIndex` stored on video project → Hooks step = `completed` |
 
 ---
 
 ## What Gets Built During This Step
 
-When Hooks completes (planned — not yet fully built):
-1. Gemini generates 5 hook variations from the script and title
+When Hooks completes:
+1. Gemini generates 5 hook variations from the script
 2. Hooks batch is saved to the `hooks` Firestore collection
-3. The creator selects one hook → `selectedHookId` stored on the video project
-4. Packaging step becomes available
-
-Currently, only step 1 is built (inside the Packaging module). Steps 2–4 are Phase 0 work.
+3. Resource is linked to the video project (`linkResource` fire-and-forget)
+4. The creator selects one hook → `selectedHookIndex` stored on the video project → `completeStep` fires
+5. Packaging step becomes available
 
 ---
 
@@ -45,7 +44,7 @@ Currently, only step 1 is built (inside the Packaging module). Steps 2–4 are P
 | Attribute | Value |
 |---|---|
 | Model | `gemini-2.0-flash` |
-| Prompt | `PACKAGING_HOOKS_PROMPT` in `src/constants/prompt.ts` |
+| Prompt | `GENERATE_HOOKS_PROMPT` in `src/constants/prompt.ts` |
 | Generation config | `GENERATION_CONFIG_PACKAGING` (JSON object output) |
 | Output | JSON object with `hooks` array — 5 strings |
 | Delivery | Standard JSON response (not SSE) |
@@ -54,7 +53,6 @@ Currently, only step 1 is built (inside the Packaging module). Steps 2–4 are P
 
 | Variable | Source |
 |---|---|
-| `{title}` | Video title passed in request body |
 | `{script}` | Script text passed in request body |
 
 ### Hook Styles
@@ -83,7 +81,7 @@ not_started → in_progress → completed
 |---|---|
 | `not_started` | Hooks haven't been triggered for this video project |
 | `in_progress` | Hooks generated, creator reviewing or iterating |
-| `completed` | Creator selected one hook — `selectedHookId` set on video project |
+| `completed` | Creator selected one hook — `selectedHookIndex` set on video project |
 
 ### Stale Behavior
 
@@ -93,33 +91,20 @@ If hooks are regenerated while a packaging document exists downstream, Packaging
 
 ---
 
-## Batch and Archive Model (Planned — Phase 0)
+## Batch Model
 
-Hooks are generated in batches. Each batch produces 5 variations saved as a single Firestore document. When the creator regenerates, the previous batch is archived (`archived: true`) and a new batch is created.
+Hooks are generated in batches. Each batch produces 5 variations saved as a single Firestore document. When the creator regenerates, the hooks and hookFeedback are overwritten in place on the same document (no archive).
 
-### Planned `hooks` Collection Document Shape
+### `hooks` Collection Document Shape
 
 | Field | Type | Description |
 |---|---|---|
-| `id` | `string` | UUID |
+| `id` | `string` | Firestore auto-generated ID |
 | `videoProjectId` | `string` | Foreign key to the video project |
-| `userId` | `string` | Owner |
-| `batchId` | `string` | Identifies the generation batch |
+| `createdBy` | `string` | `userId` of the owner |
 | `hooks` | `string[]` | Array of 5 hook strings |
-| `archived` | `boolean` | `true` if superseded by a later batch |
+| `hookFeedback` | `Record<string, "like" \| "dislike" \| null>` | Per-hook feedback keyed by index |
 | `createdAt` | `Timestamp` | Server-side timestamp |
-
-This collection and shape are not yet built. Defined in `pipeline-spec.md` as the Phase 0 target.
-
----
-
-## Current Location: Inside Packaging
-
-The generation logic currently lives in `PackagingService.generateHooks()` (`src/service/packaging.service.ts`). It calls Gemini with `PACKAGING_HOOKS_PROMPT` and `GENERATION_CONFIG_PACKAGING`, parses the JSON response, and returns the result directly. No Firestore write occurs.
-
-The route is `POST /v1/packaging/generate-hooks` (packaging router).
-
-This is a known architectural gap. Hooks belongs between Script and Packaging in the pipeline. Extracting it to its own step with a `POST /v1/hooks/generate` endpoint and `hooks` Firestore collection is a Phase 0 task.
 
 ---
 
@@ -127,17 +112,18 @@ This is a known architectural gap. Hooks belongs between Script and Packaging in
 
 | Component | Status |
 |---|---|
-| Hook generation via Gemini (`PACKAGING_HOOKS_PROMPT`) | ✅ Built |
-| `POST /v1/packaging/generate-hooks` (inside Packaging module) | ✅ Built (temporary location) |
-| Dedicated `POST /v1/hooks/generate` endpoint | ❌ Not built |
-| `hooks` Firestore collection | ❌ Not built |
-| Hook batch save to Firestore | ❌ Not built |
-| Hook archive on regenerate | ❌ Not built |
-| Hook selection endpoint (`POST /v1/hooks/:hookId/select`) | ❌ Not built |
-| `selectedHookId` on video project | ❌ Not built |
-| Hooks step state tracking on video project | ❌ Not built |
-| Stale flag: script change → hooks `stale: true` | ❌ Not built |
-| Stale cascade: hooks regenerated → packaging `stale: true` | ❌ Not built |
+| Hook generation via Gemini | ✅ Built |
+| `POST /v1/hooks/generate` — standalone endpoint | ✅ Built |
+| `hooks` Firestore collection | ✅ Built |
+| Hook batch save to Firestore | ✅ Built |
+| Hook selection endpoint (`POST /v1/hooks/:hooksId/select`) | ✅ Built |
+| `selectedHookIndex` on video project | ✅ Built |
+| Hooks step state tracking on video project | ✅ Built |
+| Regenerate hooks (`POST /v1/hooks/:hooksId/regenerate`) | ✅ Built |
+| Per-hook feedback (`PATCH /v1/hooks/:hooksId/feedback`) | ✅ Built |
+| Export hooks (`GET /v1/hooks/:hooksId/export`) | ✅ Built |
+| Stale flag: script change → hooks `stale: true` | ✅ Built |
+| Stale cascade: hooks regenerated → packaging `stale: true` | ✅ Built |
 
 ---
 

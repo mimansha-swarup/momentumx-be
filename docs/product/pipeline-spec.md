@@ -64,19 +64,18 @@ What's happening inside an individual step. State machine per step — see schem
 | Status | Meaning |
 |---|---|
 | `not_started` | No generation has run |
-| `generating` | AI is generating topic ideas |
-| `in_review` | Generation complete, awaiting creator selection |
+| `in_progress` | AI generating or awaiting creator selection |
 | `completed` | Creator has selected a topic |
+| `stale` | Downstream change invalidated context |
 
 **Trigger table:**
 
 | Action | Transition |
 |---|---|
-| Creator opens Research for first time | `not_started` → `generating` |
-| Generation finishes | `generating` → `in_review` |
-| Creator selects a topic | `in_review` → `completed` |
-| Creator regenerates (Regenerate All) | `completed` → `generating` |
-| Creator regenerates (Regenerate All) | `in_review` → `generating` |
+| Creator initiates topic generation | `not_started` → `in_progress` |
+| Creator selects a topic | `in_progress` → `completed` |
+| Creator regenerates (Regenerate All) | `completed` → `in_progress` |
+| Creator regenerates (Regenerate All) | `in_progress` → `in_progress` |
 
 **Note on stale:** If Script is regenerated, Research step itself is NOT marked stale. Research is upstream — Script being redone doesn't change the topic decision.
 
@@ -87,20 +86,19 @@ What's happening inside an individual step. State machine per step — see schem
 | Status | Meaning |
 |---|---|
 | `not_started` | No script generated yet |
-| `generating` | Script is streaming |
-| `in_review` | Script complete, creator reviewing |
+| `in_progress` | Script generating or awaiting creator approval |
 | `completed` | Creator has marked the script done |
+| `stale` | Downstream change invalidated context |
 
 **Trigger table:**
 
 | Action | Transition |
 |---|---|
-| Creator initiates script generation | `not_started` → `generating` |
-| Stream ends | `generating` → `in_review` |
-| Creator marks script done | `in_review` → `completed` |
-| Creator regenerates | any → `generating` |
+| Creator initiates script generation | `not_started` → `in_progress` |
+| Creator marks script done | `in_progress` → `completed` |
+| Creator regenerates | any → `in_progress` |
 
-**Stale:** If script is regenerated while Hooks or Packaging exist downstream, those steps are marked `stale: true`.
+**Stale:** If script is regenerated while Hooks or Packaging exist downstream, those steps have `status` set to `"stale"`.
 
 ---
 
@@ -109,22 +107,22 @@ What's happening inside an individual step. State machine per step — see schem
 | Status | Meaning |
 |---|---|
 | `not_started` | No hooks generated yet |
-| `generating` | AI generating hooks |
-| `in_review` | Hooks ready, creator reviewing |
+| `in_progress` | Hooks generating or awaiting creator selection |
 | `completed` | Creator has selected a hook |
+| `stale` | Upstream script was regenerated |
 
 **Trigger table:**
 
 | Action | Transition |
 |---|---|
-| Creator opens Hooks | `not_started` → `generating` |
-| Generation finishes | `generating` → `in_review` |
-| Creator selects a hook | `in_review` → `completed` |
-| Creator regenerates | any → `generating` |
+| Creator triggers hook generation | `not_started` → `in_progress` |
+| Creator selects a hook | `in_progress` → `completed` |
+| Creator regenerates | any → `in_progress` |
+| Script is regenerated upstream | any → `stale` |
 
-**Completion mechanic:** Selecting a hook = completing the hooks step. The selected hook ID is stored on the video project as `selectedHookId`. This feeds the Packaging step.
+**Completion mechanic:** Selecting a hook = completing the hooks step. The selected hook index is stored on the video project as `selectedHookIndex`. This feeds the Packaging step.
 
-**Stale:** If hooks are regenerated while Packaging exists downstream, Packaging is marked `stale: true`.
+**Stale:** If hooks are regenerated while Packaging exists downstream, Packaging has `status` set to `"stale"`.
 
 ---
 
@@ -143,32 +141,30 @@ Each packaging item has its own independent status. The step itself has no singl
 | Status | Meaning |
 |---|---|
 | `not_started` | Not yet generated |
-| `generating` | AI generating |
-| `in_review` | Ready, creator reviewing |
+| `in_progress` | AI generating or awaiting creator approval |
 | `completed` | Creator marked this item done |
 
-**Nothing auto-advances to `completed`.** Items go from `generating` → `in_review` and wait for explicit creator action.
+**Nothing auto-advances to `completed`.** The creator explicitly marks each item done.
 
 **Trigger table (per item):**
 
 | Action | Transition |
 |---|---|
-| Creator triggers generation | `not_started` → `generating` |
-| Generation finishes | `generating` → `in_review` |
-| Creator marks item done | `in_review` → `completed` |
-| Creator regenerates item | `completed` → `generating` |
-| Creator regenerates item | `in_review` → `generating` |
+| Creator triggers generation | `not_started` → `in_progress` |
+| Creator marks item done | `in_progress` → `completed` |
+| Creator regenerates item | any → `in_progress` |
 
 ---
 
 ## Stale Model
 
-Stale is a **boolean flag overlaid on a step** — it is not a separate status value.
+Stale is represented as a **status value**, not a separate boolean field. A stale step has:
 
 ```
-step.status = "completed"
-step.stale = true   // downstream change invalidated this step's output context
+step.status = "stale"
 ```
+
+This means `status` can be `"not_started" | "in_progress" | "completed" | "stale"`. There is no separate `stale: boolean` field — the stale state replaces the status value.
 
 ### Stale Cascade Rules
 
@@ -235,34 +231,32 @@ A creator can have multiple video projects active simultaneously. Each video pro
 
 ```
 videoProjects/{videoProjectId}
-  id: string                  // Firestore auto-ID
+  projectId: string           // same as Firestore doc ID, stored for queries
   userId: string              // owner — always filter by this first
   title: string               // working title (from selected topic)
   topicId: string             // ref to topics collection
   scriptId: string | null     // ref to scripts collection
-  selectedHookId: string | null  // ref to hooks collection
+  hooksId: string | null      // ref to hooks collection
+  packagingId: string | null  // ref to packaging collection
+  selectedHookIndex: number | null  // index into the hooks array on the linked hooks batch
 
   pipeline: {
     research: {
-      status: "not_started" | "generating" | "in_review" | "completed"
-      stale: boolean
+      status: "not_started" | "in_progress" | "completed" | "stale"
     }
     script: {
-      status: "not_started" | "generating" | "in_review" | "completed"
-      stale: boolean
+      status: "not_started" | "in_progress" | "completed" | "stale"
     }
     hooks: {
-      status: "not_started" | "generating" | "in_review" | "completed"
-      stale: boolean
+      status: "not_started" | "in_progress" | "completed" | "stale"
     }
     packaging: {
-      title:       { status: PackagingItemStatus, stale: boolean }
-      description: { status: PackagingItemStatus, stale: boolean }
-      thumbnail:   { status: PackagingItemStatus, stale: boolean }
-      shorts:      { status: PackagingItemStatus, stale: boolean }
+      status: "not_started" | "in_progress" | "completed" | "stale"
     }
   }
 
+  overallStatus: "in_progress" | "completed" | "stale"
+  currentStep: "research" | "script" | "hooks" | "packaging"
   createdAt: Timestamp       // server-side
   updatedAt: Timestamp       // server-side
 ```
@@ -271,12 +265,11 @@ videoProjects/{videoProjectId}
 
 ```
 hooks/{hookId}
-  id: string                 // UUID
+  id: string                 // Firestore auto-generated ID
   videoProjectId: string
-  userId: string
-  batchId: string            // groups hooks generated in the same run
+  createdBy: string          // userId of the owner
   hooks: string[]            // 5 hook variations
-  archived: boolean          // true when batch superseded by Regenerate All
+  hookFeedback: Record<string, "like" | "dislike" | null>
   createdAt: Timestamp
 ```
 
@@ -313,21 +306,21 @@ Add to existing packaging documents:
 
 ---
 
-## Backend Implementation Order
+## Backend Implementation — Phase 0 Complete
 
-Phase 0 is the prerequisite for all pipeline-aware features:
+All Phase 0 infrastructure is built and live:
 
-1. Add `videoProjects` collection and `Collection.VIDEO_PROJECTS` enum entry
-2. Add `hooks` collection and `Collection.HOOKS` enum entry
-3. Create `VideoProjectRepository` — CRUD for `videoProjects`
-4. Create `HooksRepository` — CRUD for `hooks`
-5. Create `VideoProjectService` — orchestration (create project when topic selected, status transitions, stale cascade)
-6. Create `HooksService` — hook generation (extract from packaging service)
-7. Add `videoProjectId`, `archived`, `batchId` fields to `topics` and `scripts` write paths
-8. Add `videoProjectId`, `stale`, `itemStatuses` fields to `packaging` write paths
-9. Add new routes: `/v1/video-projects`, `/v1/hooks`
+1. ✅ `videoProjects` collection + `Collection.VIDEO_PROJECTS` enum
+2. ✅ `hooks` collection + `Collection.HOOKS` enum
+3. ✅ `VideoProjectRepository` — full CRUD for `videoProjects`
+4. ✅ `HooksRepository` — full CRUD for `hooks`
+5. ✅ `VideoProjectService` — status transitions, stale cascade, `startStep` / `completeStep` / `linkResource` / `markStale`
+6. ✅ `HooksService` — hook generation, selection, regeneration, feedback, export
+7. ✅ `videoProjectId`, `archived`, `batchId` fields on `topics` and `scripts`
+8. ✅ `videoProjectId`, `stale` fields on `packaging`
+9. ✅ Routes registered: `/v1/video-projects`, `/v1/hooks`
 
-Do not begin Phase 0 implementation until API contracts are formally defined by the Product Designer.
+Pipeline auto-advancement is also wired: generating a script, selecting a hook, or saving packaging all trigger the appropriate `startStep` / `completeStep` / `linkResource` calls (fire-and-forget) on the linked video project.
 
 ---
 

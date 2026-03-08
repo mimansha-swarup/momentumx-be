@@ -25,7 +25,7 @@ Given a completed script and title, Packaging generates the assets needed to pub
 | Requires | Script + title + selectedHook as context |
 | Completion mechanic | Creator explicitly marks each item done |
 
-Currently takes `script` and `title` directly from the request body. The `selectedHook` context and `videoProjectId` linkage are Phase 0 work.
+Generation endpoints accept `script`, `title`, and optional `selectedHook` directly from the request body. `videoProjectId` can be passed to `POST /save` to link the packaging document to a video project.
 
 ---
 
@@ -35,9 +35,9 @@ Currently takes `script` and `title` directly from the request body. The `select
 
 `POST /v1/packaging/generate-title` — generates 3 alternative title variations.
 
-**Prompt:** `PACKAGING_TITLE_PROMPT` — injects `{script}` and `{title}`. Returns:
+**Prompt:** `GENERATE_TITLE_PROMPT` — injects `{script}` and optional `{selectedHook}`. Returns:
 ```json
-{ "titles": ["title1", "title2", "title3"] }
+{ "titles": [{ "title": "...", "characterCount": 62 }, ...] }
 ```
 Titles target 50–70 characters, different emotional angles, search-optimized.
 
@@ -47,7 +47,7 @@ Titles target 50–70 characters, different emotional angles, search-optimized.
 
 `POST /v1/packaging/generate-description` — generates an SEO-optimized YouTube description.
 
-**Prompt:** `PACKAGING_DESCRIPTION_PROMPT` — injects `{script}` and `{title}`. Returns:
+**Prompt:** `GENERATE_DESCRIPTION_PROMPT` — injects `{script}`, `{title}`, and optional `{selectedHook}`. Returns:
 ```json
 { "description": "full description text" }
 ```
@@ -59,20 +59,11 @@ Hook visible before "Show More", keywords woven naturally, timestamp placeholder
 
 `POST /v1/packaging/generate-thumbnail` — generates 3 thumbnail design concepts.
 
-**Prompt:** `PACKAGING_THUMBNAIL_PROMPT` — injects `{script}` and `{title}`. Returns:
+**Prompt:** `GENERATE_THUMBNAIL_PROMPT` — injects `{script}`, `{title}`, and optional `{selectedHook}`. Returns:
 ```json
-{
-  "thumbnails": [
-    {
-      "concept": "brief concept name",
-      "textOverlay": "suggested text",
-      "visualDescription": "visual elements and layout",
-      "emotionalTrigger": "psychological hook"
-    }
-  ]
-}
+{ "descriptions": ["plain string visual brief 1", "brief 2", "brief 3"] }
 ```
-These are design briefs, not rendered images. Text overlay is 3–5 words max.
+These are plain-text design briefs, not rendered images. Each describes layout, text overlay (3–5 words), colors, and visual approach.
 
 ---
 
@@ -80,26 +71,26 @@ These are design briefs, not rendered images. Text overlay is 3–5 words max.
 
 `POST /v1/packaging/generate-shorts` — generates a segmented YouTube Shorts script.
 
-**Prompt:** `PACKAGING_SHORTS_PROMPT` — injects `{script}` and `{title}`. Returns:
+**Prompt:** `GENERATE_SHORTS_PROMPT` — injects `{script}` and `{duration}`. Returns:
 ```json
 {
-  "shortsScript": {
-    "hook": "opening 3 seconds",
-    "body": "main content",
-    "callToAction": "closing 5 seconds",
-    "estimatedDuration": "XX seconds"
-  }
+  "segments": [
+    { "startTime": "0:00", "endTime": "0:05", "content": "...", "type": "hook" },
+    { "startTime": "0:05", "endTime": "0:40", "content": "...", "type": "point" },
+    { "startTime": "0:55", "endTime": "1:00", "content": "...", "type": "cta" }
+  ],
+  "totalDuration": "1:00"
 }
 ```
-Target: under 60 seconds at natural speaking pace.
+Segment types: `hook`, `point`, `transition`, `cta`. Word count targets ~2.5 words per second to fit the specified `duration`.
 
 ---
 
-### Hooks Generation (Temporary — Moving to Its Own Step)
+### Hooks Generation (Legacy — Stateless)
 
 `POST /v1/packaging/generate-hooks` — generates 5 hook variations.
 
-**This is NOT a permanent Packaging endpoint.** Hooks will be extracted into its own pipeline step (Step 3) in Phase 0. Documented here only because it currently ships with the Packaging module. See [Hooks Feature Spec](../hooks/spec.md).
+This endpoint is still available for stateless generation but is no longer the canonical hooks path. The dedicated `POST /v1/hooks/generate` endpoint (Step 3) generates hooks tied to a video project and should be used in the integrated pipeline. See [Hooks Feature Spec](../hooks/spec.md).
 
 ---
 
@@ -126,21 +117,18 @@ Packaging documents are saved with whatever fields the client sends in `req.body
   ...clientProvidedFields,       // whatever the client sends to /save
   createdBy: string,             // userId from authMiddleware
   createdAt: Timestamp,          // serverTimestamp()
-  updatedAt: Timestamp,          // serverTimestamp()
 }
 ```
 
 Firestore auto-generates the document ID.
 
-### Critical Gap: No Foreign Keys
+### `videoProjectId` Linkage
 
-Packaging documents have **no `scriptId`, `topicId`, or `videoProjectId`**. The packaging collection is fully disconnected from topics and scripts. This is a known, intentional gap — the video project schema was not defined when packaging was built.
-
-**Do not** build any feature that depends on linking packaging to topics or scripts until `videoProjectId` is added in Phase 0.
+When `videoProjectId` is passed to `POST /save`, the packaging document is stored with that field and `linkResource` is called fire-and-forget on the video project. Direct `scriptId` or `topicId` foreign keys still do not exist on packaging documents.
 
 ---
 
-## Per-Item Status (Planned — Phase 0)
+## Per-Item Status (Not Yet Built)
 
 Each of the 4 packaging items will have its own independent status:
 
@@ -152,7 +140,7 @@ Nothing auto-advances to `completed`. The creator explicitly marks each item don
 
 Items can be regenerated at any time. Regeneration resets that item's status to `generating`.
 
-The packaging document will gain an `itemStatuses` map in Phase 0:
+When built, the packaging document will gain an `itemStatuses` map:
 
 ```typescript
 itemStatuses: {
@@ -165,26 +153,22 @@ itemStatuses: {
 
 ---
 
-## What's Not Built
+## Build Status
 
-| Gap | Notes |
+| Feature | Status |
 |---|---|
-| `videoProjectId` foreign key | Packaging has no link to a video project, script, or topic. Blocked on Phase 0 video project schema. |
-| Per-item status tracking | No `itemStatuses` field. No `not_started → in_review → completed` lifecycle. |
-| Stale detection | No `stale` flag. No mechanism to mark packaging stale when the script is regenerated or selected hook changes. |
-| `selectedHook` context in generation | Hooks exist but selected hook is not injected into title/description/thumbnail prompts. |
-| Hooks extraction | `generate-hooks` must move to its own step before integration. |
-| Input validation | No server-side check that `script` or `title` are present. Missing fields produce degraded Gemini output, not a 400. |
-
----
-
-## Phase 0 Planned Changes
-
-- **`videoProjectId`** added to packaging documents when video project schema ships
-- **`itemStatuses`** map added for per-item state tracking
-- **`stale: boolean`** added and set to `true` when script is regenerated or selected hook changes after packaging was created
-- **Input change** — generation endpoints currently take `{ script, title }`. In Phase 0 they will take `videoProjectId` and pull context from the video project document. This is a breaking API change.
-- **Hooks extraction** — `generate-hooks` removed from this module, becomes Step 3
+| Generate title, description, thumbnail, shorts | ✅ Built |
+| `selectedHook` injected into title/description/thumbnail prompts | ✅ Built |
+| Input validation (400 on missing `script`/`title`) | ✅ Built |
+| Save packaging to Firestore | ✅ Built |
+| `videoProjectId` linkage on save | ✅ Built |
+| Ownership check on get/save | ✅ Built |
+| Regenerate per item (`POST /:packagingId/regenerate/:item`) | ✅ Built |
+| Per-item feedback (`PATCH /:packagingId/feedback`) | ✅ Built |
+| Export packaging (`GET /:packagingId/export`) | ✅ Built |
+| Stale detection (`stale` flag on document) | ❌ Not built |
+| Per-item status tracking (`itemStatuses` map) | ❌ Not built |
+| Direct `scriptId` / `topicId` foreign keys | ❌ Not built |
 
 ---
 

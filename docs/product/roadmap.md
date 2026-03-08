@@ -119,7 +119,7 @@ Every step supports two modes of iteration:
 - Regenerate all items in the current step
 - Directional refinement via follow-up prompt (e.g. "make this more aggressive", "shorter", "different angle")
 
-**Current build:** Partially built — Research only. Topics support regenerate-all (`POST /v1/content/topics/regenerate-all`), regenerate-one (`POST /v1/topics/:topicId/regenerate`), and like/dislike feedback (`PATCH /v1/topics/:topicId/feedback`). Scripts, hooks, and packaging have no iteration support yet. Directional AI refinement (follow-up prompt) is not built at any step.
+**Current build:** Fully built across all four pipeline steps. Research, Script, Hooks, and Packaging all support regeneration, like/dislike feedback, and export. Directional AI refinement (follow-up prompt — "make this shorter", "more aggressive") is not built at any step.
 
 ---
 
@@ -129,7 +129,7 @@ Export is available at every step — not just at the end of the pipeline. The c
 
 Export targets to be defined (Google Docs, copy-paste formatted output, YouTube Studio are candidates).
 
-**Current build:** Partially built — Research only. Topics can be exported as a formatted numbered list (`GET /v1/content/topics/export`). Script, hooks, and packaging export not yet built.
+**Current build:** Fully built across all four pipeline steps. Research, Script, Hooks, and Packaging all have export endpoints live. Export targets (Google Docs, YouTube Studio integration) are not yet defined.
 
 ---
 
@@ -167,7 +167,7 @@ Includes:
 - Iteration — feedback signals + regenerate specific sections or full script
 - Export — export script
 
-**Build status:** Core script generation built. Iteration and export not built.
+**Build status:** Backend complete. Script generation, iteration (regenerate, feedback), export, and pipeline step auto-advancement are all built and live.
 
 ---
 
@@ -180,11 +180,12 @@ Includes:
 - Iteration — feedback signals + regenerate specific or all hooks
 - Export — export selected hooks
 
-**Build status:** Backend complete. Standalone hooks step built and no longer inside the Packaging module:
+**Build status:** Backend complete. All components are built and live:
 - `POST /v1/hooks/generate` — generates a 5-hook batch tied to a video project
 - `POST /v1/hooks/:hooksId/select` — records selected hook index on the video project
-
-Iteration (regenerate hooks) and export not yet built.
+- `POST /v1/hooks/:hooksId/regenerate` — regenerates hooks, cascades stale to packaging
+- `PATCH /v1/hooks/:hooksId/feedback` — per-hook like/dislike feedback
+- `GET /v1/hooks/:hooksId/export` — export hooks as plain text
 
 ---
 
@@ -199,7 +200,7 @@ Includes:
 - Iteration — feedback signals + regenerate specific or all assets
 - Export — export full package
 
-**Build status:** Core generation built. Iteration and export not built.
+**Build status:** Backend complete. Per-item generation, regeneration, feedback, and export are all built and live.
 
 ---
 
@@ -209,11 +210,8 @@ Gaps are grouped by when they get addressed: within a phase, or post all four ph
 
 ### Within Phases (addressed as each phase is built)
 
-**Iteration and export needed for Script, Hooks, and Packaging**
-Research has full iteration (regenerate-all, regenerate-one, feedback signals) and export. Scripts, hooks, and packaging have none of this yet. Required before Phases 2–4 ship.
-
-**End-to-end integration not wired**
-All modules are built independently. The video project state machine exists but generation endpoints don't advance pipeline steps automatically. Concretely: generating a script does not set `pipeline.script = completed` on the project; selecting a hook does not set `pipeline.hooks = completed`. This wiring is required before any phase ships as a cohesive flow.
+**End-to-end integration not wired for frontend**
+All backend modules are built and the video project state machine auto-advances (startStep / completeStep / linkResource wired in script, hooks, and packaging generation). No frontend integration exists yet — the UI has not been built. This is the primary remaining blocker before any phase ships as a cohesive product experience.
 
 ---
 
@@ -247,9 +245,9 @@ Generated hooks, titles, and CTAs are not saved as reusable assets. No personal 
 | Video project lifecycle stages | ✅ Resolved | See [Pipeline Status Model](./pipeline-spec.md) |
 | Batch retention policy | ✅ Resolved | Keep archived batches forever — KMeans benefits from history, no cleanup needed in Phase 0 |
 | Regeneration behavior (All vs. One) | ✅ Resolved | Regenerate All = override batch (archive old), Regenerate One = slot-replace |
-| Stale cascade model | ✅ Resolved | Boolean flag, cascades downstream, creator resolves manually |
+| Stale cascade model | ✅ Resolved | Stored as `status = "stale"` (not a boolean field), cascades downstream, creator resolves manually |
 | Packaging item count | ✅ Resolved | 4 items: title, description, thumbnail, shorts (hooks moved to own step) |
-| Hook selection → step completion | ✅ Resolved | Selecting a hook = completing the hooks step, stores `selectedHookId` on project |
+| Hook selection → step completion | ✅ Resolved | Selecting a hook = completing the hooks step, stores `selectedHookIndex` (number) on the video project |
 | Shorts script ownership | ✅ Resolved | Stays in Packaging permanently, no plans to separate |
 
 ---

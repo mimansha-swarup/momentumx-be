@@ -13,8 +13,6 @@ All endpoints require `Authorization: Bearer <token>`.
 
 Base path: `/v1/packaging`
 
-> **Breaking change coming in Phase 0:** All generation endpoints currently take `{ script, title }` in the request body. In Phase 0 this will change to `{ videoProjectId }` — the server will pull script, title, and selectedHook from the video project. Plan frontend integrations accordingly.
-
 ---
 
 ## Endpoints Summary
@@ -24,11 +22,14 @@ Base path: `/v1/packaging`
 | `POST` | `/v1/packaging/generate-title` | Generate 3 title variations | ✅ Built |
 | `POST` | `/v1/packaging/generate-description` | Generate SEO description | ✅ Built |
 | `POST` | `/v1/packaging/generate-thumbnail` | Generate 3 thumbnail briefs | ✅ Built |
-| `POST` | `/v1/packaging/generate-hooks` | Generate 5 hooks (temporary) | ✅ Built |
+| `POST` | `/v1/packaging/generate-hooks` | Generate 5 hooks (stateless, legacy) | ✅ Built |
 | `POST` | `/v1/packaging/generate-shorts` | Generate Shorts script | ✅ Built |
 | `POST` | `/v1/packaging/save` | Save packaging to Firestore | ✅ Built |
 | `GET` | `/v1/packaging/list` | List user's packaging | ✅ Built |
 | `GET` | `/v1/packaging/:packagingId` | Get single packaging | ✅ Built |
+| `POST` | `/v1/packaging/:packagingId/regenerate/:item` | Regenerate a specific packaging item | ✅ Built |
+| `PATCH` | `/v1/packaging/:packagingId/feedback` | Record per-item like/dislike | ✅ Built |
+| `GET` | `/v1/packaging/:packagingId/export` | Export packaging as plain text | ✅ Built |
 
 ---
 
@@ -37,17 +38,21 @@ Base path: `/v1/packaging`
 Generate 3 alternative title variations. Titles are 50–70 characters, search-optimized, using different emotional angles.
 
 ### Request Body
-| Field | Type | Required |
-|---|---|---|
-| `script` | `string` | Yes |
-| `title` | `string` | Yes |
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `script` | `string` | Yes | Full script text |
+| `selectedHook` | `string` | No | If provided, AI uses this hook as context when generating titles |
 
 ### Response — `200`
 ```json
 {
   "success": true,
   "data": {
-    "titles": ["title1", "title2", "title3"]
+    "titles": [
+      { "title": "Why Your Morning Routine Is KILLING Your Productivity", "characterCount": 62 },
+      { "title": "I Tried 10 Morning Hacks for 30 Days — Here's What Actually Works", "characterCount": 62 },
+      { "title": "10 Productivity Hacks That Will Transform Your Morning Routine", "characterCount": 62 }
+    ]
   }
 }
 ```
@@ -62,10 +67,11 @@ Generate 3 alternative title variations. Titles are 50–70 characters, search-o
 Generate an SEO-optimized YouTube description. Hook before "Show More", keywords woven naturally, timestamp placeholders, CTA. Target: 200–400 words.
 
 ### Request Body
-| Field | Type | Required |
-|---|---|---|
-| `script` | `string` | Yes |
-| `title` | `string` | Yes |
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `script` | `string` | Yes | Full script text |
+| `title` | `string` | Yes | Video title |
+| `selectedHook` | `string` | No | If provided, AI uses this hook as context |
 
 ### Response — `200`
 ```json
@@ -87,23 +93,21 @@ Generate an SEO-optimized YouTube description. Hook before "Show More", keywords
 Generate 3 thumbnail design concepts. Each is a design brief (not a rendered image) with text overlay, visual layout description, and psychological hook.
 
 ### Request Body
-| Field | Type | Required |
-|---|---|---|
-| `script` | `string` | Yes |
-| `title` | `string` | Yes |
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `script` | `string` | Yes | Full script text |
+| `title` | `string` | Yes | Video title |
+| `selectedHook` | `string` | No | If provided, AI uses this hook as context |
 
 ### Response — `200`
 ```json
 {
   "success": true,
   "data": {
-    "thumbnails": [
-      {
-        "concept": "concept name",
-        "textOverlay": "3-5 words",
-        "visualDescription": "layout and visual elements",
-        "emotionalTrigger": "psychological hook explanation"
-      }
+    "descriptions": [
+      "Split composition with bold red 'PRODUCTIVITY HACKS' text on left, person looking shocked on right, bright yellow background",
+      "Minimalist design with large '10X' text in center, dark blue gradient with white text overlay",
+      "Before/after split screen showing messy vs organized workspace, 'TRANSFORM' text in bold orange"
     ]
   }
 }
@@ -116,13 +120,12 @@ Generate 3 thumbnail design concepts. Each is a design brief (not a rendered ima
 
 ## POST `/v1/packaging/generate-hooks`
 
-Generate 5 hook variations. **Temporary endpoint** — will move to `/v1/hooks/generate` in Phase 0. Do not build permanent dependencies on this path.
+Generate 5 hook variations. **Deprecated** — use `POST /v1/hooks/generate` instead. This endpoint is stateless and does not save to Firestore or link to a video project.
 
 ### Request Body
 | Field | Type | Required |
 |---|---|---|
 | `script` | `string` | Yes |
-| `title` | `string` | Yes |
 
 ### Response — `200`
 ```json
@@ -141,25 +144,26 @@ Generate 5 hook variations. **Temporary endpoint** — will move to `/v1/hooks/g
 
 ## POST `/v1/packaging/generate-shorts`
 
-Generate a YouTube Shorts script. Target: under 60 seconds, structured as hook / body / CTA.
+Generate a YouTube Shorts script. Structured as hook / body / CTA, written to fit the specified duration.
 
 ### Request Body
-| Field | Type | Required |
-|---|---|---|
-| `script` | `string` | Yes |
-| `title` | `string` | Yes |
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `script` | `string` | Yes | Full script text |
+| `duration` | `number` | Yes | Target duration in seconds (e.g. `60`) |
 
 ### Response — `200`
 ```json
 {
   "success": true,
   "data": {
-    "shortsScript": {
-      "hook": "opening 3 seconds",
-      "body": "main content",
-      "callToAction": "closing 5 seconds",
-      "estimatedDuration": "52 seconds"
-    }
+    "segments": [
+      { "startTime": "0:00", "endTime": "0:05", "content": "Hook text here.", "type": "hook" },
+      { "startTime": "0:05", "endTime": "0:40", "content": "Main point content.", "type": "point" },
+      { "startTime": "0:40", "endTime": "0:55", "content": "Transition content.", "type": "transition" },
+      { "startTime": "0:55", "endTime": "1:00", "content": "Follow for more.", "type": "cta" }
+    ],
+    "totalDuration": "1:00"
   }
 }
 ```
@@ -171,17 +175,22 @@ Generate a YouTube Shorts script. Target: under 60 seconds, structured as hook /
 
 ## POST `/v1/packaging/save`
 
-Save a packaging document to Firestore. Document ID is Firestore auto-generated. Client controls which fields are included. `createdBy`, `createdAt`, `updatedAt` are set server-side.
+Save a packaging document to Firestore. Document ID is Firestore auto-generated. Client controls which fields are included. `createdBy` and `createdAt` are set server-side.
 
-**No foreign keys:** The saved document will have no `scriptId`, `topicId`, or `videoProjectId`. Packaging is disconnected until Phase 0.
+If `videoProjectId` is provided, the server verifies ownership of the video project before saving, then calls `linkResource` (fire-and-forget) to record the `packagingId` on the project.
 
 ### Request Body
-Any packaging fields to persist. No fixed schema enforced.
 
-### Response — `201`
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `videoProjectId` | `string` | No | If provided, links this packaging to the video project |
+| *(any packaging fields)* | `unknown` | No | All other fields are passed through and persisted as-is |
+
+### Response — `200`
 ```json
 {
   "success": true,
+  "message": "Packaging saved successfully",
   "data": {
     "id": "firestore-auto-id"
   }
@@ -189,7 +198,12 @@ Any packaging fields to persist. No fixed schema enforced.
 ```
 
 ### Error Cases
-- `500` — Firestore write failed
+
+| Status | Condition |
+|---|---|
+| 403 | `videoProjectId` provided but not owned by requesting user |
+| 404 | `videoProjectId` provided but project not found |
+| 500 | Firestore write failed |
 
 ---
 
@@ -205,8 +219,7 @@ List all packaging documents for the authenticated user, ordered by `createdAt` 
     {
       "id": "string",
       "createdBy": "string",
-      "createdAt": "<timestamp>",
-      "updatedAt": "<timestamp>"
+      "createdAt": "<timestamp>"
     }
   ]
 }
@@ -223,8 +236,6 @@ Additional fields per document depend on what was passed to `/save`. No fixed sc
 
 Get a single packaging document. Ownership is enforced — `createdBy` must match the requesting user.
 
-**Known inconsistency:** Ownership failure throws `Error('Unauthorized')` which surfaces as a 500, not a 403. To be fixed when error codes are standardized across the API.
-
 ### Path Parameters
 | Param | Type | Description |
 |---|---|---|
@@ -237,14 +248,141 @@ Get a single packaging document. Ownership is enforced — `createdBy` must matc
   "data": {
     "id": "string",
     "createdBy": "string",
-    "createdAt": "<timestamp>",
-    "updatedAt": "<timestamp>"
+    "createdAt": "<timestamp>"
   }
 }
 ```
 
 ### Error Cases
-- `500` — document not found, ownership check failed, or Firestore read failed (all return 500 currently)
+
+| Status | Condition |
+|---|---|
+| 403 | Document not owned by requesting user |
+| 404 | Document not found |
+| 500 | Firestore read failed |
+
+---
+
+---
+
+## POST `/v1/packaging/:packagingId/regenerate/:item`
+
+Regenerates a single packaging item and overwrites it on the existing document. Ownership enforced.
+
+### Path Parameters
+
+| Param | Type | Description |
+|---|---|---|
+| `packagingId` | `string` | Packaging document ID |
+| `item` | `string` | One of: `title`, `description`, `thumbnail`, `shorts` |
+
+### Request Body
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `script` | `string` | Yes | Full script text |
+| `title` | `string` | No | Required when `item` is `description` or `thumbnail` |
+| `duration` | `number` | No | Required when `item` is `shorts` |
+| `selectedHook` | `string` | No | Passed as context for `title`, `description`, `thumbnail` |
+
+### Response — `200`
+
+```json
+{
+  "success": true,
+  "message": "Packaging item regenerated successfully",
+  "data": {
+    "id": "string",
+    "item": "title",
+    "data": {}
+  }
+}
+```
+
+### Error Cases
+
+| Status | Condition |
+|---|---|
+| 400 | `script` missing, `item` not in allowed list, or required conditional field missing |
+| 403 | Not owned by requesting user |
+| 404 | Packaging document not found |
+
+---
+
+## PATCH `/v1/packaging/:packagingId/feedback`
+
+Records a like or dislike signal on a specific packaging item. Overwrites any prior feedback for that item.
+
+### Path Parameters
+
+| Param | Type | Description |
+|---|---|---|
+| `packagingId` | `string` | Packaging document ID |
+
+### Request Body
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `item` | `string` | Yes | One of: `title`, `description`, `thumbnail`, `shorts` |
+| `feedback` | `"like" \| "dislike" \| null` | Yes | `null` clears existing feedback |
+
+### Response — `200`
+
+```json
+{
+  "success": true,
+  "message": "Feedback updated successfully",
+  "data": {
+    "id": "string",
+    "item": "title",
+    "feedback": "like"
+  }
+}
+```
+
+### Error Cases
+
+| Status | Condition |
+|---|---|
+| 400 | `item` or `feedback` missing, or invalid values |
+| 403 | Not owned by requesting user |
+| 404 | Packaging document not found |
+
+---
+
+## GET `/v1/packaging/:packagingId/export`
+
+Returns the packaging document formatted as a human-readable plain-text string.
+
+### Auth
+`Authorization: Bearer <token>` — required. Ownership enforced.
+
+### Path Parameters
+
+| Param | Type | Description |
+|---|---|---|
+| `packagingId` | `string` | Packaging document ID |
+
+### Response — `200`
+
+```json
+{
+  "success": true,
+  "message": "Packaging exported successfully",
+  "data": {
+    "text": "Video Package — March 8, 2026\n══...\n\nTITLES\n..."
+  }
+}
+```
+
+The `text` field is a multi-section plain-text document containing titles, description, thumbnail brief, and shorts script.
+
+### Error Cases
+
+| Status | Condition |
+|---|---|
+| 403 | Not owned by requesting user |
+| 404 | Packaging document not found |
 
 ---
 
