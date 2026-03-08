@@ -45,6 +45,7 @@ function makeProject(overrides: Partial<IVideoProject> = {}): IVideoProject {
     topicId: "topic-1",
     scriptId: null,
     hooksId: null,
+    selectedHookIndex: null,
     packagingId: null,
     thumbnailHint: null,
     overallStatus: "in_progress",
@@ -78,7 +79,7 @@ function makeMockRepo(): jest.Mocked<VideoProjectRepository> {
 }
 
 function makeMockContentRepo(): jest.Mocked<ContentRepository> {
-  return { getTopic: jest.fn() } as unknown as jest.Mocked<ContentRepository>;
+  return { getTopic: jest.fn(), updateTopic: jest.fn() } as unknown as jest.Mocked<ContentRepository>;
 }
 
 function makeMockPackagingRepo(): jest.Mocked<PackagingRepository> {

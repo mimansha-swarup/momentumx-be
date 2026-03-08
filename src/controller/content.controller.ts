@@ -165,6 +165,30 @@ class ContentController {
     }
   };
 
+  updateScriptFeedback = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { scriptId } = req.params;
+      const { feedback } = req.body as { feedback: "like" | "dislike" | null };
+      if (feedback === undefined) {
+        return res.sendError({ message: "feedback is required", statusCode: 400 });
+      }
+      const data = await this.service.updateScriptFeedback(req.userId, scriptId, feedback);
+      res.sendSuccess({ message: "Script feedback updated", data });
+    } catch (error) {
+      this.handleError(error, res, next);
+    }
+  };
+
+  exportScript = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { scriptId } = req.params;
+      const data = await this.service.exportScript(req.userId, scriptId);
+      res.sendSuccess({ message: "Script exported successfully", data });
+    } catch (error) {
+      this.handleError(error, res, next);
+    }
+  };
+
   generateScript = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const token = req.query.token || "";

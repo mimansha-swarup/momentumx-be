@@ -141,6 +141,7 @@ Get a single Video Project with full pipeline state.
     "topicId": "string",
     "scriptId": "string | null",
     "hooksId": "string | null",
+    "selectedHookIndex": "number | null",
     "packagingId": "string | null",
     "currentStep": "script",
     "overallStatus": "in_progress",

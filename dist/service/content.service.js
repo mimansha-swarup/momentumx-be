@@ -237,6 +237,41 @@ class ContentService {
             await this.repo.updateTopic(topicId, { userFeedback: feedback });
             return { id: topicId, userFeedback: feedback };
         };
+        this.updateScriptFeedback = async (userId, scriptId, feedback) => {
+            const script = await this.repo.getScriptById(scriptId);
+            if (!script) {
+                const err = new Error("Script not found");
+                err.statusCode = 404;
+                throw err;
+            }
+            if (script.createdBy !== userId) {
+                const err = new Error("Forbidden");
+                err.statusCode = 403;
+                throw err;
+            }
+            const validFeedback = ["like", "dislike", null];
+            if (!validFeedback.includes(feedback)) {
+                const err = new Error('feedback must be "like", "dislike", or null');
+                err.statusCode = 400;
+                throw err;
+            }
+            await this.repo.editScript(scriptId, { userFeedback: feedback });
+            return { id: scriptId, userFeedback: feedback };
+        };
+        this.exportScript = async (userId, scriptId) => {
+            const script = await this.repo.getScriptById(scriptId);
+            if (!script) {
+                const err = new Error("Script not found");
+                err.statusCode = 404;
+                throw err;
+            }
+            if (script.createdBy !== userId) {
+                const err = new Error("Forbidden");
+                err.statusCode = 403;
+                throw err;
+            }
+            return { title: script.title, text: script.script };
+        };
         this.exportTopics = async (userId) => {
             const activeTopics = await this.repo.getActiveBatch(userId);
             const sorted = [...activeTopics].sort((a, b) => {

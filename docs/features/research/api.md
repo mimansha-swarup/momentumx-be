@@ -1,26 +1,44 @@
 ---
 title: "Research — API Contract"
-description: "Endpoint reference for the Research step — topic generation, listing, and editing"
-status: "draft"
-last_updated: 2026-02-27
+description: "Endpoint reference for the Research step — topic generation, iteration, feedback, and export"
+status: "implemented"
+last_updated: 2026-03-08
 tags: ["api", "research", "topics"]
 ---
 
 # Research — API Contract
 
-All endpoints are under `/v1/content`. All require `Authorization: Bearer <token>` unless noted.
+Topic endpoints are under `/v1/content`. Research intelligence endpoints are under `/v1/research`. All require `Authorization: Bearer <token>`.
 
 ---
 
 ## Endpoints Summary
 
+### `/v1/content` — Topic Lifecycle
+
 | Method | URL | Purpose | Status |
 |---|---|---|---|
-| `GET` | `/v1/content/stream/topics` | Generate 10 topic ideas | ✅ Built |
+| `GET` | `/v1/content/stream/topics` | Generate 10 topic ideas (new batch) | ✅ Built |
 | `GET` | `/v1/content/topics` | List saved topics (paginated) | ✅ Built |
 | `PATCH` | `/v1/content/topics/edit/:topicId` | Edit a topic title | ✅ Built |
-| `POST` | `/v1/content/topics/:topicId/regenerate` | Regenerate a single topic slot | ❌ Not built |
-| `POST` | `/v1/video-projects` | Create a video project from a selected topic | ❌ Not built |
+| `POST` | `/v1/content/topics/regenerate-all` | Archive current batch, generate 10 new | ✅ Built |
+| `POST` | `/v1/content/topics/:topicId/regenerate` | Regenerate a single topic slot in-place | ✅ Built |
+| `PATCH` | `/v1/content/topics/:topicId/feedback` | Set like/dislike signal on a topic | ✅ Built |
+| `GET` | `/v1/content/topics/export` | Export active batch as formatted text | ✅ Built |
+
+### `/v1/video-projects` — Project Creation
+
+| Method | URL | Purpose | Status |
+|---|---|---|---|
+| `POST` | `/v1/video-projects` | Create a video project from a selected topic | ✅ Built |
+
+### `/v1/research` — Research Intelligence
+
+| Method | URL | Purpose | Status |
+|---|---|---|---|
+| `GET` | `/v1/research/trending` | Trending YouTube videos in user's niche | ✅ Built |
+| `GET` | `/v1/research/competitors` | Competitor top videos (fresh from YouTube API) | ✅ Built |
+| `GET` | `/v1/research/keywords` | Keyword signals for a search query | ✅ Built |
 
 ---
 
@@ -193,11 +211,43 @@ Any Firestore-compatible field can be passed. The update uses `{ merge: true }` 
 
 ---
 
-## POST `/v1/content/topics/:topicId/regenerate` ❌ Not Built
+## POST `/v1/content/topics/regenerate-all` ✅ Built
 
-Regenerates a single topic slot (Regenerate One). Replaces the existing topic document at that ID with a freshly generated title, preserving the slot position in the batch.
+Archives all active (non-archived) topics for the user and generates a fresh batch of 10. Triggers a stale cascade on any video project linked to an active topic.
 
-> This endpoint does not exist yet. The contract below is the planned design for Phase 0.
+### Auth
+`Authorization: Bearer <token>` — required.
+
+### Request Body
+None.
+
+### Response — Success `200`
+
+```json
+{
+  "success": true,
+  "message": "Topics regenerated successfully",
+  "data": [
+    {
+      "id": "new-uuid",
+      "title": "New title 1",
+      "batchId": "new-batch-uuid",
+      "archived": false
+    }
+  ]
+}
+```
+
+### Notes
+- Old topics are set to `archived: true` — they are not deleted, just hidden.
+- A new `batchId` is generated for the fresh batch.
+- If any active topic has `videoProjectId` set, `pipeline.script`, `.hooks`, and `.packaging` on that project are marked `stale`.
+
+---
+
+## POST `/v1/content/topics/:topicId/regenerate` ✅ Built
+
+Regenerates a single topic slot in-place. Replaces the title and embedding while preserving the document ID and `batchId`.
 
 ### Auth
 `Authorization: Bearer <token>` — required.
@@ -221,90 +271,187 @@ None.
     "id": "a1b2c3d4-...",
     "title": "New title replacing the old one",
     "createdBy": "uid_abc123",
-    "createdAt": "2026-02-27T10:05:00.000Z",
-    "isScriptGenerated": false,
-    "batchId": "batch_xyz"
+    "batchId": "batch_xyz",
+    "archived": false
   }
 }
 ```
 
 ### Notes
-- Must verify that `topicId` belongs to the authenticated user before regenerating.
-- `batchId` stays the same as the topic being replaced — it is a slot-replace within the existing batch.
-- If the regenerated topic was the currently selected topic on a video project, the selection should be cleared.
-- Does not trigger a stale cascade on downstream steps (only Regenerate All does).
+- `batchId` stays the same — slot-replace within the existing batch.
+- Does not trigger a stale cascade (only Regenerate All does).
+- Ownership-checked: returns 403 if `topicId` belongs to a different user.
 
 ---
 
-## POST `/v1/video-projects` ❌ Not Built
+## PATCH `/v1/content/topics/:topicId/feedback` ✅ Built
 
-Creates a video project when a creator selects a topic. This is the action that completes the Research step and unlocks the Script step.
-
-> This endpoint does not exist yet. The contract below is the planned design for Phase 0. It belongs in a `/v1/video-projects` router, not `/v1/content`.
+Records a like or dislike signal on a topic. Used for feedback collection — does not affect generation.
 
 ### Auth
 `Authorization: Bearer <token>` — required.
 
+### Path Parameters
+
+| Param | Type | Description |
+|---|---|---|
+| `topicId` | `string` | The UUID of the topic |
+
 ### Request Body
 
 ```json
-{
-  "topicId": "a1b2c3d4-..."
-}
+{ "feedback": "like" }
 ```
 
-### Response — Success `201`
+| Field | Type | Values |
+|---|---|---|
+| `feedback` | `string \| null` | `"like"`, `"dislike"`, or `null` (to clear) |
+
+### Response — Success `200`
 
 ```json
 {
   "success": true,
-  "message": "Video project created",
+  "data": { "id": "a1b2c3d4-...", "userFeedback": "like" }
+}
+```
+
+### Error Cases
+
+| Status | Condition |
+|---|---|
+| 400 | `feedback` value is not `"like"`, `"dislike"`, or `null` |
+| 403 | Topic belongs to a different user |
+| 404 | Topic not found |
+
+---
+
+## GET `/v1/content/topics/export` ✅ Built
+
+Returns the user's active topic batch as a formatted plain-text numbered list, ready to copy-paste.
+
+### Auth
+`Authorization: Bearer <token>` — required.
+
+### Request
+No body. No query params.
+
+### Response — Success `200`
+
+```json
+{
+  "success": true,
   "data": {
-    "id": "auto_generated_firestore_id",
-    "userId": "uid_abc123",
-    "title": "How I Built a $10K/Month Business Using Only Free AI Tools",
-    "topicId": "a1b2c3d4-...",
-    "scriptId": null,
-    "selectedHookId": null,
-    "pipeline": {
-      "research": { "status": "completed", "stale": false },
-      "script":   { "status": "not_started", "stale": false },
-      "hooks":    { "status": "not_started", "stale": false },
-      "packaging": {
-        "title":       { "status": "not_started", "stale": false },
-        "description": { "status": "not_started", "stale": false },
-        "thumbnail":   { "status": "not_started", "stale": false },
-        "shorts":      { "status": "not_started", "stale": false }
-      }
-    },
-    "createdAt": "2026-02-27T10:00:00.000Z"
+    "text": "Research Topics — March 8, 2026\n──────────────────────────────────\n1. Title one\n2. Title two\n...",
+    "count": 10
   }
 }
 ```
 
-### Response — Error `400`
+### Notes
+- Only returns active (non-archived) topics.
+- Ordered by `createdAt` ascending (original generation order).
+
+---
+
+## POST `/v1/video-projects` ✅ Built
+
+Creates a video project when a creator selects a topic. Writes `videoProjectId` back to the topic document. See [Video Project API Reference](../video-project/api.md) for the full contract.
+
+---
+
+## GET `/v1/research/trending` ✅ Built
+
+Returns trending YouTube videos in the user's niche (pulled fresh from YouTube Data API on each call).
+
+### Auth
+`Authorization: Bearer <token>` — required.
+
+### Request
+No body. No query params. Niche is read from the user's profile.
+
+### Response — Success `200`
 
 ```json
 {
-  "success": false,
-  "message": "topicId is required"
+  "success": true,
+  "data": [
+    {
+      "title": "Why Most YouTube Channels Fail in Year 2",
+      "channelTitle": "Creator Insights",
+      "videoId": "dQw4w9WgXcQ"
+    }
+  ]
 }
 ```
 
-### Response — Error `404`
+---
+
+## GET `/v1/research/competitors` ✅ Built
+
+Returns top videos from the user's competitor channels (fetched fresh from YouTube Data API on each call). Competitor channel IDs are read from the user's profile (set during onboarding).
+
+### Auth
+`Authorization: Bearer <token>` — required.
+
+### Request
+No body. No query params.
+
+### Response — Success `200`
 
 ```json
 {
-  "success": false,
-  "message": "Topic not found"
+  "success": true,
+  "data": [
+    {
+      "channelTitle": "Competitor Channel Name",
+      "titles": [
+        "Their top video title 1",
+        "Their top video title 2"
+      ]
+    }
+  ]
 }
 ```
 
 ### Notes
-- Must verify that `topicId` belongs to the authenticated user.
-- Sets `topics.videoProjectId = videoProjectId` on the topic document.
-- Sets Research step `status = "completed"` on the new video project.
-- If the creator already has a video project with this `topicId`, return the existing project (idempotent).
+- Returns an empty array if no competitors are set on the user's profile.
+- Each competitor is fetched in parallel.
+
+---
+
+## GET `/v1/research/keywords` ✅ Built
+
+Returns related keyword signals for a search query (YouTube Data API relevance search).
+
+### Auth
+`Authorization: Bearer <token>` — required.
+
+### Query Parameters
+
+| Param | Type | Required | Description |
+|---|---|---|---|
+| `query` | `string` | Yes | Search term to look up keyword signals for |
+
+### Response — Success `200`
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "title": "Related video title",
+      "channelTitle": "Channel Name"
+    }
+  ]
+}
+```
+
+### Error Cases
+
+| Status | Condition |
+|---|---|
+| 400 | `query` param missing or empty |
 
 ---
 
@@ -312,3 +459,4 @@ Creates a video project when a creator selects a topic. This is the action that 
 
 - [Research Feature Spec](./spec.md) — User flow, states, edge cases
 - [Pipeline Status Model](../../product/pipeline-spec.md) — Full status schemas and Firestore schema
+- [Video Project API Reference](../video-project/api.md) — Project creation contract

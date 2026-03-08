@@ -28,4 +28,6 @@ router.patch("/topics/:topicId/feedback", contentController.updateFeedback);
 router.get("/scripts", contentController.retrieveScripts);
 router.get("/script/:scriptId", contentController.retrieveScriptById);
 router.patch("/script/edit/:scriptId", contentController.editScript);
+router.patch("/scripts/:scriptId/feedback", contentController.updateScriptFeedback);
+router.get("/scripts/:scriptId/export", contentController.exportScript);
 export default router;

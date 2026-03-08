@@ -310,6 +310,11 @@ class VideoProjectService {
     return { id: projectId, hooksId, selectedHookIndex: hookIndex };
   };
 
+  clearSelectedHook = async (projectId: string, userId: string): Promise<void> => {
+    await this.getById(projectId, userId);
+    await this.repo.update(projectId, { selectedHookIndex: null, hooksId: null });
+  };
+
   markStale = async (projectId: string, fromStep: StepName): Promise<void> => {
     const project = await this.repo.findById(projectId);
     if (!project) return;

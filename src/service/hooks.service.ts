@@ -43,6 +43,7 @@ class HooksService {
       videoProjectId,
       createdBy: userId,
       hooks: parsed.hooks,
+      hookFeedback: {},
     });
 
     return hooksBatch;
@@ -74,6 +75,114 @@ class HooksService {
     }
 
     return this.videoProjectService.setSelectedHook(videoProjectId, hooksId, hookIndex, userId);
+  };
+
+  regenerate = async (
+    userId: string,
+    hooksId: string,
+    script: string
+  ): Promise<{ id: string; hooks: string[]; hookFeedback: Record<string, never> }> => {
+    const hooksBatch = await this.repo.findById(hooksId);
+    if (!hooksBatch) {
+      const err = new Error("Hooks batch not found") as Error & { statusCode: number };
+      err.statusCode = 404;
+      throw err;
+    }
+    if (hooksBatch.createdBy !== userId) {
+      const err = new Error("Forbidden") as Error & { statusCode: number };
+      err.statusCode = 403;
+      throw err;
+    }
+    if (!script) {
+      const err = new Error("script is required") as Error & { statusCode: number };
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const userPrompt = GENERATE_HOOKS_PROMPT.replace("{script}", script);
+    const result = await generateStreamingContent(
+      PACKAGING_SYSTEM_PROMPT,
+      userPrompt,
+      GENERATION_CONFIG_PACKAGING
+    );
+
+    let accumulatedRes = "";
+    for await (const chunk of result.stream) {
+      const part = chunk.text();
+      if (part) accumulatedRes += part;
+    }
+
+    const parsed = JSON.parse(accumulatedRes) as { hooks: string[] };
+    await this.repo.update(hooksId, { hooks: parsed.hooks, hookFeedback: {} });
+    await this.videoProjectService.clearSelectedHook(hooksBatch.videoProjectId, userId);
+
+    return { id: hooksId, hooks: parsed.hooks, hookFeedback: {} };
+  };
+
+  updateFeedback = async (
+    userId: string,
+    hooksId: string,
+    hookIndex: number,
+    feedback: "like" | "dislike" | null
+  ): Promise<{ id: string; hookIndex: number; feedback: "like" | "dislike" | null }> => {
+    const hooksBatch = await this.repo.findById(hooksId);
+    if (!hooksBatch) {
+      const err = new Error("Hooks batch not found") as Error & { statusCode: number };
+      err.statusCode = 404;
+      throw err;
+    }
+    if (hooksBatch.createdBy !== userId) {
+      const err = new Error("Forbidden") as Error & { statusCode: number };
+      err.statusCode = 403;
+      throw err;
+    }
+    if (hookIndex < 0 || hookIndex >= hooksBatch.hooks.length) {
+      const err = new Error(
+        `hookIndex out of range. Must be 0–${hooksBatch.hooks.length - 1}`
+      ) as Error & { statusCode: number };
+      err.statusCode = 400;
+      throw err;
+    }
+    const validFeedback = ["like", "dislike", null];
+    if (!validFeedback.includes(feedback)) {
+      const err = new Error('feedback must be "like", "dislike", or null') as Error & { statusCode: number };
+      err.statusCode = 400;
+      throw err;
+    }
+
+    await this.repo.update(hooksId, { [`hookFeedback.${hookIndex}`]: feedback });
+    return { id: hooksId, hookIndex, feedback };
+  };
+
+  exportHooks = async (
+    userId: string,
+    hooksId: string
+  ): Promise<{ text: string; count: number }> => {
+    const hooksBatch = await this.repo.findById(hooksId);
+    if (!hooksBatch) {
+      const err = new Error("Hooks batch not found") as Error & { statusCode: number };
+      err.statusCode = 404;
+      throw err;
+    }
+    if (hooksBatch.createdBy !== userId) {
+      const err = new Error("Forbidden") as Error & { statusCode: number };
+      err.statusCode = 403;
+      throw err;
+    }
+
+    const today = new Date().toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+
+    const lines = [
+      `Hooks — ${today}`,
+      "──────────────────────────────────",
+      ...hooksBatch.hooks.map((h, i) => `${i + 1}. ${h}`),
+    ];
+
+    return { text: lines.join("\n"), count: hooksBatch.hooks.length };
   };
 }
 

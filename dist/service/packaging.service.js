@@ -115,6 +115,137 @@ class PackagingService {
                 throw error;
             }
         };
+        this.regenerateItem = async (userId, packagingId, item, script, title, duration) => {
+            const pkg = await this.repo.get(packagingId);
+            if (!pkg) {
+                const err = new Error("Packaging not found");
+                err.statusCode = 404;
+                throw err;
+            }
+            if (pkg.createdBy !== userId) {
+                const err = new Error("Forbidden");
+                err.statusCode = 403;
+                throw err;
+            }
+            const validItems = ["title", "description", "thumbnail", "shorts"];
+            if (!validItems.includes(item)) {
+                const err = new Error(`item must be one of: ${validItems.join(", ")}`);
+                err.statusCode = 400;
+                throw err;
+            }
+            if (!script) {
+                const err = new Error("script is required");
+                err.statusCode = 400;
+                throw err;
+            }
+            if ((item === "description" || item === "thumbnail") && !title) {
+                const err = new Error("title is required for description and thumbnail regeneration");
+                err.statusCode = 400;
+                throw err;
+            }
+            if (item === "shorts" && !duration) {
+                const err = new Error("duration is required for shorts regeneration");
+                err.statusCode = 400;
+                throw err;
+            }
+            let result;
+            let fieldKey;
+            if (item === "title") {
+                result = await this.generateTitle(script);
+                fieldKey = "titles";
+            }
+            else if (item === "description") {
+                result = await this.generateDescription(script, title);
+                fieldKey = "description";
+            }
+            else if (item === "thumbnail") {
+                result = await this.generateThumbnail(script, title);
+                fieldKey = "thumbnail";
+            }
+            else {
+                result = await this.generateShorts(script, duration);
+                fieldKey = "shorts";
+            }
+            await this.repo.update(packagingId, { [fieldKey]: result });
+            return { id: packagingId, item, data: result };
+        };
+        this.updateFeedback = async (userId, packagingId, item, feedback) => {
+            const pkg = await this.repo.get(packagingId);
+            if (!pkg) {
+                const err = new Error("Packaging not found");
+                err.statusCode = 404;
+                throw err;
+            }
+            if (pkg.createdBy !== userId) {
+                const err = new Error("Forbidden");
+                err.statusCode = 403;
+                throw err;
+            }
+            const validItems = ["title", "description", "thumbnail", "shorts"];
+            if (!validItems.includes(item)) {
+                const err = new Error(`item must be one of: ${validItems.join(", ")}`);
+                err.statusCode = 400;
+                throw err;
+            }
+            const validFeedback = ["like", "dislike", null];
+            if (!validFeedback.includes(feedback)) {
+                const err = new Error('feedback must be "like", "dislike", or null');
+                err.statusCode = 400;
+                throw err;
+            }
+            await this.repo.update(packagingId, { [`feedback.${item}`]: feedback });
+            return { id: packagingId, item, feedback };
+        };
+        this.exportPackaging = async (userId, packagingId) => {
+            const pkg = await this.repo.get(packagingId);
+            if (!pkg) {
+                const err = new Error("Packaging not found");
+                err.statusCode = 404;
+                throw err;
+            }
+            if (pkg.createdBy !== userId) {
+                const err = new Error("Forbidden");
+                err.statusCode = 403;
+                throw err;
+            }
+            const today = new Date().toLocaleDateString("en-US", {
+                year: "numeric",
+                month: "long",
+                day: "numeric",
+            });
+            const formatValue = (val) => {
+                if (val === undefined || val === null)
+                    return "N/A";
+                if (typeof val === "string")
+                    return val;
+                return JSON.stringify(val, null, 2);
+            };
+            const titles = pkg.titles;
+            const titlesText = Array.isArray(titles)
+                ? titles.map((t, i) => `${i + 1}. ${typeof t === "string" ? t : JSON.stringify(t)}`).join("\n")
+                : formatValue(titles);
+            const lines = [
+                `Video Package — ${today}`,
+                "══════════════════════════════════",
+                "",
+                "TITLES",
+                "──────",
+                titlesText,
+                "",
+                "DESCRIPTION",
+                "───────────",
+                formatValue(pkg.description),
+                "",
+                "THUMBNAIL BRIEF",
+                "───────────────",
+                formatValue(pkg.thumbnail),
+                "",
+                "SHORTS SCRIPT",
+                "─────────────",
+                formatValue(pkg.shorts),
+            ];
+            return { text: lines.join("\n") };
+        };
         this.repo = repo;
     }
 }

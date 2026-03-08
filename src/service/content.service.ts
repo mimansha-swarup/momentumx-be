@@ -329,6 +329,47 @@ class ContentService {
     return { id: topicId, userFeedback: feedback };
   };
 
+  updateScriptFeedback = async (
+    userId: string,
+    scriptId: string,
+    feedback: "like" | "dislike" | null,
+  ) => {
+    const script = await this.repo.getScriptById(scriptId);
+    if (!script) {
+      const err = new Error("Script not found") as Error & { statusCode: number };
+      err.statusCode = 404;
+      throw err;
+    }
+    if (script.createdBy !== userId) {
+      const err = new Error("Forbidden") as Error & { statusCode: number };
+      err.statusCode = 403;
+      throw err;
+    }
+    const validFeedback = ["like", "dislike", null];
+    if (!validFeedback.includes(feedback)) {
+      const err = new Error('feedback must be "like", "dislike", or null') as Error & { statusCode: number };
+      err.statusCode = 400;
+      throw err;
+    }
+    await this.repo.editScript(scriptId, { userFeedback: feedback });
+    return { id: scriptId, userFeedback: feedback };
+  };
+
+  exportScript = async (userId: string, scriptId: string) => {
+    const script = await this.repo.getScriptById(scriptId);
+    if (!script) {
+      const err = new Error("Script not found") as Error & { statusCode: number };
+      err.statusCode = 404;
+      throw err;
+    }
+    if (script.createdBy !== userId) {
+      const err = new Error("Forbidden") as Error & { statusCode: number };
+      err.statusCode = 403;
+      throw err;
+    }
+    return { title: script.title as string, text: script.script as string };
+  };
+
   exportTopics = async (userId: string) => {
     const activeTopics = await this.repo.getActiveBatch(userId);
 

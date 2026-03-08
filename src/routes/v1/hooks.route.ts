@@ -21,5 +21,8 @@ const hooksController = new HooksController(hooksService);
 router.use(authMiddleware);
 router.post("/generate", hooksController.generate);
 router.post("/:hooksId/select", hooksController.select);
+router.post("/:hooksId/regenerate", hooksController.regenerate);
+router.patch("/:hooksId/feedback", hooksController.updateFeedback);
+router.get("/:hooksId/export", hooksController.exportHooks);
 
 export default router;

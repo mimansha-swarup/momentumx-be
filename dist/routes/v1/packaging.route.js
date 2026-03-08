@@ -18,4 +18,7 @@ router.post("/generate-shorts", packagingController.generateShorts);
 router.post("/save", packagingController.save);
 router.get("/list", packagingController.getPackagingByUser);
 router.get("/:packagingId", packagingController.getPackaging);
+router.post("/:packagingId/regenerate/:item", packagingController.regenerateItem);
+router.patch("/:packagingId/feedback", packagingController.updateFeedback);
+router.get("/:packagingId/export", packagingController.exportPackaging);
 export default router;

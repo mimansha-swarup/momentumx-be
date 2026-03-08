@@ -2,14 +2,14 @@
 title: "Hooks API Reference"
 description: "Endpoint reference for the Hooks step — hook generation and selection"
 date: 2026-02-27
-last_updated: 2026-02-27
-status: "draft"
+last_updated: 2026-03-08
+status: "implemented"
 tags: ["api", "hooks"]
 ---
 
 # Hooks API Reference
 
-Hooks generation currently lives inside the Packaging module. The dedicated Hooks endpoints are Phase 0 work.
+Hooks is a standalone pipeline step. The dedicated `/v1/hooks` endpoints are live. The temporary `POST /v1/packaging/generate-hooks` endpoint still exists but is superseded.
 
 ---
 
@@ -17,17 +17,110 @@ Hooks generation currently lives inside the Packaging module. The dedicated Hook
 
 | Method | URL | Status | Description |
 |---|---|---|---|
-| `POST` | `/v1/packaging/generate-hooks` | ✅ Built | Generate 5 hooks (temporary location in Packaging) |
-| `POST` | `/v1/hooks/generate` | ❌ Not built | Dedicated hooks endpoint (Phase 0) |
-| `POST` | `/v1/hooks/:hookId/select` | ❌ Not built | Select a hook, complete the Hooks step (Phase 0) |
+| `POST` | `/v1/packaging/generate-hooks` | ✅ Built (deprecated) | Generate 5 hooks — temporary location in Packaging |
+| `POST` | `/v1/hooks/generate` | ✅ Built | Generate a 5-hook batch tied to a video project |
+| `POST` | `/v1/hooks/:hooksId/select` | ✅ Built | Select a hook index, stores it on the video project |
 
 ---
 
-## POST `/v1/packaging/generate-hooks` ✅ Built
+## POST `/v1/hooks/generate` ✅ Built
+
+Generates 5 hook variations from a script. Saves the batch to the `hooks` Firestore collection and links it to the video project.
+
+### Auth
+`Authorization: Bearer <token>` — required.
+
+### Request Body
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `videoProjectId` | `string` | Yes | ID of the video project |
+| `script` | `string` | Yes | Full video script text |
+
+### Response — `200`
+
+```json
+{
+  "success": true,
+  "message": "Hooks generated successfully",
+  "data": {
+    "id": "firestore-auto-id",
+    "videoProjectId": "string",
+    "createdBy": "uid_abc123",
+    "hooks": [
+      "What if everything you knew about growing on YouTube was completely wrong?",
+      "Most creators waste their first 100 videos — here's exactly why.",
+      "Three months ago I had 200 subscribers. Last week I hit 50K.",
+      "Everyone says consistency is the key. They're missing the real reason.",
+      "Stop. Before you post another video, you need to hear this."
+    ],
+    "createdAt": "<timestamp>"
+  }
+}
+```
+
+### Error Cases
+
+| Status | Condition |
+|---|---|
+| 400 | `videoProjectId` or `script` missing |
+| 403 | Video project not owned by user |
+| 404 | Video project not found |
+| 500 | Gemini generation failed or JSON parse error |
+
+---
+
+## POST `/v1/hooks/:hooksId/select` ✅ Built
+
+Marks a specific hook index as selected. Stores `hooksId` and `selectedHookIndex` on the video project document.
+
+### Auth
+`Authorization: Bearer <token>` — required.
+
+### Path Parameters
+
+| Param | Type | Description |
+|---|---|---|
+| `hooksId` | `string` | ID of the hooks batch document to select from |
+
+### Request Body
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `hookIndex` | `number` | Yes | Zero-based index (0–4) of the selected hook within the `hooks` array |
+| `videoProjectId` | `string` | Yes | ID of the video project to update |
+
+### Response — `200`
+
+```json
+{
+  "success": true,
+  "message": "Hook selected successfully",
+  "data": {
+    "id": "video-project-id",
+    "hooksId": "hooks-batch-id",
+    "selectedHookIndex": 2
+  }
+}
+```
+
+> `id` is the video project ID. `selectedHookIndex` is the index stored on the project.
+
+### Error Cases
+
+| Status | Condition |
+|---|---|
+| 400 | `hookIndex` or `videoProjectId` missing, or `hookIndex` out of range (0–4) |
+| 403 | Hooks batch not owned by user |
+| 404 | Hooks batch not found |
+
+---
+
+## POST `/v1/packaging/generate-hooks` ✅ Built (deprecated)
 
 Generates 5 hook variations from a script and title. Returns JSON — not SSE. Does not save to Firestore.
 
-**This endpoint is temporary.** It will be superseded by `POST /v1/hooks/generate` in Phase 0. Do not build permanent dependencies on this path.
+**This endpoint is deprecated.** Use `POST /v1/hooks/generate` instead.
 
 ### Auth
 `Authorization: Bearer <token>` — required.
@@ -46,117 +139,15 @@ Generates 5 hook variations from a script and title. Returns JSON — not SSE. D
   "success": true,
   "data": {
     "hooks": [
-      "What if everything you knew about growing on YouTube was completely wrong?",
-      "Most creators waste their first 100 videos — here's exactly why, and how to not be one of them.",
-      "Three months ago I had 200 subscribers. Last week I hit 50K. This is what changed.",
-      "Everyone says consistency is the key to YouTube growth. They're missing the real reason channels blow up.",
-      "Stop. Before you post another video, you need to hear this."
-    ]
-  }
-}
-```
-
-### Error Cases
-
-| Status | Condition |
-|---|---|
-| 400 | `script` or `title` missing |
-| 500 | Gemini generation failed or JSON parse error |
-
-### Notes
-- No Firestore write — caller is responsible for saving the result
-- Response is parsed from Gemini JSON — if model returns malformed JSON, a 500 is returned
-
----
-
-## POST `/v1/hooks/generate` ❌ Not Built
-
-Generates 5 hook variations for a video project. Pulls script from the video project. Saves the batch to the `hooks` Firestore collection.
-
-### Auth
-`Authorization: Bearer <token>` — required.
-
-### Request Body
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `videoProjectId` | `string` | Yes | ID of the video project |
-
-### Response — `200`
-
-```json
-{
-  "success": true,
-  "data": {
-    "id": "uuid",
-    "videoProjectId": "string",
-    "batchId": "string",
-    "hooks": [
       "hook variation 1",
       "hook variation 2",
       "hook variation 3",
       "hook variation 4",
       "hook variation 5"
-    ],
-    "archived": false,
-    "createdAt": "<timestamp>"
+    ]
   }
 }
 ```
-
-### Error Cases
-
-| Status | Condition |
-|---|---|
-| 400 | `videoProjectId` missing |
-| 403 | Project not owned by user |
-| 404 | Video project not found |
-| 500 | Script not available on project, or Gemini generation failed |
-
----
-
-## POST `/v1/hooks/:hookId/select` ❌ Not Built
-
-Marks a hook as selected. Stores `selectedHookId` on the video project and transitions the Hooks step to `completed`. Unlocks the Packaging step.
-
-### Auth
-`Authorization: Bearer <token>` — required.
-
-### Path Parameters
-
-| Param | Type | Description |
-|---|---|---|
-| `hookId` | `string` | ID of the hooks document to select from |
-
-### Request Body
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `hookIndex` | `number` | Yes | Index (0–4) of the selected hook within the `hooks` array |
-
-### Response — `200`
-
-```json
-{
-  "success": true,
-  "message": "Hook selected",
-  "data": {
-    "hookId": "string",
-    "selectedHookIndex": 2,
-    "videoProjectId": "string",
-    "hooksStepStatus": "completed"
-  }
-}
-```
-
-### Error Cases
-
-| Status | Condition |
-|---|---|
-| 400 | `hookIndex` missing or out of range |
-| 403 | Hook document not owned by user |
-| 404 | Hooks document not found |
-| 500 | Firestore write failed |
 
 ---
 

@@ -5,6 +5,7 @@ export interface IHooksBatch {
   videoProjectId: string;
   createdBy: string;
   hooks: string[];
+  hookFeedback: Record<string, "like" | "dislike" | null>;
   createdAt: Timestamp;
 }
 
@@ -16,4 +17,13 @@ export interface IGenerateHooksBody {
 export interface ISelectHookBody {
   hookIndex: number;
   videoProjectId: string;
+}
+
+export interface IRegenerateHooksBody {
+  script: string;
+}
+
+export interface IHooksFeedbackBody {
+  hookIndex: number;
+  feedback: "like" | "dislike" | null;
 }

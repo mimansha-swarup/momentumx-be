@@ -140,6 +140,56 @@ class PackagingController {
       next(error);
     }
   };
+
+  private handleError = (error: unknown, res: Response, next: NextFunction): void => {
+    const err = error as Error & { statusCode?: number };
+    if (err.statusCode) {
+      res.sendError({ message: err.message, statusCode: err.statusCode });
+    } else {
+      next(error);
+    }
+  };
+
+  regenerateItem = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { packagingId, item } = req.params;
+      const { script, title, duration } = req.body as { script: string; title?: string; duration?: number };
+      if (!script) {
+        return res.sendError({ message: "script is required", statusCode: 400 });
+      }
+      const data = await this.service.regenerateItem(req.userId, packagingId, item, script, title, duration);
+      res.sendSuccess({ message: "Packaging item regenerated successfully", data });
+    } catch (error) {
+      this.handleError(error, res, next);
+    }
+  };
+
+  updateFeedback = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { packagingId } = req.params;
+      const { item, feedback } = req.body as { item: string; feedback: "like" | "dislike" | null };
+      if (!item) {
+        return res.sendError({ message: "item is required", statusCode: 400 });
+      }
+      if (feedback === undefined) {
+        return res.sendError({ message: "feedback is required", statusCode: 400 });
+      }
+      const data = await this.service.updateFeedback(req.userId, packagingId, item, feedback);
+      res.sendSuccess({ message: "Feedback updated successfully", data });
+    } catch (error) {
+      this.handleError(error, res, next);
+    }
+  };
+
+  exportPackaging = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { packagingId } = req.params;
+      const data = await this.service.exportPackaging(req.userId, packagingId);
+      res.sendSuccess({ message: "Packaging exported successfully", data });
+    } catch (error) {
+      this.handleError(error, res, next);
+    }
+  };
 }
 
 export default PackagingController;

@@ -115,8 +115,8 @@ A creator can start multiple Video Projects using the same topic. No lock on top
 1. Creator navigates to Hooks.
 2. Frontend calls PATCH /video-projects/:projectId/step/hooks/start.
 3. Creator generates 5 hooks (POST /v1/hooks/generate with videoProjectId).
-4. Creator selects one hook → POST /v1/hooks/:hookId/select.
-5. project.selectedHookId set. Hooks step = "completed".
+4. Creator selects one hook → POST /v1/hooks/:hooksId/select.
+5. project.selectedHookIndex set. Hooks step = "completed".
 ```
 
 ### Packaging Step
@@ -163,6 +163,7 @@ interface VideoProject {
   topicId: string;                // always set — required for creation
   scriptId: string | null;        // set when script is saved
   hooksId: string | null;         // set when hooks are saved
+  selectedHookIndex: number | null; // set when creator selects a hook via POST /v1/hooks/:hooksId/select
   packagingId: string | null;     // set when packaging is saved
 
   pipeline: {
@@ -205,9 +206,10 @@ projectId         auto-id
 userId            req.userId
 workingTitle      from topic.title
 topicId           from request body
-scriptId          null
-hooksId           null
-packagingId       null
+scriptId             null
+hooksId              null
+selectedHookIndex    null
+packagingId          null
 overallStatus     "in_progress"
 currentStep       "research"
 isDeleted         false

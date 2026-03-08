@@ -37,6 +37,47 @@ class HooksController {
                 this.handleError(error, res, next);
             }
         };
+        this.regenerate = async (req, res, next) => {
+            try {
+                const hooksId = req.params.hooksId;
+                const { script } = req.body;
+                if (!script) {
+                    return res.sendError({ message: "script is required", statusCode: 400 });
+                }
+                const data = await this.service.regenerate(req.userId, hooksId, script);
+                res.sendSuccess({ message: "Hooks regenerated successfully", data });
+            }
+            catch (error) {
+                this.handleError(error, res, next);
+            }
+        };
+        this.updateFeedback = async (req, res, next) => {
+            try {
+                const hooksId = req.params.hooksId;
+                const { hookIndex, feedback } = req.body;
+                if (hookIndex === undefined || hookIndex === null) {
+                    return res.sendError({ message: "hookIndex is required", statusCode: 400 });
+                }
+                if (feedback === undefined) {
+                    return res.sendError({ message: "feedback is required", statusCode: 400 });
+                }
+                const data = await this.service.updateFeedback(req.userId, hooksId, hookIndex, feedback);
+                res.sendSuccess({ message: "Feedback updated successfully", data });
+            }
+            catch (error) {
+                this.handleError(error, res, next);
+            }
+        };
+        this.exportHooks = async (req, res, next) => {
+            try {
+                const hooksId = req.params.hooksId;
+                const data = await this.service.exportHooks(req.userId, hooksId);
+                res.sendSuccess({ message: "Hooks exported successfully", data });
+            }
+            catch (error) {
+                this.handleError(error, res, next);
+            }
+        };
     }
 }
 export default HooksController;

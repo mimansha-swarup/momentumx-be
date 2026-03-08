@@ -28,6 +28,10 @@ class HooksRepository {
     if (!doc.exists) return null;
     return doc.data() as IHooksBatch;
   };
+
+  update = async (hooksId: string, data: Record<string, unknown>): Promise<void> => {
+    await this.db.collection(this.collection).doc(hooksId).set(data, { merge: true });
+  };
 }
 
 export default HooksRepository;
