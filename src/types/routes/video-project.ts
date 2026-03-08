@@ -34,6 +34,7 @@ export interface IVideoProject {
   topicId: string;
   scriptId: string | null;
   hooksId: string | null;
+  selectedHookIndex: number | null;
   packagingId: string | null;
   thumbnailHint: string | null;
   pipeline: IVideoProjectPipeline;

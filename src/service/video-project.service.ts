@@ -49,6 +49,7 @@ class VideoProjectService {
       topicId,
       scriptId: null,
       hooksId: null,
+      selectedHookIndex: null,
       packagingId: null,
       thumbnailHint: null,
       pipeline: {
@@ -75,7 +76,9 @@ class VideoProjectService {
       lastUpdatedAt: now,
     };
 
-    return this.repo.create(projectData);
+    const project = await this.repo.create(projectData);
+    await this.contentRepo.updateTopic(topicId, { videoProjectId: project.id });
+    return project;
   };
 
   list = async (
@@ -293,6 +296,18 @@ class VideoProjectService {
 
     await this.repo.update(projectId, updates);
     return { id: projectId, ...updates };
+  };
+
+  setSelectedHook = async (
+    projectId: string,
+    hooksId: string,
+    hookIndex: number,
+    userId: string
+  ): Promise<{ id: string; hooksId: string; selectedHookIndex: number }> => {
+    await this.getById(projectId, userId);
+
+    await this.repo.update(projectId, { hooksId, selectedHookIndex: hookIndex });
+    return { id: projectId, hooksId, selectedHookIndex: hookIndex };
   };
 
   markStale = async (projectId: string, fromStep: StepName): Promise<void> => {

@@ -2,7 +2,7 @@
 title: "Product Roadmap & Status"
 description: "Current build state, planned E2E flow, and identified gaps"
 date: 2026-02-26
-last_updated: 2026-02-27
+last_updated: 2026-03-08
 status: "draft"
 tags: ["product", "roadmap", "status", "gaps"]
 ---
@@ -23,7 +23,7 @@ All core features have been built as independent modules. **Nothing is integrate
 | Video Projects | ✅ | ❌ | CRUD + pipeline state machine (Sprint 2). Foundation for integration. |
 | Topic / Title Generation | ✅ | ❌ | AI-generated titles with KMeans clustering to avoid repetition |
 | Script Generation | ✅ | ❌ | Full ~10-min script, streamed via SSE |
-| Hooks | ✅ | ❌ | Currently lives inside Packaging module |
+| Hooks | ✅ | ❌ | Standalone pipeline step — `POST /v1/hooks/generate` + `POST /v1/hooks/:hooksId/select` |
 | Packaging | ✅ | ❌ | Title variations, description, thumbnail brief, shorts script |
 
 ---
@@ -61,7 +61,7 @@ The discovery and ideation phase. The creator uses Research to figure out what v
 - **Trend discovery** — what's trending in the creator's niche right now
 - **Keyword / SEO data** — search volume and keyword signals to inform topic selection
 
-**Current build:** Title idea generation is built. Competitor analysis uses onboarding data (static). Trend discovery and keyword/SEO data are not yet built.
+**Current build:** Fully built. Title ideas (`GET /v1/content/topics`), trend discovery (`GET /v1/research/trending`), competitor analysis (`GET /v1/research/competitors`), and keyword signals (`GET /v1/research/keywords`) are all live. Research data is fetched fresh from the YouTube Data API on every call — not static onboarding data.
 
 ---
 
@@ -84,7 +84,7 @@ Dedicated hook generation for the video's opening seconds.
 - Varied styles: question, bold claim, story teaser, contrarian, pattern interrupt
 - Each hook is 1–3 sentences, written for immediate attention capture
 
-**Current build:** Built, currently lives inside the Packaging module. Will become its own step in the integrated flow.
+**Current build:** Fully built as a standalone pipeline step. `POST /v1/hooks/generate` generates a 5-hook batch tied to a video project. `POST /v1/hooks/:hooksId/select` records the chosen hook index on the project (`selectedHookIndex`). No longer coupled to the Packaging module.
 
 ---
 
@@ -119,7 +119,7 @@ Every step supports two modes of iteration:
 - Regenerate all items in the current step
 - Directional refinement via follow-up prompt (e.g. "make this more aggressive", "shorter", "different angle")
 
-**Current build:** Not yet built. Editing is manual only (no AI refinement loop).
+**Current build:** Partially built — Research only. Topics support regenerate-all (`POST /v1/content/topics/regenerate-all`), regenerate-one (`POST /v1/topics/:topicId/regenerate`), and like/dislike feedback (`PATCH /v1/topics/:topicId/feedback`). Scripts, hooks, and packaging have no iteration support yet. Directional AI refinement (follow-up prompt) is not built at any step.
 
 ---
 
@@ -129,7 +129,7 @@ Export is available at every step — not just at the end of the pipeline. The c
 
 Export targets to be defined (Google Docs, copy-paste formatted output, YouTube Studio are candidates).
 
-**Current build:** Not yet built.
+**Current build:** Partially built — Research only. Topics can be exported as a formatted numbered list (`GET /v1/content/topics/export`). Script, hooks, and packaging export not yet built.
 
 ---
 
@@ -148,7 +148,13 @@ Includes:
 - Iteration — feedback signals + regenerate specific or all topics
 - Export — export selected topics
 
-**Build status:** Title ideas built. Competitor analysis uses static onboarding data. Trend discovery and keyword/SEO not built.
+**Build status:** Backend complete. All components are built and live:
+- Title ideas — batch lifecycle (batchId, archived), regenerate-all, regenerate-one, like/dislike feedback, export
+- Competitor analysis — `GET /v1/research/competitors` (fresh YouTube Data API, not static onboarding data)
+- Trend discovery — `GET /v1/research/trending`
+- Keyword / SEO signals — `GET /v1/research/keywords`
+
+Phase 1 is ready for front-end integration.
 
 ---
 
@@ -174,7 +180,11 @@ Includes:
 - Iteration — feedback signals + regenerate specific or all hooks
 - Export — export selected hooks
 
-**Build status:** Built, currently inside Packaging module. Needs to be extracted into its own flow.
+**Build status:** Backend complete. Standalone hooks step built and no longer inside the Packaging module:
+- `POST /v1/hooks/generate` — generates a 5-hook batch tied to a video project
+- `POST /v1/hooks/:hooksId/select` — records selected hook index on the video project
+
+Iteration (regenerate hooks) and export not yet built.
 
 ---
 
@@ -199,17 +209,11 @@ Gaps are grouped by when they get addressed: within a phase, or post all four ph
 
 ### Within Phases (addressed as each phase is built)
 
-**Research is partially built**
-Trend discovery and keyword/SEO data have no backend foundation yet. These are required for Phase 1 to ship complete.
+**Iteration and export needed for Script, Hooks, and Packaging**
+Research has full iteration (regenerate-all, regenerate-one, feedback signals) and export. Scripts, hooks, and packaging have none of this yet. Required before Phases 2–4 ship.
 
-**No iteration or refinement**
-Feedback signals and regeneration are not built at any step. Required before any phase ships.
-
-**No export**
-No export exists at any step. Required before any phase ships.
-
-**Hooks lives inside Packaging**
-Hooks need to be extracted from the Packaging module and rebuilt as a standalone flow for Phase 3.
+**End-to-end integration not wired**
+All modules are built independently. The video project state machine exists but generation endpoints don't advance pipeline steps automatically. Concretely: generating a script does not set `pipeline.script = completed` on the project; selecting a hook does not set `pipeline.hooks = completed`. This wiring is required before any phase ships as a cohesive flow.
 
 ---
 

@@ -35,6 +35,7 @@ class VideoProjectService {
                 topicId,
                 scriptId: null,
                 hooksId: null,
+                selectedHookIndex: null,
                 packagingId: null,
                 thumbnailHint: null,
                 pipeline: {
@@ -60,7 +61,9 @@ class VideoProjectService {
                 createdAt: now,
                 lastUpdatedAt: now,
             };
-            return this.repo.create(projectData);
+            const project = await this.repo.create(projectData);
+            await this.contentRepo.updateTopic(topicId, { videoProjectId: project.id });
+            return project;
         };
         this.list = async (userId, { status, limit = 20, cursor }) => {
             const validStatuses = ["in_progress", "completed", "stale"];
@@ -222,6 +225,11 @@ class VideoProjectService {
             }
             await this.repo.update(projectId, updates);
             return { id: projectId, ...updates };
+        };
+        this.setSelectedHook = async (projectId, hooksId, hookIndex, userId) => {
+            await this.getById(projectId, userId);
+            await this.repo.update(projectId, { hooksId, selectedHookIndex: hookIndex });
+            return { id: projectId, hooksId, selectedHookIndex: hookIndex };
         };
         this.markStale = async (projectId, fromStep) => {
             const project = await this.repo.findById(projectId);
