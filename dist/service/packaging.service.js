@@ -1,4 +1,4 @@
-import { PACKAGING_SYSTEM_PROMPT, GENERATE_TITLE_PROMPT, GENERATE_DESCRIPTION_PROMPT, GENERATE_THUMBNAIL_PROMPT, GENERATE_HOOKS_PROMPT, GENERATE_SHORTS_PROMPT, } from "../constants/prompt.js";
+import { PACKAGING_SYSTEM_PROMPT, GENERATE_TITLE_PROMPT, GENERATE_DESCRIPTION_PROMPT, GENERATE_THUMBNAIL_PROMPT, GENERATE_SHORTS_PROMPT, } from "../constants/prompt.js";
 import { GENERATION_CONFIG_PACKAGING } from "../constants/firebase.js";
 import { generateStreamingContent } from "../utlils/ai.js";
 import { firebase } from "../config/firebase.js";
@@ -57,17 +57,6 @@ class PackagingService {
                 throw error;
             }
         };
-        this.generateHooks = async (script) => {
-            try {
-                const userPrompt = GENERATE_HOOKS_PROMPT.replace("{script}", script);
-                const result = await this.generateContent(userPrompt);
-                return result;
-            }
-            catch (error) {
-                console.log("error generating hooks", error);
-                throw error;
-            }
-        };
         this.generateShorts = async (script, duration) => {
             try {
                 const userPrompt = GENERATE_SHORTS_PROMPT
@@ -94,7 +83,10 @@ class PackagingService {
                 };
                 const result = await this.repo.save(packagingData);
                 if (videoProjectId && this.videoProjectService) {
-                    this.videoProjectService.linkResource(videoProjectId, "packaging", result.id, userId).catch(console.error);
+                    this.videoProjectService
+                        .linkResource(videoProjectId, "packaging", result.id, userId)
+                        .then(() => this.videoProjectService.completeStep(videoProjectId, "packaging", userId))
+                        .catch(console.error);
                 }
                 return result;
             }

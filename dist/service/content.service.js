@@ -46,12 +46,13 @@ class ContentService {
             try {
                 const similarTitles = await getClusteredTitles(userId, this.repo);
                 const userRecord = await this.userRepo.get(userId);
-                let userPrompt = TOPIC_USER_PROMPT.replace("{brandName}", userRecord?.brandName)
-                    .replace("{BRAND_VOICE}", userRecord?.brandName)
-                    .replace("{targetAudience}", userRecord?.targetAudience)
-                    .replace("{competitors}", userRecord?.competitors?.join(", "))
-                    .replace("{niche}", userRecord?.niche)
-                    .replace("{websiteContent}", userRecord?.websiteContent);
+                let userPrompt = TOPIC_USER_PROMPT
+                    .replace(/{niche}/g, userRecord?.niche ?? "")
+                    .replace("{website}", userRecord?.website ?? "")
+                    .replace("{websiteContent}", userRecord?.websiteContent ?? "")
+                    .replace("{competitors}", userRecord?.competitors?.map((c) => c?.url ?? c).filter(Boolean).join(", ") ?? "")
+                    .replace("{targetAudience}", userRecord?.targetAudience ?? "")
+                    .replace("{userName}", userRecord?.brandName ?? "");
                 const text = formatCreatorsData(userRecord, similarTitles.flat());
                 const result = await generateContent(TOPIC_SYSTEM_PROMPT, userPrompt, GENERATION_CONFIG_TITLES, "text/plain", text);
                 let accumulatedRes = "";
@@ -105,7 +106,7 @@ class ContentService {
                 ]);
                 let userPrompt = SCRIPT_USER_PROMPT.replace("{userName}", userRecord?.brandName ?? "")
                     .replace("{targetAudience}", userRecord?.targetAudience ?? "")
-                    .replace("{competitors}", userRecord?.competitors?.join(", ") ?? "")
+                    .replace("{competitors}", userRecord?.competitors?.map((c) => c?.url ?? c).filter(Boolean).join(", ") ?? "")
                     .replace("{niche}", userRecord?.niche ?? "")
                     .replace("{websiteContent}", userRecord?.websiteContent ?? "")
                     .replace("{title}", titleRecord?.title ?? "");
@@ -125,8 +126,7 @@ class ContentService {
                         res.write(`data: ${JSON.stringify(part)}\n\n`);
                     }
                 }
-                res.write(`event: done\n`);
-                res.write(`data: [done]\n\n`);
+                res.write(`data: [DONE]\n\n`);
                 res.end();
                 const formattedData = formatGeneratedScript(titleRecord?.title, titleRecord?.id, accumulatedRes, userId);
                 this.repo.updateTopic(titleRecord?.id, {
@@ -297,7 +297,7 @@ class ContentService {
             const userRecord = await this.userRepo.get(userId);
             const userPrompt = SCRIPT_USER_PROMPT.replace("{userName}", userRecord?.brandName ?? "")
                 .replace("{targetAudience}", userRecord?.targetAudience ?? "")
-                .replace("{competitors}", userRecord?.competitors?.join(", ") ?? "")
+                .replace("{competitors}", userRecord?.competitors?.map((c) => c?.url ?? c).filter(Boolean).join(", ") ?? "")
                 .replace("{niche}", userRecord?.niche ?? "")
                 .replace("{websiteContent}", userRecord?.websiteContent ?? "")
                 .replace("{title}", scriptDoc.title);

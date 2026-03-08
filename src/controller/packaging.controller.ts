@@ -62,22 +62,6 @@ class PackagingController {
     }
   };
 
-  generateHooks = async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const { script } = req.body;
-      if (!script) {
-        return res.sendError({ message: "Script is required", statusCode: 400 });
-      }
-      const data = await this.service.generateHooks(script);
-      res.sendSuccess({
-        message: "Hooks generated successfully",
-        data,
-      });
-    } catch (error) {
-      next(error);
-    }
-  };
-
   generateShorts = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { script, duration } = req.body;

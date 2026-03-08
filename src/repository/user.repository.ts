@@ -1,5 +1,5 @@
 import { Firestore } from "firebase-admin/firestore";
-import { db } from "../config/firebase.js";
+import { db, firebase } from "../config/firebase.js";
 import { COLLECTIONS } from "../constants/collection.js";
 import { extractTextFromHTML } from "../utlils/regex.js";
 
@@ -20,7 +20,14 @@ class UserRepository {
       await this.db
         .collection(this.collection)
         .doc(userId)
-        .set(data as Record<string, unknown>, { merge: true });
+        .set(
+          {
+            ...(data as Record<string, unknown>),
+            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true }
+        );
     } catch (error) {
       console.log("error in add", error);
     }
@@ -33,7 +40,10 @@ class UserRepository {
       await this.db
         .collection(this.collection)
         .doc(userId)
-        .update(data as Record<string, unknown>);
+        .update({
+          ...(data as Record<string, unknown>),
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        });
     } catch (error) {
       console.log("error", error);
     }

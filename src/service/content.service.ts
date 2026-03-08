@@ -84,15 +84,13 @@ class ContentService {
       const similarTitles = await getClusteredTitles(userId, this.repo);
 
       const userRecord = await this.userRepo.get(userId);
-      let userPrompt = TOPIC_USER_PROMPT.replace(
-        "{brandName}",
-        userRecord?.brandName,
-      )
-        .replace("{BRAND_VOICE}", userRecord?.brandName)
-        .replace("{targetAudience}", userRecord?.targetAudience)
-        .replace("{competitors}", userRecord?.competitors?.join(", "))
-        .replace("{niche}", userRecord?.niche)
-        .replace("{websiteContent}", userRecord?.websiteContent);
+      let userPrompt = TOPIC_USER_PROMPT
+        .replace(/{niche}/g, userRecord?.niche ?? "")
+        .replace("{website}", userRecord?.website ?? "")
+        .replace("{websiteContent}", userRecord?.websiteContent ?? "")
+        .replace("{competitors}", (userRecord?.competitors as any[])?.map((c: any) => c?.url ?? c).filter(Boolean).join(", ") ?? "")
+        .replace("{targetAudience}", userRecord?.targetAudience ?? "")
+        .replace("{userName}", userRecord?.brandName ?? "");
 
       const text = formatCreatorsData(userRecord, similarTitles.flat());
 
@@ -163,7 +161,7 @@ class ContentService {
         userRecord?.brandName ?? "",
       )
         .replace("{targetAudience}", userRecord?.targetAudience ?? "")
-        .replace("{competitors}", userRecord?.competitors?.join(", ") ?? "")
+        .replace("{competitors}", (userRecord?.competitors as any[])?.map((c: any) => c?.url ?? c).filter(Boolean).join(", ") ?? "")
         .replace("{niche}", userRecord?.niche ?? "")
         .replace("{websiteContent}", userRecord?.websiteContent ?? "")
         .replace("{title}", titleRecord?.title ?? "");
@@ -193,8 +191,7 @@ class ContentService {
         }
       }
 
-      res.write(`event: done\n`);
-      res.write(`data: [done]\n\n`);
+      res.write(`data: [DONE]\n\n`);
       res.end();
 
       const formattedData = formatGeneratedScript(
@@ -400,7 +397,7 @@ class ContentService {
       userRecord?.brandName ?? "",
     )
       .replace("{targetAudience}", userRecord?.targetAudience ?? "")
-      .replace("{competitors}", userRecord?.competitors?.join(", ") ?? "")
+      .replace("{competitors}", (userRecord?.competitors as any[])?.map((c: any) => c?.url ?? c).filter(Boolean).join(", ") ?? "")
       .replace("{niche}", userRecord?.niche ?? "")
       .replace("{websiteContent}", userRecord?.websiteContent ?? "")
       .replace("{title}", scriptDoc.title as string);

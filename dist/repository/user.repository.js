@@ -1,4 +1,4 @@
-import { db } from "../config/firebase.js";
+import { db, firebase } from "../config/firebase.js";
 import { extractTextFromHTML } from "../utlils/regex.js";
 class UserRepository {
     constructor() {
@@ -10,7 +10,11 @@ class UserRepository {
                 await this.db
                     .collection(this.collection)
                     .doc(userId)
-                    .set(data, { merge: true });
+                    .set({
+                    ...data,
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                }, { merge: true });
             }
             catch (error) {
                 console.log("error in add", error);
@@ -24,7 +28,10 @@ class UserRepository {
                 await this.db
                     .collection(this.collection)
                     .doc(userId)
-                    .update(data);
+                    .update({
+                    ...data,
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                });
             }
             catch (error) {
                 console.log("error", error);

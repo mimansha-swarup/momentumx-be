@@ -125,7 +125,6 @@ export async function getClusteredTitles(userId, repo) {
     // console.log("ttitleRecord", titleRecord)
     const titles = titleRecord?.map((doc) => doc.title) || [];
     const embeddings = titleRecord?.map((doc) => doc.embedding) || [];
-    console.log(titles.length, "swarup");
     if (titles.length <= k) {
         // If fewer titles than clusters, return all titles as one cluster
         return [titles];

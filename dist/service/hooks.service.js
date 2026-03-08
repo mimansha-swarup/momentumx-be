@@ -1,4 +1,4 @@
-import { PACKAGING_SYSTEM_PROMPT, GENERATE_HOOKS_PROMPT, } from "../constants/prompt.js";
+import { HOOKS_SYSTEM_PROMPT, GENERATE_HOOKS_PROMPT, } from "../constants/prompt.js";
 import { GENERATION_CONFIG_PACKAGING } from "../constants/firebase.js";
 import { generateStreamingContent } from "../utlils/ai.js";
 class HooksService {
@@ -6,9 +6,14 @@ class HooksService {
         this.repo = repo;
         this.videoProjectService = videoProjectService;
         this.generate = async (userId, videoProjectId, script) => {
-            await this.videoProjectService.getById(videoProjectId, userId);
+            const project = await this.videoProjectService.getById(videoProjectId, userId);
+            if (project.pipeline.script.status !== "completed") {
+                const err = new Error("Script must be completed before generating hooks");
+                err.statusCode = 400;
+                throw err;
+            }
             const userPrompt = GENERATE_HOOKS_PROMPT.replace("{script}", script);
-            const result = await generateStreamingContent(PACKAGING_SYSTEM_PROMPT, userPrompt, GENERATION_CONFIG_PACKAGING);
+            const result = await generateStreamingContent(HOOKS_SYSTEM_PROMPT, userPrompt, GENERATION_CONFIG_PACKAGING);
             let accumulatedRes = "";
             for await (const chunk of result.stream) {
                 const part = chunk.text();
@@ -65,7 +70,7 @@ class HooksService {
                 throw err;
             }
             const userPrompt = GENERATE_HOOKS_PROMPT.replace("{script}", script);
-            const result = await generateStreamingContent(PACKAGING_SYSTEM_PROMPT, userPrompt, GENERATION_CONFIG_PACKAGING);
+            const result = await generateStreamingContent(HOOKS_SYSTEM_PROMPT, userPrompt, GENERATION_CONFIG_PACKAGING);
             let accumulatedRes = "";
             for await (const chunk of result.stream) {
                 const part = chunk.text();

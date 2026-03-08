@@ -17,7 +17,7 @@ const contentService = new ContentService(contentRepository, userRepository, vid
 const contentController = new ContentController(contentService);
 router.get("/stream/scripts/:scriptId", contentController.generateScript);
 router.use(authMiddleware);
-router.get("/stream/topics", contentController.generateTopics);
+router.post("/topics/generate", contentController.generateTopics);
 // Specific topic routes BEFORE parameterized /:topicId routes
 router.post("/topics/regenerate-all", contentController.regenerateAll);
 router.get("/topics/export", contentController.exportTopics);

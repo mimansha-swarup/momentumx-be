@@ -1,5 +1,5 @@
 import {
-  PACKAGING_SYSTEM_PROMPT,
+  HOOKS_SYSTEM_PROMPT,
   GENERATE_HOOKS_PROMPT,
 } from "../constants/prompt.js";
 import { GENERATION_CONFIG_PACKAGING } from "../constants/firebase.js";
@@ -19,12 +19,18 @@ class HooksService {
     videoProjectId: string,
     script: string
   ): Promise<IHooksBatch> => {
-    await this.videoProjectService.getById(videoProjectId, userId);
+    const project = await this.videoProjectService.getById(videoProjectId, userId);
+
+    if (project.pipeline.script.status !== "completed") {
+      const err = new Error("Script must be completed before generating hooks") as Error & { statusCode: number };
+      err.statusCode = 400;
+      throw err;
+    }
 
     const userPrompt = GENERATE_HOOKS_PROMPT.replace("{script}", script);
 
     const result = await generateStreamingContent(
-      PACKAGING_SYSTEM_PROMPT,
+      HOOKS_SYSTEM_PROMPT,
       userPrompt,
       GENERATION_CONFIG_PACKAGING
     );
@@ -105,7 +111,7 @@ class HooksService {
 
     const userPrompt = GENERATE_HOOKS_PROMPT.replace("{script}", script);
     const result = await generateStreamingContent(
-      PACKAGING_SYSTEM_PROMPT,
+      HOOKS_SYSTEM_PROMPT,
       userPrompt,
       GENERATION_CONFIG_PACKAGING
     );

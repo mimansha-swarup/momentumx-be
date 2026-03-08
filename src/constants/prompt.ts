@@ -6,7 +6,7 @@ Your job: generate clickable yet accurate titles based on the brand's niche, aud
 
 ### 🧩 PHASE 1: PATTERN RECOGNITION
 
-First, analyze the following list of viral YouTube titles (from multiple niches):
+First, analyze the following list of viral YouTube titles (from multiple niches). These are structural reference examples only — do not copy their specific niche, topic, or subject matter. Extract the sentence patterns, emotional triggers, and pacing techniques, then apply those patterns to the brand context in Phase 2.
 
 1. My honest advice to someone who wants passive income
 2. The Simplest Way to Start a One-Person Business Today!
@@ -85,25 +85,28 @@ Generate 10 titles total:
 ### 🌐 PHASE 5: CONTEXTUAL RELEVANCE
 
 Each title must:
-- Align with niche: {niche}.
-- Speak to the target audience: {targetAudience}.
-- Reflect content on {website}.
-- Integrate at least one 2025 trend keyword related to {niche} (e.g., AI agents, Skool, Make.com, YouTube Shorts, solopreneur systems, etc.).
-- Distinguish from {competitors} using insight, not fluff.
+- Align with the brand's niche as described in the user message.
+- Speak directly to the target audience provided.
+- Reflect the brand's website content and positioning.
+- Integrate at least one current trend keyword relevant to the niche (e.g., AI agents, Skool, YouTube Shorts, solopreneur systems, etc.).
+- Distinguish from competitors mentioned by using unique insight, not generic claims.
 
 ---
 
 ### 🧠 EXAMPLES (GOOD OUTPUT STYLE)
 
-1. “AI Automation 2025: $10K/Month Blueprint Nobody Shares (Tested)”
-2. “I Built an AI System That Closed $25K Clients (Here's Proof)”
-3. “Skool Funnel Hack: How I Made $50K Without a Website [0 Experience]”
-4. “Stop Wasting Time — This 1 Automation Saved Me $8K/Month”
-5. “Watch This Before You Start an Automation Agency in 2025”
+These show the structural pattern — apply the same quality to whatever niche you're writing for:
+
+1. “I Tried [Niche Method] for 30 Days — Here's What ACTUALLY Happened”
+2. “The [Niche] Mistake Everyone Makes (And How to Fix It Fast)”
+3. “Why I Quit [Common Approach] — And What I Do Instead”
+4. “Stop Doing [Niche Bad Habit] — Do This Instead to [Result]”
+5. “Watch This Before You Start [Niche Activity] in 2025”
 
 ---
 
-When ready, output ONLY the final 10 titles — no explanations, no numbering, no quotes.`;
+When ready, return a JSON array of exactly 10 title strings. The API enforces this schema — output nothing except the array:
+[“Title 1”, “Title 2”, “Title 3”, “Title 4”, “Title 5”, “Title 6”, “Title 7”, “Title 8”, “Title 9”, “Title 10”]`;
 
 export const TOPIC_USER_PROMPT = `
 Generate high-performing YouTube video titles, which focuses on {niche}.  
@@ -114,9 +117,10 @@ My main competitors are {competitors}, and our target audience is {targetAudienc
 
 These topics should:
 - Resonate with my audience's goals and pain points.
-- Reflect current 2025 YouTube trends within {niche}.
+- Reflect current YouTube trends within {niche}.
 - Use emotional storytelling and curiosity without misleading.
 - Position {userName} as an authority and trend leader.
+- Avoid repeating or closely paraphrasing any previously generated titles listed in the context below.
 
 Please follow the expert system prompt's structure to output 10 optimized titles.
 `;
@@ -134,7 +138,6 @@ Follow this structure strictly:
 - Resolution
 
 Rules:
--Add timestamp and section markers.
 - Inject curiosity every 4-5 sentences.
 - End every paragraph with a soft cliffhanger or emotional teaser.
 - Use vivid, active verbs. No fluff. No summaries.
@@ -158,7 +161,7 @@ keep the script context around the title  use below data points like user Name, 
 
 
 User Profile:
-channel Link: {userName}
+Brand: {userName}
 Niche: {niche}
 Audience: {targetAudience}
 Key Competitor: {competitors}
@@ -168,16 +171,34 @@ website content: {websiteContent}
 // Packaging Prompts
 export const PACKAGING_SYSTEM_PROMPT = `You are an expert YouTube content packager with years of experience in creating viral video titles, compelling descriptions, eye-catching thumbnails, powerful hooks, and engaging YouTube Shorts scripts.
 
-Your job is to analyze podcast scripts and generate optimized packaging elements that maximize click-through rates, watch time, and audience engagement.
+Your job is to analyze video scripts and generate optimized packaging elements that maximize click-through rates, watch time, and audience engagement.
 
 Key principles:
 - Always create content that accurately represents the script without being misleading
 - Use psychological triggers like curiosity, urgency, and relatability
 - Optimize for 2025 YouTube algorithm and audience behavior
 - Maintain a conversational, human-first tone
-- Focus on emotional storytelling and value-driven messaging`;
+- Focus on emotional storytelling and value-driven messaging
+- Always respond with a valid JSON object exactly as specified in the user prompt — no extra text before or after the JSON`;
 
-export const GENERATE_TITLE_PROMPT = `Based on the following podcast script, generate THREE high-performing YouTube video title variations.
+export const HOOKS_SYSTEM_PROMPT = `You are an expert YouTube hook writer specializing in creating powerful video openings that capture viewer attention in the first 5–10 seconds.
+
+Your hooks are psychologically compelling, pattern-interrupting, and written to immediately create curiosity or emotional connection.
+
+Key principles:
+- Hooks must work as standalone spoken sentences — no reliance on visual context
+- Avoid generic openings: "Hey guys", "Welcome back", "In today's video"
+- Ground each hook in the actual story or core insight from the script
+- Create an immediate "I need to watch this" reaction
+- Keep hooks concise: 1–2 sentences maximum
+- Each of the 5 variations must use a different style from this list:
+  - Question: Challenge the viewer's assumption ("What if everything you know about X is wrong?")
+  - Bold statement: Confident, surprising claim ("Most people quit right before the breakthrough.")
+  - Story teaser: Drop into the middle of a story ("I had $0 in my account and one week to fix it.")
+  - Contrarian: Flip the expected wisdom ("Stop doing X — it's the reason you're stuck.")
+  - Revelation: Tease a secret or overlooked truth ("Nobody talks about this, but it changes everything.")`;
+
+export const GENERATE_TITLE_PROMPT = `Based on the following video script, generate THREE high-performing YouTube video title variations.
 
 Rules:
 - Max 60-65 characters each
@@ -188,7 +209,7 @@ Rules:
 - Use mild emphasis with CAPS where appropriate
 - Each title should have a distinct angle or approach
 
-Podcast Script:
+Video Script:
 {script}
 
 Opening Hook (if creator has selected a preferred hook):
@@ -197,26 +218,25 @@ Opening Hook (if creator has selected a preferred hook):
 Return a JSON object with the following structure:
 {
   "titles": [
-   {title: "10 Productivity Hacks That Will Transform Your Morning Routine",
-    characterCount: 62},
-    {title: "Why Your Morning Routine Is KILLING Your Productivity", characterCount: 62},
-    {title: "I Tried 10 Morning Hacks for 30 Days — Here's What Actually Works", characterCount: 62}
+    {"title": "10 Productivity Hacks That Will Transform Your Morning Routine", "characterCount": 62},
+    {"title": "Why Your Morning Routine Is KILLING Your Productivity", "characterCount": 53},
+    {"title": "I Tried 10 Morning Hacks for 30 Days — Here's What Actually Works", "characterCount": 65}
   ]
 }`;
-export const GENERATE_DESCRIPTION_PROMPT = `Based on the following podcast script and video title, generate an optimized YouTube video description.
+export const GENERATE_DESCRIPTION_PROMPT = `Based on the following video script and video title, generate an optimized YouTube video description.
 
 Video Title: {title}
 
 Rules:
 - Start with a compelling hook (first 2-3 lines are visible before "Show More")
 - Align the description with the video title's promise
-- Include key timestamps/chapters if applicable
+- Do not fabricate timestamps or chapter markers — you do not have the actual video structure
 - Add relevant keywords naturally
 - Include a clear call-to-action
 - Keep it between 200-500 words
 - Use line breaks for readability
 
-Podcast Script:
+Video Script:
 {script}
 
 Opening Hook (if creator has selected a preferred hook):
@@ -227,7 +247,7 @@ Return a JSON object with the following structure:
   "description": "The full YouTube description text"
 }`;
 
-export const GENERATE_THUMBNAIL_PROMPT = `Based on the following podcast script and video title, generate THREE detailed thumbnail creation instructions with different visual approaches.
+export const GENERATE_THUMBNAIL_PROMPT = `Based on the following video script and video title, generate THREE detailed thumbnail creation instructions with different visual approaches.
 
 Video Title: {title}
 
@@ -236,12 +256,12 @@ Rules:
 - Ensure thumbnail visually represents the video title
 - Specify text overlay (max 3-5 words, large and readable)
 - Suggest colors and contrast for maximum visibility
-- Recommend facial expressions or emotions if applicable
+- Do not suggest faces, people, or facial expressions — these are faceless videos; use text, graphics, icons, and scene imagery
 - Consider mobile viewing (text must be readable on small screens)
 - Include style references if helpful
 - Each variation should have a distinct visual approach
 
-Podcast Script:
+Video Script:
 {script}
 
 Opening Hook (if creator has selected a preferred hook):
@@ -250,38 +270,38 @@ Opening Hook (if creator has selected a preferred hook):
 Return a JSON object with the following structure:
 {
   "descriptions": [
-    "Split composition with bold red 'PRODUCTIVITY HACKS' text on left, person looking shocked on right, bright yellow background for contrast",
+    "Split composition with bold red 'PRODUCTIVITY HACKS' text on left, oversized ticking clock icon on right, bright yellow background for contrast",
     "Minimalist design with large '10X' text in center, subtle clock imagery in background, dark blue gradient with white text overlay",
     "Before/after split screen showing messy desk vs organized workspace, 'TRANSFORM' text in bold orange, clean modern aesthetic"
   ]
 }
 `;
 
-export const GENERATE_HOOKS_PROMPT = `Based on the following podcast script, generate 5 powerful video hooks for the first 5-10 seconds of the video.
+export const GENERATE_HOOKS_PROMPT = `Based on the following video script, generate 5 powerful video hooks for the first 5-10 seconds of the video.
 
 Rules:
-- Each hook should immediately grab attention
-- Create curiosity or emotional connection
-- Avoid generic openings like "Hey guys" or "Welcome back"
-- Use pattern interrupts, bold statements, or intriguing questions
-- Each hook should be 1-3 sentences max
-- Vary the hook styles (question, bold claim, story teaser, contrarian, etc.)
+- Ground each hook in the script's actual story, insight, or core revelation — not generic statements
+- Each hook should immediately grab attention and make the viewer want to watch
+- Avoid generic openings like "Hey guys", "Welcome back", or "In today's video"
+- Use pattern interrupts, bold statements, intriguing questions, or story drops
+- Each hook must be 1–2 sentences max
+- Use a different style for each hook: question, bold claim, story teaser, contrarian, revelation
 
-Podcast Script:
+Video Script:
 {script}
 
-Return a JSON object with hooks as an array of strings:
+Return a JSON object with hooks as an array of strings. Each hook must be grounded in the actual script above — do not use generic filler:
 {
   "hooks": [
-    "What if I told you that the first 30 minutes of your day determines the next 23 and a half hours?",
-    "I wasted 5 years of my life following the wrong morning routine. Here's what I wish someone told me.",
-    "Stop. Before you scroll past this, ask yourself: when was the last time you felt truly productive?",
-    "Everyone talks about waking up at 5 AM. Nobody talks about what actually matters.",
-    "In the next 60 seconds, I'm going to show you the one thing that changed everything for me."
+    "[question] — challenge the viewer's assumption about the script's core topic",
+    "[bold statement] — state the script's most surprising claim with confidence",
+    "[story teaser] — drop into the script's central turning point or revelation",
+    "[contrarian] — flip the common belief the script challenges",
+    "[revelation] — tease the hidden truth or insight the script uncovers"
   ]
 }`;
 
-export const GENERATE_SHORTS_PROMPT = `Based on the following podcast script, generate a YouTube Shorts script that fits within the specified duration.
+export const GENERATE_SHORTS_PROMPT = `Based on the following video script, generate a YouTube Shorts script that fits within the specified duration.
 
 Target Duration: {duration} seconds
 
@@ -289,23 +309,24 @@ Rules:
 - Hook in the first 1-2 seconds
 - Fast-paced, punchy delivery
 - One clear takeaway or value point
-- End with a hook or call-to-action
+- End with a call-to-action
 - Write for vertical video format
-- Include visual/editing suggestions in brackets
 - Adjust word count to match target duration (approximately 2.5 words per second)
 - Script MUST fit within {duration} seconds when spoken
+- Scale the number of segments to fit the duration: ~2 segments for 15s, ~3 for 30s, ~5 for 60s
+- Each segment "type" must be one of: "hook", "point", "transition", "cta"
 
-Podcast Script:
+Video Script:
 {script}
 
 Return a JSON object with the following structure:
 {
-  segments: [
-    { startTime: "0:00", endTime: "0:05", content: "Stop scrolling and listen. Your morning routine is broken.", type: "hook" as const },
-    { startTime: "0:05", endTime: "0:20", content: "The biggest productivity mistake? Checking your phone first thing. Instead, do this: spend 5 minutes writing down your top 3 priorities for the day.", type: "point" as const },
-    { startTime: "0:20", endTime: "0:40", content: "Here's the game-changer: the 2-minute rule. If something takes less than 2 minutes, do it immediately. This alone cleared 80% of my mental clutter.", type: "point" as const },
-    { startTime: "0:40", endTime: "0:55", content: "And the secret sauce? A glass of water before coffee. Sounds simple, but it boosts your energy by 30%.", type: "transition" as const },
-    { startTime: "0:55", endTime: "1:00", content: "Follow for more productivity hacks that actually work.", type: "cta" as const },
+  "segments": [
+    { "startTime": "0:00", "endTime": "0:05", "content": "Stop. What you're about to learn changes everything.", "type": "hook" },
+    { "startTime": "0:05", "endTime": "0:20", "content": "Here's the one thing nobody tells you — and why it matters more than you think.", "type": "point" },
+    { "startTime": "0:20", "endTime": "0:40", "content": "Once I understood this, everything clicked into place. The key is simpler than you'd expect.", "type": "point" },
+    { "startTime": "0:40", "endTime": "0:55", "content": "Most people skip this step entirely — and that's exactly why they stay stuck.", "type": "transition" },
+    { "startTime": "0:55", "endTime": "1:00", "content": "Follow for more insights that actually work.", "type": "cta" }
   ],
-  totalDuration: "1:00",
-};`;
+  "totalDuration": "1:00"
+}`;

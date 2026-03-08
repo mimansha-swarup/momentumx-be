@@ -22,7 +22,6 @@ router.use(authMiddleware);
 router.post("/generate-title", packagingController.generateTitle);
 router.post("/generate-description", packagingController.generateDescription);
 router.post("/generate-thumbnail", packagingController.generateThumbnail);
-router.post("/generate-hooks", packagingController.generateHooks);
 router.post("/generate-shorts", packagingController.generateShorts);
 
 // CRUD endpoints
