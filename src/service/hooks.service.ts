@@ -46,6 +46,8 @@ class HooksService {
       hookFeedback: {},
     });
 
+    this.videoProjectService.linkResource(videoProjectId, "hooks", hooksBatch.id, userId).catch(console.error);
+
     return hooksBatch;
   };
 
@@ -74,7 +76,9 @@ class HooksService {
       throw err;
     }
 
-    return this.videoProjectService.setSelectedHook(videoProjectId, hooksId, hookIndex, userId);
+    const result = await this.videoProjectService.setSelectedHook(videoProjectId, hooksId, hookIndex, userId);
+    this.videoProjectService.completeStep(videoProjectId, "hooks", userId).catch(console.error);
+    return result;
   };
 
   regenerate = async (

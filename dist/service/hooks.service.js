@@ -23,6 +23,7 @@ class HooksService {
                 hooks: parsed.hooks,
                 hookFeedback: {},
             });
+            this.videoProjectService.linkResource(videoProjectId, "hooks", hooksBatch.id, userId).catch(console.error);
             return hooksBatch;
         };
         this.select = async (userId, hooksId, hookIndex, videoProjectId) => {
@@ -42,7 +43,9 @@ class HooksService {
                 err.statusCode = 400;
                 throw err;
             }
-            return this.videoProjectService.setSelectedHook(videoProjectId, hooksId, hookIndex, userId);
+            const result = await this.videoProjectService.setSelectedHook(videoProjectId, hooksId, hookIndex, userId);
+            this.videoProjectService.completeStep(videoProjectId, "hooks", userId).catch(console.error);
+            return result;
         };
         this.regenerate = async (userId, hooksId, script) => {
             const hooksBatch = await this.repo.findById(hooksId);

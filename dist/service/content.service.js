@@ -111,6 +111,9 @@ class ContentService {
                     .replace("{title}", titleRecord?.title ?? "");
                 const result = await generateStreamingContent(SCRIPT_SYSTEM_PROMPT, userPrompt, GENERATION_CONFIG_SCRIPTS);
                 let accumulatedRes = "";
+                if (titleRecord?.videoProjectId && this.videoProjectService) {
+                    this.videoProjectService.startStep(titleRecord.videoProjectId, "script", userId).catch(console.error);
+                }
                 res.setHeader("Content-Type", "text/event-stream");
                 res.setHeader("Cache-Control", "no-cache");
                 res.setHeader("Connection", "keep-alive");
@@ -133,6 +136,14 @@ class ContentService {
                 this.userRepo.update(userId, {
                     "stats.scripts": firebase.firestore.FieldValue.increment(1),
                 });
+                if (titleRecord?.videoProjectId && this.videoProjectService) {
+                    const vpId = titleRecord.videoProjectId;
+                    const scriptId = titleRecord.id;
+                    const vps = this.videoProjectService;
+                    vps.linkResource(vpId, "script", scriptId, userId)
+                        .then(() => vps.completeStep(vpId, "script", userId))
+                        .catch(console.error);
+                }
                 return accumulatedRes;
             }
             catch (error) {

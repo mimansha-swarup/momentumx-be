@@ -93,6 +93,9 @@ class PackagingService {
                     ...(videoProjectId ? { videoProjectId } : {}),
                 };
                 const result = await this.repo.save(packagingData);
+                if (videoProjectId && this.videoProjectService) {
+                    this.videoProjectService.linkResource(videoProjectId, "packaging", result.id, userId).catch(console.error);
+                }
                 return result;
             }
             catch (error) {
