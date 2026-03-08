@@ -10,11 +10,11 @@ class PackagingController {
 
   generateTitle = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { script } = req.body;
+      const { script, selectedHook } = req.body;
       if (!script) {
         return res.sendError({ message: "Script is required", statusCode: 400 });
       }
-      const data = await this.service.generateTitle(script);
+      const data = await this.service.generateTitle(script, selectedHook);
       res.sendSuccess({
         message: "Title generated successfully",
         data,
@@ -26,14 +26,14 @@ class PackagingController {
 
   generateDescription = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { script, title } = req.body;
+      const { script, title, selectedHook } = req.body;
       if (!script) {
         return res.sendError({ message: "Script is required", statusCode: 400 });
       }
       if (!title) {
         return res.sendError({ message: "Title is required", statusCode: 400 });
       }
-      const data = await this.service.generateDescription(script, title);
+      const data = await this.service.generateDescription(script, title, selectedHook);
       res.sendSuccess({
         message: "Description generated successfully",
         data,
@@ -45,14 +45,14 @@ class PackagingController {
 
   generateThumbnail = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { script, title } = req.body;
+      const { script, title, selectedHook } = req.body;
       if (!script) {
         return res.sendError({ message: "Script is required", statusCode: 400 });
       }
       if (!title) {
         return res.sendError({ message: "Title is required", statusCode: 400 });
       }
-      const data = await this.service.generateThumbnail(script, title);
+      const data = await this.service.generateThumbnail(script, title, selectedHook);
       res.sendSuccess({
         message: "Thumbnail instructions generated successfully",
         data,
@@ -99,13 +99,14 @@ class PackagingController {
 
   save = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const data = await this.service.savePackaging(req.userId, req.body);
+      const { videoProjectId, ...rest } = req.body;
+      const data = await this.service.savePackaging(req.userId, rest, videoProjectId);
       res.sendSuccess({
         message: "Packaging saved successfully",
         data,
       });
     } catch (error) {
-      next(error);
+      this.handleError(error, res, next);
     }
   };
 
@@ -153,11 +154,11 @@ class PackagingController {
   regenerateItem = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { packagingId, item } = req.params;
-      const { script, title, duration } = req.body as { script: string; title?: string; duration?: number };
+      const { script, title, duration, selectedHook } = req.body as { script: string; title?: string; duration?: number; selectedHook?: string };
       if (!script) {
         return res.sendError({ message: "script is required", statusCode: 400 });
       }
-      const data = await this.service.regenerateItem(req.userId, packagingId, item, script, title, duration);
+      const data = await this.service.regenerateItem(req.userId, packagingId, item, script, title, duration, selectedHook);
       res.sendSuccess({ message: "Packaging item regenerated successfully", data });
     } catch (error) {
       this.handleError(error, res, next);

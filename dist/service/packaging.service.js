@@ -3,7 +3,8 @@ import { GENERATION_CONFIG_PACKAGING } from "../constants/firebase.js";
 import { generateStreamingContent } from "../utlils/ai.js";
 import { firebase } from "../config/firebase.js";
 class PackagingService {
-    constructor(repo) {
+    constructor(repo, videoProjectService) {
+        this.videoProjectService = videoProjectService;
         this.generateContent = async (userPrompt) => {
             const result = await generateStreamingContent(PACKAGING_SYSTEM_PROMPT, userPrompt, GENERATION_CONFIG_PACKAGING);
             let accumulatedRes = "";
@@ -15,9 +16,11 @@ class PackagingService {
             }
             return JSON.parse(accumulatedRes);
         };
-        this.generateTitle = async (script) => {
+        this.generateTitle = async (script, selectedHook) => {
             try {
-                const userPrompt = GENERATE_TITLE_PROMPT.replace("{script}", script);
+                const userPrompt = GENERATE_TITLE_PROMPT
+                    .replace("{script}", script)
+                    .replace("{selectedHook}", selectedHook ?? "");
                 const result = await this.generateContent(userPrompt);
                 return result;
             }
@@ -26,11 +29,12 @@ class PackagingService {
                 throw error;
             }
         };
-        this.generateDescription = async (script, title) => {
+        this.generateDescription = async (script, title, selectedHook) => {
             try {
                 const userPrompt = GENERATE_DESCRIPTION_PROMPT
                     .replace("{script}", script)
-                    .replace("{title}", title);
+                    .replace("{title}", title)
+                    .replace("{selectedHook}", selectedHook ?? "");
                 const result = await this.generateContent(userPrompt);
                 return result;
             }
@@ -39,11 +43,12 @@ class PackagingService {
                 throw error;
             }
         };
-        this.generateThumbnail = async (script, title) => {
+        this.generateThumbnail = async (script, title, selectedHook) => {
             try {
                 const userPrompt = GENERATE_THUMBNAIL_PROMPT
                     .replace("{script}", script)
-                    .replace("{title}", title);
+                    .replace("{title}", title)
+                    .replace("{selectedHook}", selectedHook ?? "");
                 const result = await this.generateContent(userPrompt);
                 return result;
             }
@@ -76,12 +81,16 @@ class PackagingService {
                 throw error;
             }
         };
-        this.savePackaging = async (userId, data) => {
+        this.savePackaging = async (userId, data, videoProjectId) => {
             try {
+                if (videoProjectId && this.videoProjectService) {
+                    await this.videoProjectService.getById(videoProjectId, userId);
+                }
                 const packagingData = {
                     ...data,
                     createdBy: userId,
                     createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    ...(videoProjectId ? { videoProjectId } : {}),
                 };
                 const result = await this.repo.save(packagingData);
                 return result;
@@ -115,7 +124,7 @@ class PackagingService {
                 throw error;
             }
         };
-        this.regenerateItem = async (userId, packagingId, item, script, title, duration) => {
+        this.regenerateItem = async (userId, packagingId, item, script, title, duration, selectedHook) => {
             const pkg = await this.repo.get(packagingId);
             if (!pkg) {
                 const err = new Error("Packaging not found");
@@ -151,15 +160,15 @@ class PackagingService {
             let result;
             let fieldKey;
             if (item === "title") {
-                result = await this.generateTitle(script);
+                result = await this.generateTitle(script, selectedHook);
                 fieldKey = "titles";
             }
             else if (item === "description") {
-                result = await this.generateDescription(script, title);
+                result = await this.generateDescription(script, title, selectedHook);
                 fieldKey = "description";
             }
             else if (item === "thumbnail") {
-                result = await this.generateThumbnail(script, title);
+                result = await this.generateThumbnail(script, title, selectedHook);
                 fieldKey = "thumbnail";
             }
             else {

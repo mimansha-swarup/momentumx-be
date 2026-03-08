@@ -49,6 +49,17 @@ class VideoProjectRepository {
                 .doc(projectId)
                 .set({ ...data, lastUpdatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
         };
+        this.findByScriptId = async (scriptId, userId) => {
+            const snap = await this.db.collection(this.collection)
+                .where("scriptId", "==", scriptId)
+                .where("userId", "==", userId)
+                .where("isDeleted", "==", false)
+                .limit(1)
+                .get();
+            if (snap.empty)
+                return null;
+            return snap.docs[0].data();
+        };
         this.db = db;
         this.collection = "videoProjects" /* COLLECTIONS.VIDEO_PROJECTS */;
     }

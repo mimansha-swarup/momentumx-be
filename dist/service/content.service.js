@@ -103,13 +103,12 @@ class ContentService {
                     this.userRepo.get(userId),
                     this.repo.getTopic(scriptId),
                 ]);
-                let userPrompt = SCRIPT_USER_PROMPT.replace("{brandName}", userRecord?.brandName)
-                    .replace("{brandName}", userRecord?.brandName)
-                    .replace("{targetAudience}", userRecord?.targetAudience)
-                    .replace("{competitors}", userRecord?.competitors.join(", "))
-                    .replace("{niche}", userRecord?.niche)
-                    .replace("{websiteContent}", userRecord?.websiteContent)
-                    .replace("{title}", titleRecord?.title);
+                let userPrompt = SCRIPT_USER_PROMPT.replace("{userName}", userRecord?.brandName ?? "")
+                    .replace("{targetAudience}", userRecord?.targetAudience ?? "")
+                    .replace("{competitors}", userRecord?.competitors?.join(", ") ?? "")
+                    .replace("{niche}", userRecord?.niche ?? "")
+                    .replace("{websiteContent}", userRecord?.websiteContent ?? "")
+                    .replace("{title}", titleRecord?.title ?? "");
                 const result = await generateStreamingContent(SCRIPT_SYSTEM_PROMPT, userPrompt, GENERATION_CONFIG_SCRIPTS);
                 let accumulatedRes = "";
                 res.setHeader("Content-Type", "text/event-stream");
@@ -271,6 +270,43 @@ class ContentService {
                 throw err;
             }
             return { title: script.title, text: script.script };
+        };
+        this.regenerateScript = async (userId, scriptId) => {
+            const scriptDoc = await this.repo.getScriptById(scriptId);
+            if (!scriptDoc) {
+                const err = new Error("Script not found");
+                err.statusCode = 404;
+                throw err;
+            }
+            if (scriptDoc.createdBy !== userId) {
+                const err = new Error("Forbidden");
+                err.statusCode = 403;
+                throw err;
+            }
+            const userRecord = await this.userRepo.get(userId);
+            const userPrompt = SCRIPT_USER_PROMPT.replace("{userName}", userRecord?.brandName ?? "")
+                .replace("{targetAudience}", userRecord?.targetAudience ?? "")
+                .replace("{competitors}", userRecord?.competitors?.join(", ") ?? "")
+                .replace("{niche}", userRecord?.niche ?? "")
+                .replace("{websiteContent}", userRecord?.websiteContent ?? "")
+                .replace("{title}", scriptDoc.title);
+            const result = await generateStreamingContent(SCRIPT_SYSTEM_PROMPT, userPrompt, GENERATION_CONFIG_SCRIPTS);
+            let accumulatedRes = "";
+            for await (const chunk of result.stream) {
+                const part = chunk.text();
+                if (part)
+                    accumulatedRes += part;
+            }
+            await this.repo.editScript(scriptId, { script: accumulatedRes });
+            if (this.videoProjectService) {
+                this.videoProjectService.getByScriptId(scriptId, userId)
+                    .then(proj => {
+                    if (proj)
+                        this.videoProjectService.markStale(proj.id, "script").catch(console.error);
+                })
+                    .catch(console.error);
+            }
+            return { id: scriptId, title: scriptDoc.title, script: accumulatedRes };
         };
         this.exportTopics = async (userId) => {
             const activeTopics = await this.repo.getActiveBatch(userId);

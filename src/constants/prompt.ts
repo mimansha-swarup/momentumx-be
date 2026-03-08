@@ -191,6 +191,9 @@ Rules:
 Podcast Script:
 {script}
 
+Opening Hook (if creator has selected a preferred hook):
+{selectedHook}
+
 Return a JSON object with the following structure:
 {
   "titles": [
@@ -216,6 +219,9 @@ Rules:
 Podcast Script:
 {script}
 
+Opening Hook (if creator has selected a preferred hook):
+{selectedHook}
+
 Return a JSON object with the following structure:
 {
   "description": "The full YouTube description text"
@@ -237,6 +243,9 @@ Rules:
 
 Podcast Script:
 {script}
+
+Opening Hook (if creator has selected a preferred hook):
+{selectedHook}
 
 Return a JSON object with the following structure:
 {

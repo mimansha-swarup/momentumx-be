@@ -235,6 +235,9 @@ class VideoProjectService {
             await this.getById(projectId, userId);
             await this.repo.update(projectId, { selectedHookIndex: null, hooksId: null });
         };
+        this.getByScriptId = async (scriptId, userId) => {
+            return this.repo.findByScriptId(scriptId, userId);
+        };
         this.markStale = async (projectId, fromStep) => {
             const project = await this.repo.findById(projectId);
             if (!project)

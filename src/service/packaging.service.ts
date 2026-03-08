@@ -8,13 +8,14 @@ import {
 } from "../constants/prompt.js";
 import { GENERATION_CONFIG_PACKAGING } from "../constants/firebase.js";
 import PackagingRepository from "../repository/packaging.repository.js";
+import VideoProjectService from "./video-project.service.js";
 import { generateStreamingContent } from "../utlils/ai.js";
 import { firebase } from "../config/firebase.js";
 
 class PackagingService {
   private repo: PackagingRepository;
 
-  constructor(repo: PackagingRepository) {
+  constructor(repo: PackagingRepository, private videoProjectService?: VideoProjectService) {
     this.repo = repo;
   }
 
@@ -36,9 +37,11 @@ class PackagingService {
     return JSON.parse(accumulatedRes);
   };
 
-  generateTitle = async (script: string) => {
+  generateTitle = async (script: string, selectedHook?: string) => {
     try {
-      const userPrompt = GENERATE_TITLE_PROMPT.replace("{script}", script);
+      const userPrompt = GENERATE_TITLE_PROMPT
+        .replace("{script}", script)
+        .replace("{selectedHook}", selectedHook ?? "");
       const result = await this.generateContent(userPrompt);
       return result;
     } catch (error) {
@@ -47,11 +50,12 @@ class PackagingService {
     }
   };
 
-  generateDescription = async (script: string, title: string) => {
+  generateDescription = async (script: string, title: string, selectedHook?: string) => {
     try {
       const userPrompt = GENERATE_DESCRIPTION_PROMPT
         .replace("{script}", script)
-        .replace("{title}", title);
+        .replace("{title}", title)
+        .replace("{selectedHook}", selectedHook ?? "");
       const result = await this.generateContent(userPrompt);
       return result;
     } catch (error) {
@@ -60,11 +64,12 @@ class PackagingService {
     }
   };
 
-  generateThumbnail = async (script: string, title: string) => {
+  generateThumbnail = async (script: string, title: string, selectedHook?: string) => {
     try {
       const userPrompt = GENERATE_THUMBNAIL_PROMPT
         .replace("{script}", script)
-        .replace("{title}", title);
+        .replace("{title}", title)
+        .replace("{selectedHook}", selectedHook ?? "");
       const result = await this.generateContent(userPrompt);
       return result;
     } catch (error) {
@@ -97,12 +102,16 @@ class PackagingService {
     }
   };
 
-  savePackaging = async (userId: string, data: Record<string, unknown>) => {
+  savePackaging = async (userId: string, data: Record<string, unknown>, videoProjectId?: string) => {
     try {
+      if (videoProjectId && this.videoProjectService) {
+        await this.videoProjectService.getById(videoProjectId, userId);
+      }
       const packagingData = {
         ...data,
         createdBy: userId,
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        ...(videoProjectId ? { videoProjectId } : {}),
       };
       const result = await this.repo.save(packagingData);
       return result;
@@ -140,7 +149,8 @@ class PackagingService {
     item: string,
     script: string,
     title?: string,
-    duration?: number
+    duration?: number,
+    selectedHook?: string
   ) => {
     const pkg = await this.repo.get(packagingId);
     if (!pkg) {
@@ -179,13 +189,13 @@ class PackagingService {
     let fieldKey: string;
 
     if (item === "title") {
-      result = await this.generateTitle(script);
+      result = await this.generateTitle(script, selectedHook);
       fieldKey = "titles";
     } else if (item === "description") {
-      result = await this.generateDescription(script, title!);
+      result = await this.generateDescription(script, title!, selectedHook);
       fieldKey = "description";
     } else if (item === "thumbnail") {
-      result = await this.generateThumbnail(script, title!);
+      result = await this.generateThumbnail(script, title!, selectedHook);
       fieldKey = "thumbnail";
     } else {
       result = await this.generateShorts(script, duration!);

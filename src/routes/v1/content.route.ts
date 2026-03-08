@@ -33,6 +33,7 @@ router.post("/topics/:topicId/regenerate", contentController.regenerateOne);
 router.patch("/topics/:topicId/feedback", contentController.updateFeedback);
 
 router.get("/scripts", contentController.retrieveScripts);
+router.post("/scripts/:scriptId/regenerate", contentController.regenerateScript);
 router.get("/script/:scriptId", contentController.retrieveScriptById);
 router.patch("/script/edit/:scriptId", contentController.editScript);
 router.patch("/scripts/:scriptId/feedback", contentController.updateScriptFeedback);

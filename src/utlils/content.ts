@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { DocumentData } from "firebase-admin/firestore";
 import { kmeans } from "ml-kmeans";
 import { embeddingModel } from "../config/ai.js";
+import { firebase } from "../config/firebase.js";
 import ContentRepository from "../repository/content.repository.js";
 import UserRepository from "../repository/user.repository.js";
 import ExtractService from "../service/extract.service.js";
@@ -12,7 +13,7 @@ export const formatGeneratedTitle = async (title: string, userId: string, batchI
     id: randomUUID(),
     title,
     createdBy: userId || "",
-    createdAt: new Date(),
+    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
     isScriptGenerated: false,
     embedding: embedding.embedding.values,
     batchId: batchId ?? null,
@@ -31,7 +32,7 @@ export const formatGeneratedScript = (
     id: id,
     title,
     createdBy: userId || "",
-    createdAt: new Date(),
+    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
     script,
   };
 };

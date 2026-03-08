@@ -1,13 +1,14 @@
 import { randomUUID } from "crypto";
 import { kmeans } from "ml-kmeans";
 import { embeddingModel } from "../config/ai.js";
+import { firebase } from "../config/firebase.js";
 export const formatGeneratedTitle = async (title, userId, batchId) => {
     const embedding = await embeddingModel.embedContent(title);
     return {
         id: randomUUID(),
         title,
         createdBy: userId || "",
-        createdAt: new Date(),
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         isScriptGenerated: false,
         embedding: embedding.embedding.values,
         batchId: batchId ?? null,
@@ -21,7 +22,7 @@ export const formatGeneratedScript = (title, id, script, userId) => {
         id: id,
         title,
         createdBy: userId || "",
-        createdAt: new Date(),
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         script,
     };
 };

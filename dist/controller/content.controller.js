@@ -181,6 +181,16 @@ class ContentController {
                 next(error);
             }
         };
+        this.regenerateScript = async (req, res, next) => {
+            try {
+                const { scriptId } = req.params;
+                const data = await this.service.regenerateScript(req.userId, scriptId);
+                res.sendSuccess({ message: "Script regenerated successfully", data });
+            }
+            catch (error) {
+                this.handleError(error, res, next);
+            }
+        };
         this.retrieveScriptById = async (req, res, next) => {
             try {
                 const data = await this.service.getScriptById(req.params.scriptId, req.userId);

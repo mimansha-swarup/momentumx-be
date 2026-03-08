@@ -81,10 +81,11 @@ describe("HooksService — regenerate", () => {
     expect(err.statusCode).toBe(400);
   });
 
-  it("happy path: calls AI, updates repo, clears selected hook, returns new hooks", async () => {
+  it("happy path: calls AI, updates repo, clears selected hook, marks stale, returns new hooks", async () => {
     mockRepo.findById = jest.fn().mockResolvedValue(mockBatch);
     mockRepo.update = jest.fn().mockResolvedValue(undefined);
     mockVpService.clearSelectedHook = jest.fn().mockResolvedValue(undefined);
+    mockVpService.markStale = jest.fn().mockResolvedValue(undefined);
 
     const result = await service.regenerate("user-1", "hooks-1", "my script");
 
@@ -93,6 +94,7 @@ describe("HooksService — regenerate", () => {
       hookFeedback: {},
     });
     expect(mockVpService.clearSelectedHook).toHaveBeenCalledWith("proj-1", "user-1");
+    expect(mockVpService.markStale).toHaveBeenCalledWith("proj-1", "hooks");
     expect(result).toEqual({ id: "hooks-1", hooks: ["h1", "h2", "h3", "h4", "h5"], hookFeedback: {} });
   });
 });

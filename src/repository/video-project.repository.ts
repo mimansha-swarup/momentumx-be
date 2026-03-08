@@ -82,6 +82,17 @@ class VideoProjectRepository {
         { merge: true }
       );
   };
+
+  findByScriptId = async (scriptId: string, userId: string): Promise<IVideoProject | null> => {
+    const snap = await this.db.collection(this.collection)
+      .where("scriptId", "==", scriptId)
+      .where("userId", "==", userId)
+      .where("isDeleted", "==", false)
+      .limit(1)
+      .get();
+    if (snap.empty) return null;
+    return snap.docs[0].data() as IVideoProject;
+  };
 }
 
 export default VideoProjectRepository;

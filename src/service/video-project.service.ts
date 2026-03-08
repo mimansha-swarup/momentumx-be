@@ -315,6 +315,10 @@ class VideoProjectService {
     await this.repo.update(projectId, { selectedHookIndex: null, hooksId: null });
   };
 
+  getByScriptId = async (scriptId: string, userId: string): Promise<IVideoProject | null> => {
+    return this.repo.findByScriptId(scriptId, userId);
+  };
+
   markStale = async (projectId: string, fromStep: StepName): Promise<void> => {
     const project = await this.repo.findById(projectId);
     if (!project) return;
