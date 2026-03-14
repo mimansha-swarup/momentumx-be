@@ -7,7 +7,7 @@ class UserService {
         this.createOnboardingData = async (userId, data) => {
             let record;
             try {
-                record = await formatUserData({ ...data, stats }, this.extractService, this.repo);
+                record = await formatUserData({ ...data, stats }, this.extractService);
                 return record;
             }
             catch (error) {
@@ -28,7 +28,7 @@ class UserService {
         };
         this.updateProfile = async (userId, data) => {
             try {
-                const record = await formatUserData(data, this.extractService, this.repo);
+                const record = await formatUserData(data, this.extractService);
                 await this.repo.update(userId, record);
                 return record;
             }

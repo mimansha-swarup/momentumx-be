@@ -1,5 +1,4 @@
 import { db, firebase } from "../config/firebase.js";
-import { extractTextFromHTML } from "../utlils/regex.js";
 class UserRepository {
     constructor() {
         this.add = async (userId, data) => {
@@ -45,20 +44,6 @@ class UserRepository {
             catch (error) {
                 console.log("error", error);
             }
-        };
-        this.getWebsiteContent = async (url) => {
-            let html = "";
-            try {
-                const res = await fetch(url);
-                if (res) {
-                    html = await res?.text();
-                    return extractTextFromHTML(html);
-                }
-            }
-            catch (error) {
-                console.log("error:  at getWebsiteContent", error);
-            }
-            return html;
         };
         this.db = db;
         this.collection = "users" /* COLLECTIONS.USERS */;

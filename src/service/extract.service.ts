@@ -1,4 +1,4 @@
-import { extractChannelInfo } from "../utlils/regex.js";
+import { extractChannelInfo, extractTextFromHTML } from "../utlils/regex.js";
 import ExtractRepository from "../repository/extract.repository.js";
 
 class ExtractService {
@@ -7,6 +7,12 @@ class ExtractService {
   constructor(repo: ExtractRepository) {
     this.repo = repo;
   }
+
+  getWebsiteContent = async (url: string): Promise<string> => {
+    const res = await fetch(url);
+    const html = await res.text();
+    return extractTextFromHTML(html);
+  };
 
   retrieveChannelId = async (channelUrl: string) => {
     const info = extractChannelInfo(channelUrl);

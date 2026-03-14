@@ -4,7 +4,6 @@ import { kmeans } from "ml-kmeans";
 import { embeddingModel } from "../config/ai.js";
 import { firebase } from "../config/firebase.js";
 import ContentRepository from "../repository/content.repository.js";
-import UserRepository from "../repository/user.repository.js";
 import ExtractService from "../service/extract.service.js";
 
 export const formatGeneratedTitle = async (title: string, userId: string, batchId?: string) => {
@@ -93,7 +92,6 @@ export function formatCreatorsData(
 export async function formatUserData(
   data: IOnboardingPayload,
   extractService: ExtractService,
-  repo: UserRepository,
 ) {
   const record: IOnboardingPayload &
     Partial<{
@@ -105,7 +103,7 @@ export async function formatUserData(
 
   const asyncList: Promise<unknown>[] = [];
   if (data.website) {
-    asyncList.push(repo.getWebsiteContent(data.website));
+    asyncList.push(extractService.getWebsiteContent(data.website));
   }
   if (data.competitors) {
     asyncList.push(

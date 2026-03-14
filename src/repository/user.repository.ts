@@ -1,7 +1,6 @@
 import { Firestore } from "firebase-admin/firestore";
 import { db, firebase } from "../config/firebase.js";
 import { COLLECTIONS } from "../constants/collection.js";
-import { extractTextFromHTML } from "../utlils/regex.js";
 
 class UserRepository {
   private db: Firestore;
@@ -58,20 +57,6 @@ class UserRepository {
     }
   };
 
-  getWebsiteContent = async (url: string) => {
-    let html = "";
-    try {
-      const res = await fetch(url);
-      if (res) {
-        html = await res?.text();
-
-        return extractTextFromHTML(html);
-      }
-    } catch (error) {
-      console.log("error:  at getWebsiteContent", error);
-    }
-    return html;
-  };
 }
 
 export default UserRepository;

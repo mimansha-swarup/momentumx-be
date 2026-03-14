@@ -1,6 +1,11 @@
-import { extractChannelInfo } from "../utlils/regex.js";
+import { extractChannelInfo, extractTextFromHTML } from "../utlils/regex.js";
 class ExtractService {
     constructor(repo) {
+        this.getWebsiteContent = async (url) => {
+            const res = await fetch(url);
+            const html = await res.text();
+            return extractTextFromHTML(html);
+        };
         this.retrieveChannelId = async (channelUrl) => {
             const info = extractChannelInfo(channelUrl);
             if (!info)

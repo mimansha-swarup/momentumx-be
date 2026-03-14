@@ -70,11 +70,11 @@ export function formatCreatorsData(creator, similarTitles) {
     }
     return result.trim();
 }
-export async function formatUserData(data, extractService, repo) {
+export async function formatUserData(data, extractService) {
     const record = { ...data };
     const asyncList = [];
     if (data.website) {
-        asyncList.push(repo.getWebsiteContent(data.website));
+        asyncList.push(extractService.getWebsiteContent(data.website));
     }
     if (data.competitors) {
         asyncList.push(...[data.userName, ...record.competitors]?.map((competitorUrl) => extractService.retrieveChannelId(competitorUrl)));

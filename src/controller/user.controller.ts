@@ -10,14 +10,29 @@ class UserController {
 
   saveOnboarding = async (req: Request, res: Response, next: NextFunction) => {
     try {
+      const { brandName, niche, targetAudience, userName } = req.body;
+
+      const missing: string[] = [];
+      if (!brandName) missing.push("brandName");
+      if (!niche) missing.push("niche");
+      if (!targetAudience) missing.push("targetAudience");
+      if (!userName) missing.push("userName");
+
+      if (missing.length) {
+        return res.sendError({
+          message: `Missing required fields: ${missing.join(", ")}`,
+          statusCode: 400,
+        });
+      }
+
       const payload = await this.service.createOnboardingData(
         req.userId,
         req.body
       );
-      const iSWebsiteParsed = !!payload?.websiteContent;
+      const isWebsiteParsed = !!payload?.websiteContent;
       res.sendSuccess({
-        warning: !iSWebsiteParsed ? " Website content is not parsed" : "",
-        message: "Onboarded  successfully",
+        warning: !isWebsiteParsed ? "Website content is not parsed" : "",
+        message: "Onboarded successfully",
         data: { payload },
       });
     } catch (e) {

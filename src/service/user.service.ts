@@ -19,7 +19,6 @@ class UserService {
       record = await formatUserData(
         { ...data, stats } as any,
         this.extractService,
-        this.repo,
       );
 
       return record;
@@ -41,7 +40,7 @@ class UserService {
 
   updateProfile = async (userId: string, data: IOnboardingPayload) => {
     try {
-      const record = await formatUserData(data, this.extractService, this.repo);
+      const record = await formatUserData(data, this.extractService);
       await this.repo.update(userId, record);
       return record;
     } catch (error) {
