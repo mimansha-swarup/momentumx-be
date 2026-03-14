@@ -52,11 +52,19 @@ Packaging documents have no `scriptId` or `topicId` foreign key. Do not design f
 **Existing API routes:**
 ```
 /v1/user      — PATCH /onboarding, GET /profile, PATCH /profile
-/v1/content   — GET /stream/topics (SSE), GET /stream/scripts/:scriptId (SSE, ?token=),
-                GET /topics, GET /scripts, GET /script/:scriptId,
-                PATCH /topics/edit/:topicId, PATCH /script/edit/:scriptId
+/v1/topics    — POST /generate, GET /, GET /export, POST /regenerate-all,
+                PATCH /edit/:topicId, POST /:topicId/regenerate, PATCH /:topicId/feedback
+/v1/scripts   — GET /stream/:scriptId (SSE, ?token=), GET /, GET /:scriptId,
+                PATCH /edit/:scriptId, POST /:scriptId/regenerate,
+                PATCH /:scriptId/feedback, GET /:scriptId/export
+/v1/hooks     — POST /generate, POST /:hooksId/select, POST /:hooksId/regenerate,
+                PATCH /:hooksId/feedback, GET /:hooksId/export
 /v1/packaging — POST /generate-title, /generate-description, /generate-thumbnail,
-                /generate-hooks, /generate-shorts, POST /save, GET /list, GET /:packagingId
+                /generate-shorts, POST /save, GET /list, GET /:packagingId,
+                POST /:packagingId/regenerate/:item, PATCH /:packagingId/feedback,
+                GET /:packagingId/export
+/v1/research  — GET /trending, GET /competitors, GET /keywords
+/v1/video-projects — POST /, GET /, GET /:projectId, PATCH /:projectId, DELETE /:projectId
 ```
 
 **Key files to read before designing:**
@@ -107,7 +115,7 @@ Explicit task list for Developer and AI Engineer:
 
 **Step 1: Read**
 - Read `docs/product/roadmap.md` to understand what iteration means in this phase
-- Read `src/routes/v1/content.route.ts` to see current topic endpoints
+- Read `src/routes/v1/topics.route.ts` to see current topic endpoints
 - Read `src/service/content.service.ts` to understand current generation flow
 - Read `src/constants/collection.ts` for collection names
 
@@ -123,17 +131,17 @@ Explicit task list for Developer and AI Engineer:
 
 **Step 3: API contracts**
 ```
-PATCH /v1/content/topics/:topicId/feedback
-Body: { signal: "up" | "down" | "save" }
-Response: { success: true, data: { topicId, signal } }
+PATCH /v1/topics/:topicId/feedback
+Body: { feedback: "like" | "dislike" | null }
+Response: { success: true, data: { topicId, userFeedback } }
 
-POST /v1/content/topics/:topicId/regenerate
-Body: { prompt?: string }  — optional directional instruction
+POST /v1/topics/:topicId/regenerate
+Body: {}  — slot-replace, no prompt needed
 Response: { success: true, data: { topic: Topic } }
 
-GET /v1/content/stream/topics/regenerate-all  — SSE
-Query: ?prompt=optional-direction
-Response: SSE stream of new topics
+POST /v1/topics/regenerate-all
+Body: {}  — archives current batch, generates fresh 10
+Response: { success: true, data: { topics: Topic[] } }
 ```
 
 **Step 4: Schema changes**

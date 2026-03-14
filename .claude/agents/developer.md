@@ -52,11 +52,19 @@ Routes → Controllers → Services → Repositories
 **Existing routes:**
 ```
 /v1/user      — PATCH /onboarding, GET /profile, PATCH /profile
-/v1/content   — GET /stream/topics (SSE), GET /stream/scripts/:scriptId (SSE, ?token=),
-                GET /topics, GET /scripts, GET /script/:scriptId,
-                PATCH /topics/edit/:topicId, PATCH /script/edit/:scriptId
+/v1/topics    — POST /generate, GET /, GET /export, POST /regenerate-all,
+                PATCH /edit/:topicId, POST /:topicId/regenerate, PATCH /:topicId/feedback
+/v1/scripts   — GET /stream/:scriptId (SSE, ?token=), GET /, GET /:scriptId,
+                PATCH /edit/:scriptId, POST /:scriptId/regenerate,
+                PATCH /:scriptId/feedback, GET /:scriptId/export
+/v1/hooks     — POST /generate, POST /:hooksId/select, POST /:hooksId/regenerate,
+                PATCH /:hooksId/feedback, GET /:hooksId/export
 /v1/packaging — POST /generate-title, /generate-description, /generate-thumbnail,
-                /generate-hooks, /generate-shorts, POST /save, GET /list, GET /:packagingId
+                /generate-shorts, POST /save, GET /list, GET /:packagingId,
+                POST /:packagingId/regenerate/:item, PATCH /:packagingId/feedback,
+                GET /:packagingId/export
+/v1/research  — GET /trending, GET /competitors, GET /keywords
+/v1/video-projects — POST /, GET /, GET /:projectId, PATCH /:projectId, DELETE /:projectId
 ```
 
 ## Response Helpers (Always Use — Never Raw res.json)
@@ -148,7 +156,7 @@ These exist in the codebase — do NOT copy them into new code:
 
 ## Example: Adding a New Endpoint
 
-**Task:** Add `GET /v1/content/topics/:topicId` — fetch a single topic by ID
+**Task:** Add `GET /v1/topics/:topicId` — fetch a single topic by ID
 
 ```typescript
 // 1. repository (src/repository/content.repository.ts) — ADD METHOD
@@ -168,7 +176,7 @@ async getTopic(topicId: string, userId: string): Promise<Topic> {
   return topic;
 }
 
-// 3. controller (src/controller/content.controller.ts) — ADD METHOD
+// 3. controller (src/controller/topic.controller.ts) — ADD METHOD
 async getTopicById(req: Request, res: Response) {
   try {
     const topic = await this.contentService.getTopic(
@@ -181,8 +189,8 @@ async getTopicById(req: Request, res: Response) {
   }
 }
 
-// 4. route (src/routes/v1/content.route.ts) — ADD LINE
-router.get('/topics/:topicId', controller.getTopicById.bind(controller));
+// 4. route (src/routes/v1/topics.route.ts) — ADD LINE
+router.get('/:topicId', controller.getTopicById.bind(controller));
 ```
 
 ## Boundaries

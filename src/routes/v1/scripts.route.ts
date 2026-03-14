@@ -1,0 +1,33 @@
+import { Router } from "express";
+import ContentRepository from "../../repository/content.repository.js";
+import ContentService from "../../service/content.service.js";
+import ScriptController from "../../controller/script.controller.js";
+import UserRepository from "../../repository/user.repository.js";
+import VideoProjectRepository from "../../repository/video-project.repository.js";
+import VideoProjectService from "../../service/video-project.service.js";
+import PackagingRepository from "../../repository/packaging.repository.js";
+import { authMiddleware } from "../../middleware/auth.js";
+
+const router = Router();
+
+const contentRepository = new ContentRepository();
+const userRepository = new UserRepository();
+const videoProjectRepo = new VideoProjectRepository();
+const packagingRepo = new PackagingRepository();
+const videoProjectService = new VideoProjectService(videoProjectRepo, contentRepository, packagingRepo);
+const contentService = new ContentService(contentRepository, userRepository, videoProjectService);
+const scriptController = new ScriptController(contentService);
+
+// SSE endpoint — no authMiddleware (uses ?token= query param)
+router.get("/stream/:scriptId", scriptController.generateScript);
+
+router.use(authMiddleware);
+
+router.get("/", scriptController.retrieveScripts);
+router.patch("/edit/:scriptId", scriptController.editScript);
+router.get("/:scriptId/export", scriptController.exportScript);
+router.post("/:scriptId/regenerate", scriptController.regenerateScript);
+router.patch("/:scriptId/feedback", scriptController.updateScriptFeedback);
+router.get("/:scriptId", scriptController.retrieveScriptById);
+
+export default router;

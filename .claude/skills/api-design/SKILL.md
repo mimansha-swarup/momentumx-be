@@ -174,20 +174,46 @@ GET    /v1/user/profile
 PATCH  /v1/user/profile
 PATCH  /v1/user/onboarding
 
-GET    /v1/content/stream/topics              (SSE)
-GET    /v1/content/stream/scripts/:scriptId   (SSE, ?token=)
-GET    /v1/content/topics
-GET    /v1/content/scripts
-GET    /v1/content/script/:scriptId
-PATCH  /v1/content/topics/edit/:topicId
-PATCH  /v1/content/script/edit/:scriptId
+POST   /v1/topics/generate
+GET    /v1/topics
+GET    /v1/topics/export
+POST   /v1/topics/regenerate-all
+PATCH  /v1/topics/edit/:topicId
+POST   /v1/topics/:topicId/regenerate
+PATCH  /v1/topics/:topicId/feedback
+
+GET    /v1/scripts/stream/:scriptId    (SSE, ?token= auth)
+GET    /v1/scripts
+GET    /v1/scripts/:scriptId
+PATCH  /v1/scripts/edit/:scriptId
+POST   /v1/scripts/:scriptId/regenerate
+PATCH  /v1/scripts/:scriptId/feedback
+GET    /v1/scripts/:scriptId/export
+
+POST   /v1/hooks/generate
+POST   /v1/hooks/:hooksId/select
+POST   /v1/hooks/:hooksId/regenerate
+PATCH  /v1/hooks/:hooksId/feedback
+GET    /v1/hooks/:hooksId/export
 
 POST   /v1/packaging/generate-title
 POST   /v1/packaging/generate-description
 POST   /v1/packaging/generate-thumbnail
-POST   /v1/packaging/generate-hooks
 POST   /v1/packaging/generate-shorts
 POST   /v1/packaging/save
 GET    /v1/packaging/list
 GET    /v1/packaging/:packagingId
+POST   /v1/packaging/:packagingId/regenerate/:item
+PATCH  /v1/packaging/:packagingId/feedback
+GET    /v1/packaging/:packagingId/export
+
+GET    /v1/research/trending
+GET    /v1/research/competitors
+GET    /v1/research/keywords
+
+POST   /v1/video-projects
+GET    /v1/video-projects
+GET    /v1/video-projects/:projectId
+PATCH  /v1/video-projects/:projectId
+DELETE /v1/video-projects/:projectId
 ```

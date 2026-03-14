@@ -64,15 +64,15 @@ tags: ["tag1", "tag2"]
 Document each new endpoint:
 
 ```markdown
-### POST /v1/content/topics/:topicId/feedback
+### PATCH /v1/topics/:topicId/feedback
 
 **Auth:** Bearer token
-**Description:** Record a thumbs up/down or save signal on a generated topic.
+**Description:** Record a like or dislike signal on a generated topic.
 
 **Request body:**
 | Field | Type | Required | Description |
 |---|---|---|---|
-| signal | `"up" \| "down" \| "save"` | Yes | Feedback signal |
+| feedback | `"like" \| "dislike" \| null` | Yes | Feedback signal (`null` clears) |
 
 **Response:**
 \```json
@@ -80,13 +80,13 @@ Document each new endpoint:
   "success": true,
   "data": {
     "topicId": "string",
-    "signal": "up"
+    "userFeedback": "like"
   }
 }
 \```
 
 **Error cases:**
-- 400 — invalid signal value
+- 400 — invalid feedback value
 - 403 — unauthorized
 - 404 — topic not found or not owned by user
 ```

@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import userRouter from "./user.route.js";
-import contentRouter from "./content.route.js";
+import topicsRouter from "./topics.route.js";
+import scriptsRouter from "./scripts.route.js";
 import packagingRouter from "./packaging.route.js";
 import videoProjectRouter from "./video-project.route.js";
 import researchRouter from "./research.route.js";
@@ -9,7 +10,8 @@ import hooksRouter from "./hooks.route.js";
 const router = Router();
 
 router.use("/user", userRouter);
-router.use("/content", contentRouter);
+router.use("/topics", topicsRouter);
+router.use("/scripts", scriptsRouter);
 router.use("/packaging", packagingRouter);
 router.use("/video-projects", videoProjectRouter);
 router.use("/research", researchRouter);

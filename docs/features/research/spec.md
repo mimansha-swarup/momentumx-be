@@ -2,7 +2,7 @@
 title: "Research — Feature Spec"
 description: "User flow, states, regeneration behavior, and edge cases for the Research step"
 status: "draft"
-last_updated: 2026-03-08
+last_updated: 2026-03-11
 tags: ["feature", "research", "topics", "spec"]
 ---
 
@@ -175,15 +175,15 @@ These are planned for future phases but explicitly not part of the current Resea
 
 | Capability | Status | Notes |
 |---|---|---|
-| Generate 10 topic ideas | ✅ Built | `GET /v1/content/stream/topics` |
+| Generate 10 topic ideas | ✅ Built | `POST /v1/topics/generate` |
 | Save topics to Firestore | ✅ Built | Batch write with embeddings |
-| Paginated topic list | ✅ Built | `GET /v1/content/topics` |
-| Edit a topic title | ✅ Built | `PATCH /v1/content/topics/edit/:topicId` |
+| Paginated topic list | ✅ Built | `GET /v1/topics` |
+| Edit a topic title | ✅ Built | `PATCH /v1/topics/edit/:topicId` |
 | KMeans repetition avoidance | ✅ Built | Runs before every generation |
-| Regenerate All | ✅ Built | `POST /v1/content/topics/regenerate-all` |
-| Regenerate One (slot-replace) | ✅ Built | `POST /v1/content/topics/:topicId/regenerate` |
-| Per-topic feedback (like/dislike) | ✅ Built | `PATCH /v1/content/topics/:topicId/feedback` |
-| Export topics | ✅ Built | `GET /v1/content/topics/export` |
+| Regenerate All | ✅ Built | `POST /v1/topics/regenerate-all` |
+| Regenerate One (slot-replace) | ✅ Built | `POST /v1/topics/:topicId/regenerate` |
+| Per-topic feedback (like/dislike) | ✅ Built | `PATCH /v1/topics/:topicId/feedback` |
+| Export topics | ✅ Built | `GET /v1/topics/export` |
 | `archived` + `batchId` fields on topics | ✅ Built | Set on generation |
 | Stale cascade on Regenerate All | ✅ Built | Marks downstream video project steps stale |
 | Trend discovery | ✅ Built | `GET /v1/research/trending` |

@@ -2,7 +2,7 @@
 title: "Product Roadmap & Status"
 description: "Current build state, planned E2E flow, and identified gaps"
 date: 2026-02-26
-last_updated: 2026-03-08
+last_updated: 2026-03-11
 status: "draft"
 tags: ["product", "roadmap", "status", "gaps"]
 ---
@@ -61,7 +61,7 @@ The discovery and ideation phase. The creator uses Research to figure out what v
 - **Trend discovery** — what's trending in the creator's niche right now
 - **Keyword / SEO data** — search volume and keyword signals to inform topic selection
 
-**Current build:** Fully built. Title ideas (`GET /v1/content/topics`), trend discovery (`GET /v1/research/trending`), competitor analysis (`GET /v1/research/competitors`), and keyword signals (`GET /v1/research/keywords`) are all live. Research data is fetched fresh from the YouTube Data API on every call — not static onboarding data.
+**Current build:** Fully built. Title ideas (`GET /v1/topics`), trend discovery (`GET /v1/research/trending`), competitor analysis (`GET /v1/research/competitors`), and keyword signals (`GET /v1/research/keywords`) are all live. Research data is fetched fresh from the YouTube Data API on every call — not static onboarding data.
 
 ---
 

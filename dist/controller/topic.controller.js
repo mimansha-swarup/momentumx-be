@@ -1,7 +1,6 @@
 import { randomUUID } from "crypto";
 import { formatGeneratedTitle } from "../utlils/content.js";
-import { firebase } from "../config/firebase.js";
-class ContentController {
+class TopicController {
     constructor(service) {
         this.handleError = (error, res, next) => {
             const err = error;
@@ -44,24 +43,11 @@ class ContentController {
                 next(error);
             }
         };
-        this.retrieveScripts = async (req, res, next) => {
-            try {
-                const data = await this.service.getUsersScript(req.userId);
-                res.sendSuccess({
-                    message: "successfully retrieved scripts",
-                    data,
-                });
-            }
-            catch (error) {
-                next(error);
-            }
-        };
         this.generateTopics = async (req, res, next) => {
             try {
                 const data = await this.service.generateTopics(req.userId);
                 const batchId = randomUUID();
                 const modifiedDataResults = await Promise.allSettled((data || [])?.map(async (record) => formatGeneratedTitle(record, req.userId, batchId)));
-                // Filter out failed ones, keep only successful
                 const modifiedData = modifiedDataResults
                     .filter((result) => result.status === "fulfilled")
                     .map((result) => result.value);
@@ -86,19 +72,6 @@ class ContentController {
                 res.sendSuccess({
                     message: "Title updated successfully",
                     data: { ...req.body, id: topicId },
-                });
-            }
-            catch (error) {
-                next(error);
-            }
-        };
-        this.editScript = async (req, res, next) => {
-            try {
-                const scriptId = req.params.scriptId;
-                await this.service.editScript(scriptId, req.userId, req.body);
-                res.sendSuccess({
-                    message: "Title updated successfully",
-                    data: { ...req.body, scriptId },
                 });
             }
             catch (error) {
@@ -142,68 +115,7 @@ class ContentController {
                 this.handleError(error, res, next);
             }
         };
-        this.updateScriptFeedback = async (req, res, next) => {
-            try {
-                const { scriptId } = req.params;
-                const { feedback } = req.body;
-                if (feedback === undefined) {
-                    return res.sendError({ message: "feedback is required", statusCode: 400 });
-                }
-                const data = await this.service.updateScriptFeedback(req.userId, scriptId, feedback);
-                res.sendSuccess({ message: "Script feedback updated", data });
-            }
-            catch (error) {
-                this.handleError(error, res, next);
-            }
-        };
-        this.exportScript = async (req, res, next) => {
-            try {
-                const { scriptId } = req.params;
-                const data = await this.service.exportScript(req.userId, scriptId);
-                res.sendSuccess({ message: "Script exported successfully", data });
-            }
-            catch (error) {
-                this.handleError(error, res, next);
-            }
-        };
-        this.generateScript = async (req, res, next) => {
-            try {
-                const token = req.query.token || "";
-                const scriptId = req.params.scriptId;
-                if (!token) {
-                    return res.sendError({ message: "Unauthorized" });
-                }
-                const decodedToken = await firebase.auth().verifyIdToken(token);
-                const uid = decodedToken.uid;
-                await this.service.generateScripts(uid, scriptId, res);
-            }
-            catch (error) {
-                next(error);
-            }
-        };
-        this.regenerateScript = async (req, res, next) => {
-            try {
-                const { scriptId } = req.params;
-                const data = await this.service.regenerateScript(req.userId, scriptId);
-                res.sendSuccess({ message: "Script regenerated successfully", data });
-            }
-            catch (error) {
-                this.handleError(error, res, next);
-            }
-        };
-        this.retrieveScriptById = async (req, res, next) => {
-            try {
-                const data = await this.service.getScriptById(req.params.scriptId, req.userId);
-                res.sendSuccess({
-                    message: "successfully retrieved script",
-                    data,
-                });
-            }
-            catch (error) {
-                next(error);
-            }
-        };
         this.service = service;
     }
 }
-export default ContentController;
+export default TopicController;

@@ -20,7 +20,8 @@ src/
     │   ├── content.service.test.ts
     │   └── packaging.service.test.ts
     ├── controllers/
-    │   ├── content.controller.test.ts
+    │   ├── topic.controller.test.ts
+    │   ├── script.controller.test.ts
     │   └── packaging.controller.test.ts
     └── utils/
         └── content.utils.test.ts
@@ -161,16 +162,16 @@ jest.mock('firebase-admin', () => ({
   // ... rest of mock
 }));
 
-describe('GET /v1/content/topics', () => {
+describe('GET /v1/topics', () => {
   it('returns 403 with no token', async () => {
-    const res = await request(app).get('/v1/content/topics');
+    const res = await request(app).get('/v1/topics');
     expect(res.status).toBe(403);
   });
 
   it('returns 403 with invalid token', async () => {
     mockVerifyIdToken.mockRejectedValue(new Error('Invalid token'));
     const res = await request(app)
-      .get('/v1/content/topics')
+      .get('/v1/topics')
       .set('Authorization', 'Bearer bad-token');
     expect(res.status).toBe(403);
   });
@@ -179,7 +180,7 @@ describe('GET /v1/content/topics', () => {
     mockVerifyIdToken.mockResolvedValue({ uid: 'user-123' });
     // mock service/repo...
     const res = await request(app)
-      .get('/v1/content/topics')
+      .get('/v1/topics')
       .set('Authorization', 'Bearer valid-token');
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ success: true, data: expect.any(Array) });
@@ -222,13 +223,13 @@ expect(res.body).toMatchObject({
 ## SSE Stream Testing
 
 ```typescript
-it('streams content and ends with [DONE]', (done) => {
+it('streams script content and ends with [done]', (done) => {
+  // Script SSE uses ?token= query param — no Authorization header needed
   mockVerifyIdToken.mockResolvedValue({ uid: 'user-123' });
   const chunks: string[] = [];
 
   request(app)
-    .get('/v1/content/stream/topics')
-    .set('Authorization', 'Bearer valid-token')
+    .get('/v1/scripts/stream/topic-id-123?token=valid-token')
     .buffer(false)
     .parse((res, callback) => {
       res.on('data', (chunk: Buffer) => chunks.push(chunk.toString()));
@@ -236,7 +237,7 @@ it('streams content and ends with [DONE]', (done) => {
     })
     .then((res) => {
       expect(res.text).toContain('data: ');
-      expect(res.text).toContain('[DONE]');
+      expect(res.text).toContain('[done]');
       done();
     });
 });

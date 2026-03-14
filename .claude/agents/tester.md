@@ -101,14 +101,14 @@ expect(res.body).toMatchObject({
 ```typescript
 // Missing token → 403
 it('returns 403 when no auth token', async () => {
-  const res = await request(app).get('/v1/content/topics');
+  const res = await request(app).get('/v1/topics');
   expect(res.status).toBe(403);
 });
 
 // Invalid token → 403
 it('returns 403 when token is invalid', async () => {
   const res = await request(app)
-    .get('/v1/content/topics')
+    .get('/v1/topics')
     .set('Authorization', 'Bearer invalid-token');
   expect(res.status).toBe(403);
 });
@@ -117,7 +117,7 @@ it('returns 403 when token is invalid', async () => {
 it('returns 200 with valid token', async () => {
   mockVerifyIdToken.mockResolvedValueOnce({ uid: 'user-123' });
   const res = await request(app)
-    .get('/v1/content/topics')
+    .get('/v1/topics')
     .set('Authorization', 'Bearer valid-token');
   expect(res.status).toBe(200);
 });
@@ -136,12 +136,12 @@ it('returns 200 with valid token', async () => {
 Regular Supertest assertions don't work for SSE. Use this pattern:
 
 ```typescript
-it('streams topics via SSE', (done) => {
+it('streams script via SSE', (done) => {
   const chunks: string[] = [];
 
+  // Script SSE uses ?token= query param — no Authorization header
   request(app)
-    .get('/v1/content/stream/topics')
-    .set('Authorization', 'Bearer valid-token')
+    .get('/v1/scripts/stream/:scriptId?token=valid-token')
     .buffer(false)
     .parse((res, callback) => {
       res.on('data', (chunk: Buffer) => {
@@ -151,7 +151,7 @@ it('streams topics via SSE', (done) => {
     })
     .then((res) => {
       expect(res.text).toContain('data: ');
-      expect(res.text).toContain('[DONE]');
+      expect(res.text).toContain('[done]');
       done();
     });
 });
@@ -194,13 +194,14 @@ describe('ContentService', () => {
 
 ## Priority Order for First Tests
 
-The codebase has 0 tests. Build in this order:
+Build in this order:
 
-1. **`src/service/content.service.ts`** — most complex logic (KMeans clustering, embeddings, Gemini generation, SSE)
+1. **`src/service/content.service.ts`** — most complex logic (KMeans clustering, embeddings, Gemini generation)
 2. **`src/service/packaging.service.ts`** — second most complex (5 separate generation calls, JSON parsing)
 3. **`src/utlils/content.ts`** — pure utility functions, easiest to test (no mocks needed for most)
-4. **`src/controller/content.controller.ts`** — API contract tests via Supertest
-5. **`src/controller/packaging.controller.ts`** — packaging endpoint tests
+4. **`src/controller/topic.controller.ts`** — topic API contract tests via Supertest
+5. **`src/controller/script.controller.ts`** — script API contract tests via Supertest
+6. **`src/controller/packaging.controller.ts`** — packaging endpoint tests
 
 ## Test File Location
 
@@ -211,7 +212,8 @@ src/
 │   │   ├── content.service.test.ts
 │   │   └── packaging.service.test.ts
 │   ├── controllers/
-│   │   ├── content.controller.test.ts
+│   │   ├── topic.controller.test.ts
+│   │   ├── script.controller.test.ts
 │   │   └── packaging.controller.test.ts
 │   └── utils/
 │       └── content.utils.test.ts

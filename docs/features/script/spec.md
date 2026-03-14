@@ -2,7 +2,7 @@
 title: "Script Generation — Feature Spec"
 description: "How script generation works in the MomentumX pipeline, what's built, and what's not."
 date: 2026-02-27
-last_updated: 2026-03-08
+last_updated: 2026-03-11
 status: "implemented"
 tags: ["feature", "script", "spec"]
 ---
@@ -34,7 +34,7 @@ Pipeline position: Research → **Script** → Hooks → Packaging
 
 ### SSE Script Generation
 
-`GET /v1/content/stream/scripts/:scriptId`
+`GET /v1/scripts/stream/:scriptId`
 
 Streams a full video script for the given topic. The `:scriptId` URL parameter is actually the **topicId** — the script document is stored in Firestore with the same ID as its source topic.
 
@@ -64,19 +64,19 @@ data: [done]\n\n
 
 ### List Scripts
 
-`GET /v1/content/scripts`
+`GET /v1/scripts`
 
 Returns all script documents owned by the authenticated user, ordered by `createdAt` descending.
 
 ### Get Single Script
 
-`GET /v1/content/script/:scriptId`
+`GET /v1/scripts/:scriptId`
 
 Returns a single script document by ID. Ownership enforced — `createdBy` must match the requesting user.
 
 ### Edit Script
 
-`PATCH /v1/content/script/edit/:scriptId`
+`PATCH /v1/scripts/edit/:scriptId`
 
 Accepts fields in the request body and merges them onto the script document. Manual edit only — not AI-assisted. Ownership enforced.
 

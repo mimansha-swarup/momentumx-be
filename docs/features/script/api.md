@@ -2,14 +2,14 @@
 title: "Script — API Reference"
 description: "All endpoints for script generation, retrieval, and editing."
 date: 2026-02-27
-last_updated: 2026-03-08
+last_updated: 2026-03-11
 status: "implemented"
 tags: ["api", "script"]
 ---
 
 # Script API Reference
 
-Base path: `/v1/content`
+Base path: `/v1/scripts`
 
 All endpoints require `Authorization: Bearer <token>` except `GET /stream/scripts/:scriptId` which uses `?token=` query param.
 
@@ -19,17 +19,17 @@ All endpoints require `Authorization: Bearer <token>` except `GET /stream/script
 
 | Method | URL | Purpose | Status |
 |---|---|---|---|
-| `GET` | `/v1/content/stream/scripts/:scriptId` | Stream script generation via SSE | ✅ Built |
-| `GET` | `/v1/content/scripts` | List all user scripts | ✅ Built |
-| `GET` | `/v1/content/script/:scriptId` | Get single script | ✅ Built |
-| `PATCH` | `/v1/content/script/edit/:scriptId` | Edit script text | ✅ Built |
-| `POST` | `/v1/content/scripts/:scriptId/regenerate` | Regenerate script (non-SSE) | ✅ Built |
-| `PATCH` | `/v1/content/scripts/:scriptId/feedback` | Record like/dislike on script | ✅ Built |
-| `GET` | `/v1/content/scripts/:scriptId/export` | Export script as plain text | ✅ Built |
+| `GET` | `/v1/scripts/stream/:scriptId` | Stream script generation via SSE | ✅ Built |
+| `GET` | `/v1/scripts` | List all user scripts | ✅ Built |
+| `GET` | `/v1/scripts/:scriptId` | Get single script | ✅ Built |
+| `PATCH` | `/v1/scripts/edit/:scriptId` | Edit script text | ✅ Built |
+| `POST` | `/v1/scripts/:scriptId/regenerate` | Regenerate script (non-SSE) | ✅ Built |
+| `PATCH` | `/v1/scripts/:scriptId/feedback` | Record like/dislike on script | ✅ Built |
+| `GET` | `/v1/scripts/:scriptId/export` | Export script as plain text | ✅ Built |
 
 ---
 
-## GET `/v1/content/stream/scripts/:scriptId`
+## GET `/v1/scripts/stream/:scriptId`
 
 Streams a full YouTube video script for the given topic via SSE.
 
@@ -87,7 +87,7 @@ data: [done]\n\n
 
 ---
 
-## GET `/v1/content/scripts`
+## GET `/v1/scripts`
 
 Returns all scripts owned by the authenticated user, ordered by `createdAt` descending.
 
@@ -120,7 +120,7 @@ Returns all scripts owned by the authenticated user, ordered by `createdAt` desc
 
 ---
 
-## GET `/v1/content/script/:scriptId`
+## GET `/v1/scripts/:scriptId`
 
 Returns a single script document by ID.
 
@@ -160,7 +160,7 @@ Ownership enforced — `createdBy` must match the requesting user.
 
 ---
 
-## PATCH `/v1/content/script/edit/:scriptId`
+## PATCH `/v1/scripts/edit/:scriptId`
 
 Merges provided fields onto the script document. Manual edit only — not AI-assisted.
 
@@ -220,7 +220,7 @@ Stored in the `scripts` Firestore collection. Document ID = source `topicId`.
 
 ---
 
-## POST `/v1/content/scripts/:scriptId/regenerate`
+## POST `/v1/scripts/:scriptId/regenerate`
 
 Regenerates the script for a topic without SSE. Returns the full script in the response body once generation is complete.
 
@@ -261,7 +261,7 @@ Regenerates the script for a topic without SSE. Returns the full script in the r
 
 ---
 
-## PATCH `/v1/content/scripts/:scriptId/feedback`
+## PATCH `/v1/scripts/:scriptId/feedback`
 
 Records a like or dislike signal on a script. Overwrites any prior feedback value.
 
@@ -303,7 +303,7 @@ Records a like or dislike signal on a script. Overwrites any prior feedback valu
 
 ---
 
-## GET `/v1/content/scripts/:scriptId/export`
+## GET `/v1/scripts/:scriptId/export`
 
 Returns the script as a plain-text formatted string suitable for copy-paste or download.
 

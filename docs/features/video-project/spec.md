@@ -2,7 +2,7 @@
 title: "Video Project — Feature Spec"
 description: "User flow, design decisions, Firestore schema, and stale cascade rules for the Video Project entity"
 date: 2026-02-27
-last_updated: 2026-03-08
+last_updated: 2026-03-11
 status: "implemented"
 tags: ["feature", "video-project", "spec", "phase-0"]
 ---
@@ -85,7 +85,7 @@ A creator can start multiple Video Projects using the same topic. No lock on top
 ### Creating a New Project (Topic Selection)
 
 ```
-1. Creator runs Research (GET /v1/content/stream/topics) — existing flow.
+1. Creator runs Research (POST /v1/topics/generate) — existing flow.
 2. Creator selects a topic.
 3. Frontend calls POST /v1/video-projects with { topicId }.
 4. Backend creates the project:
@@ -137,7 +137,7 @@ A creator can start multiple Video Projects using the same topic. No lock on top
 ```
 1. Creator completed Script and Hooks. Packaging is in_progress.
 2. Creator jumps back to Script and regenerates.
-3. POST /v1/content/scripts/:scriptId/regenerate is called.
+3. POST /v1/scripts/:scriptId/regenerate is called.
 4. ContentService.regenerateScript() calls markStale("script") server-side (fire-and-forget).
 5. Backend applies cascade:
    - pipeline.hooks.status = "stale"

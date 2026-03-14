@@ -2,29 +2,29 @@
 title: "Research — API Contract"
 description: "Endpoint reference for the Research step — topic generation, iteration, feedback, and export"
 status: "implemented"
-last_updated: 2026-03-08
+last_updated: 2026-03-11
 tags: ["api", "research", "topics"]
 ---
 
 # Research — API Contract
 
-Topic endpoints are under `/v1/content`. Research intelligence endpoints are under `/v1/research`. All require `Authorization: Bearer <token>`.
+Topic endpoints are under `/v1/topics`. Research intelligence endpoints are under `/v1/research`. All require `Authorization: Bearer <token>`.
 
 ---
 
 ## Endpoints Summary
 
-### `/v1/content` — Topic Lifecycle
+### `/v1/topics` — Topic Lifecycle
 
 | Method | URL | Purpose | Status |
 |---|---|---|---|
-| `GET` | `/v1/content/stream/topics` | Generate 10 topic ideas (new batch) | ✅ Built |
-| `GET` | `/v1/content/topics` | List saved topics (paginated) | ✅ Built |
-| `PATCH` | `/v1/content/topics/edit/:topicId` | Edit a topic title | ✅ Built |
-| `POST` | `/v1/content/topics/regenerate-all` | Archive current batch, generate 10 new | ✅ Built |
-| `POST` | `/v1/content/topics/:topicId/regenerate` | Regenerate a single topic slot in-place | ✅ Built |
-| `PATCH` | `/v1/content/topics/:topicId/feedback` | Set like/dislike signal on a topic | ✅ Built |
-| `GET` | `/v1/content/topics/export` | Export active batch as formatted text | ✅ Built |
+| `POST `/v1/topics/generate` | Generate 10 topic ideas (new batch) | ✅ Built |
+| `GET` | `/v1/topics` | List saved topics (paginated) | ✅ Built |
+| `PATCH` | `/v1/topics/edit/:topicId` | Edit a topic title | ✅ Built |
+| `POST` | `/v1/topics/regenerate-all` | Archive current batch, generate 10 new | ✅ Built |
+| `POST` | `/v1/topics/:topicId/regenerate` | Regenerate a single topic slot in-place | ✅ Built |
+| `PATCH` | `/v1/topics/:topicId/feedback` | Set like/dislike signal on a topic | ✅ Built |
+| `GET` | `/v1/topics/export` | Export active batch as formatted text | ✅ Built |
 
 ### `/v1/video-projects` — Project Creation
 
@@ -42,7 +42,7 @@ Topic endpoints are under `/v1/content`. Research intelligence endpoints are und
 
 ---
 
-## GET `/v1/content/stream/topics`
+## POST `/v1/topics/generate`
 
 Generates 10 new topic ideas for the authenticated user using their onboarding context and KMeans clustering to avoid repetition. Saves all topics to Firestore and returns them in a single JSON response.
 
@@ -93,7 +93,7 @@ No body. No query params.
 
 ---
 
-## GET `/v1/content/topics`
+## GET `/v1/topics`
 
 Returns a paginated list of the authenticated user's saved topics. Supports cursor-based pagination and filtering.
 
@@ -159,7 +159,7 @@ Returns a paginated list of the authenticated user's saved topics. Supports curs
 
 ---
 
-## PATCH `/v1/content/topics/edit/:topicId`
+## PATCH `/v1/topics/edit/:topicId`
 
 Updates fields on a topic document. Used when a creator manually edits a title.
 
@@ -211,7 +211,7 @@ Any Firestore-compatible field can be passed. The update uses `{ merge: true }` 
 
 ---
 
-## POST `/v1/content/topics/regenerate-all` ✅ Built
+## POST `/v1/topics/regenerate-all` ✅ Built
 
 Archives all active (non-archived) topics for the user and generates a fresh batch of 10. Triggers a stale cascade on any video project linked to an active topic.
 
@@ -245,7 +245,7 @@ None.
 
 ---
 
-## POST `/v1/content/topics/:topicId/regenerate` ✅ Built
+## POST `/v1/topics/:topicId/regenerate` ✅ Built
 
 Regenerates a single topic slot in-place. Replaces the title and embedding while preserving the document ID and `batchId`.
 
@@ -284,7 +284,7 @@ None.
 
 ---
 
-## PATCH `/v1/content/topics/:topicId/feedback` ✅ Built
+## PATCH `/v1/topics/:topicId/feedback` ✅ Built
 
 Records a like or dislike signal on a topic. Used for feedback collection — does not affect generation.
 
@@ -326,7 +326,7 @@ Records a like or dislike signal on a topic. Used for feedback collection — do
 
 ---
 
-## GET `/v1/content/topics/export` ✅ Built
+## GET `/v1/topics/export` ✅ Built
 
 Returns the user's active topic batch as a formatted plain-text numbered list, ready to copy-paste.
 

@@ -17,11 +17,12 @@ REST conventions and response standards for the MomentumX API. All endpoints —
 - No trailing slashes
 
 ```
-✅ /v1/content/topics
+✅ /v1/topics
+✅ /v1/scripts/stream/:scriptId
 ✅ /v1/packaging/generate-title
 ✅ /v1/user/profile
 
-❌ /v1/content/topic
+❌ /v1/content/topics
 ❌ /v1/packaging/generateTitle
 ❌ /v1/user/profile/
 ```
@@ -50,7 +51,7 @@ router.use(authMiddleware);
 router.get('/topics', controller.getTopics);
 ```
 
-**SSE exception:** `GET /v1/content/stream/scripts/:scriptId` uses `?token=` query param.
+**SSE exception:** `GET /v1/scripts/stream/:scriptId` uses `?token=` query param.
 Reason: browser EventSource API cannot send Authorization headers.
 Token is verified manually in the controller before the stream starts.
 
@@ -131,22 +132,52 @@ All collection names live in `src/constants/collection.ts`. Add new names there 
   GET   /profile               — get user profile
   PATCH /profile               — update profile
 
-/v1/content
-  GET   /stream/topics         — SSE: generate + stream 10 topic ideas
-  GET   /stream/scripts/:id    — SSE: generate + stream script (?token= auth)
-  GET   /topics                — list saved topics
-  GET   /scripts               — list saved scripts
-  GET   /script/:scriptId      — get single script
-  PATCH /topics/edit/:topicId  — update topic
-  PATCH /script/edit/:scriptId — update script
+/v1/topics
+  POST  /generate              — generate 10 topic ideas
+  GET   /                      — list saved topics
+  GET   /export                — export active batch as text
+  POST  /regenerate-all        — archive + regenerate full batch
+  PATCH /edit/:topicId         — update topic title
+  POST  /:topicId/regenerate   — regenerate single topic slot
+  PATCH /:topicId/feedback     — like/dislike on a topic
+
+/v1/scripts
+  GET   /stream/:scriptId      — SSE: generate + stream script (?token= auth)
+  GET   /                      — list saved scripts
+  GET   /:scriptId             — get single script
+  PATCH /edit/:scriptId        — update script content
+  POST  /:scriptId/regenerate  — regenerate script (non-SSE)
+  PATCH /:scriptId/feedback    — like/dislike on a script
+  GET   /:scriptId/export      — export script as plain text
+
+/v1/hooks
+  POST  /generate              — generate 5-hook batch tied to video project
+  POST  /:hooksId/select       — select a hook, completes hooks step
+  POST  /:hooksId/regenerate   — regenerate hooks, cascades stale to packaging
+  PATCH /:hooksId/feedback     — per-hook like/dislike
+  GET   /:hooksId/export       — export hooks as plain text
 
 /v1/packaging
-  POST /generate-title         — generate 3 title variations
-  POST /generate-description   — generate SEO description
-  POST /generate-thumbnail     — generate thumbnail brief
-  POST /generate-hooks         — generate 5 hook variations
-  POST /generate-shorts        — generate Shorts script
-  POST /save                   — save packaging to Firestore
-  GET  /list                   — list user's packaging
-  GET  /:packagingId           — get single packaging
+  POST  /generate-title        — generate 3 title variations
+  POST  /generate-description  — generate SEO description
+  POST  /generate-thumbnail    — generate thumbnail brief
+  POST  /generate-shorts       — generate Shorts script
+  POST  /save                  — save packaging to Firestore
+  GET   /list                  — list user's packaging
+  GET   /:packagingId          — get single packaging
+  POST  /:packagingId/regenerate/:item — regenerate one packaging item
+  PATCH /:packagingId/feedback — per-item like/dislike
+  GET   /:packagingId/export   — export full package as text
+
+/v1/research
+  GET   /trending              — trending videos in user's niche (YouTube API)
+  GET   /competitors           — top videos from competitor channels (YouTube API)
+  GET   /keywords              — keyword signals for a query (YouTube API)
+
+/v1/video-projects
+  POST  /                      — create a new video project
+  GET   /                      — list all video projects
+  GET   /:projectId            — get single project
+  PATCH /:projectId            — update project
+  DELETE /:projectId           — soft delete project
 ```
