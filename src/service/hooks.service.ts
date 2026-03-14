@@ -126,6 +126,7 @@ class HooksService {
     await this.repo.update(hooksId, { hooks: parsed.hooks, hookFeedback: {} });
     await this.videoProjectService.clearSelectedHook(hooksBatch.videoProjectId, userId);
     await this.videoProjectService.markStale(hooksBatch.videoProjectId, "hooks");
+    this.videoProjectService.markPackagingDocumentStale(hooksBatch.videoProjectId, "hooks_regenerated").catch(console.error);
 
     return { id: hooksId, hooks: parsed.hooks, hookFeedback: {} };
   };

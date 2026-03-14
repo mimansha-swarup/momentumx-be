@@ -128,7 +128,7 @@ What's happening inside an individual step. State machine per step — see schem
 
 ### Packaging Step
 
-Each packaging item has its own independent status. The step itself has no single top-level status — it's derived from the states of its items.
+The packaging pipeline step uses `StepState` like all other steps. Per-item status is tracked on the **packaging document itself** (not on the video project), using `itemStatuses`.
 
 **Packaging items:**
 - Title variations
@@ -136,23 +136,34 @@ Each packaging item has its own independent status. The step itself has no singl
 - Thumbnail brief
 - Shorts script
 
-**Per-item status:**
+**Per-item status (on packaging document):**
 
 | Status | Meaning |
 |---|---|
 | `not_started` | Not yet generated |
-| `in_progress` | AI generating or awaiting creator approval |
-| `completed` | Creator marked this item done |
+| `completed` | Item has been generated (via save or regenerate) |
+| `stale` | Upstream script or hooks were regenerated — item is out of date |
 
-**Nothing auto-advances to `completed`.** The creator explicitly marks each item done.
+**Status auto-advances to `completed`** when content is saved or regenerated. Three states only — no `in_progress` at the item level.
 
 **Trigger table (per item):**
 
 | Action | Transition |
 |---|---|
-| Creator triggers generation | `not_started` → `in_progress` |
-| Creator marks item done | `in_progress` → `completed` |
-| Creator regenerates item | any → `in_progress` |
+| `savePackaging` with item content present | `not_started` → `completed` |
+| `regenerateItem` succeeds | any → `completed` |
+| Upstream script regenerated | `completed` → `stale` (skips `not_started`) |
+| Upstream hooks regenerated | `completed` → `stale` (skips `not_started`) |
+
+**Document-level stale fields:**
+
+| Field | Purpose |
+|---|---|
+| `isStale: boolean` | `true` if any item is `"stale"` |
+| `staleReason: "script_regenerated" \| "hooks_regenerated" \| null` | What caused the stale cascade |
+| `staleSince: Timestamp \| null` | When the cascade happened |
+
+When the last stale item is regenerated, `isStale`, `staleReason`, and `staleSince` are all cleared.
 
 ---
 
@@ -295,13 +306,15 @@ Add to existing script documents:
 Add to existing packaging documents:
 ```
   videoProjectId: string | null
-  stale: boolean
   itemStatuses: {
-    title:       PackagingItemStatus
-    description: PackagingItemStatus
-    thumbnail:   PackagingItemStatus
-    shorts:      PackagingItemStatus
+    title:       "not_started" | "completed" | "stale"
+    description: "not_started" | "completed" | "stale"
+    thumbnail:   "not_started" | "completed" | "stale"
+    shorts:      "not_started" | "completed" | "stale"
   }
+  isStale: boolean                                          // true if ANY item is "stale"
+  staleReason: "script_regenerated" | "hooks_regenerated" | null
+  staleSince: Timestamp | null
 ```
 
 ---
@@ -317,7 +330,7 @@ All Phase 0 infrastructure is built and live:
 5. ✅ `VideoProjectService` — status transitions, stale cascade, `startStep` / `completeStep` / `linkResource` / `markStale`
 6. ✅ `HooksService` — hook generation, selection, regeneration, feedback, export
 7. ✅ `videoProjectId`, `archived`, `batchId` fields on `topics` and `scripts`
-8. ✅ `videoProjectId`, `stale` fields on `packaging`
+8. ✅ `videoProjectId`, `itemStatuses`, `isStale`, `staleReason`, `staleSince` fields on `packaging`
 9. ✅ Routes registered: `/v1/video-projects`, `/v1/hooks`
 
 Pipeline auto-advancement is also wired: generating a script, selecting a hook, or saving packaging all trigger the appropriate `startStep` / `completeStep` / `linkResource` calls (fire-and-forget) on the linked video project.

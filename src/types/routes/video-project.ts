@@ -4,6 +4,8 @@ export type StepStatus = "not_started" | "in_progress" | "completed" | "stale";
 export type OverallStatus = "in_progress" | "completed" | "stale";
 export type StepName = "research" | "script" | "hooks" | "packaging";
 export type ResourceType = "script" | "hooks" | "packaging";
+export type PackagingItemStatus = "not_started" | "completed" | "stale";
+export type StaleReason = "script_regenerated" | "hooks_regenerated" | null;
 
 export interface StepState {
   status: StepStatus;
@@ -11,20 +13,18 @@ export interface StepState {
   completedAt: Timestamp | null;
 }
 
-export interface PackagingStepState extends StepState {
-  items: {
-    titles: string;
-    description: string;
-    thumbnail: string;
-    shorts: string;
-  };
+export interface IPackagingItemStatuses {
+  title: PackagingItemStatus;
+  description: PackagingItemStatus;
+  thumbnail: PackagingItemStatus;
+  shorts: PackagingItemStatus;
 }
 
 export interface IVideoProjectPipeline {
   research: StepState;
   script: StepState;
   hooks: StepState;
-  packaging: PackagingStepState;
+  packaging: StepState;
 }
 
 export interface IVideoProject {

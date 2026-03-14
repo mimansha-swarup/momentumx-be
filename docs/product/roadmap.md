@@ -2,7 +2,7 @@
 title: "Product Roadmap & Status"
 description: "Current build state, planned E2E flow, and identified gaps"
 date: 2026-02-26
-last_updated: 2026-03-11
+last_updated: 2026-03-15
 status: "draft"
 tags: ["product", "roadmap", "status", "gaps"]
 ---
@@ -200,7 +200,7 @@ Includes:
 - Iteration — feedback signals + regenerate specific or all assets
 - Export — export full package
 
-**Build status:** Backend complete. Per-item generation, regeneration, feedback, and export are all built and live.
+**Build status:** Backend complete. Per-item generation, regeneration, feedback, export, per-item status tracking (`itemStatuses`), stale detection (`isStale`, `staleReason`, `staleSince`), stale cascade from script/hooks regeneration, and upsert-by-videoProjectId are all built and live.
 
 ---
 

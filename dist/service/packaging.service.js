@@ -70,18 +70,62 @@ class PackagingService {
                 throw error;
             }
         };
+        this.buildItemStatuses = (data) => {
+            const hasContent = (key) => {
+                const val = data[key];
+                if (val === undefined || val === null)
+                    return false;
+                if (Array.isArray(val))
+                    return val.length > 0;
+                if (typeof val === "string")
+                    return val.trim().length > 0;
+                return true;
+            };
+            return {
+                title: hasContent("titles") ? "completed" : "not_started",
+                description: hasContent("description") ? "completed" : "not_started",
+                thumbnail: hasContent("thumbnail") ? "completed" : "not_started",
+                shorts: hasContent("shorts") ? "completed" : "not_started",
+            };
+        };
         this.savePackaging = async (userId, data, videoProjectId) => {
             try {
                 if (videoProjectId && this.videoProjectService) {
                     await this.videoProjectService.getById(videoProjectId, userId);
                 }
+                const itemStatuses = this.buildItemStatuses(data);
                 const packagingData = {
                     ...data,
                     createdBy: userId,
-                    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    itemStatuses,
+                    isStale: false,
+                    staleReason: null,
+                    staleSince: null,
                     ...(videoProjectId ? { videoProjectId } : {}),
                 };
-                const result = await this.repo.save(packagingData);
+                let result;
+                // Upsert: check if packaging already exists for this video project
+                if (videoProjectId) {
+                    const existing = await this.repo.findByVideoProject(videoProjectId);
+                    if (existing) {
+                        result = await this.repo.update(existing.id, {
+                            ...packagingData,
+                            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                        });
+                    }
+                    else {
+                        result = await this.repo.save({
+                            ...packagingData,
+                            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                        });
+                    }
+                }
+                else {
+                    result = await this.repo.save({
+                        ...packagingData,
+                        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    });
+                }
                 if (videoProjectId && this.videoProjectService) {
                     this.videoProjectService
                         .linkResource(videoProjectId, "packaging", result.id, userId)
@@ -152,25 +196,51 @@ class PackagingService {
                 err.statusCode = 400;
                 throw err;
             }
+            // Save previous item status for rollback on failure
+            const currentStatuses = (pkg.itemStatuses ?? {});
+            const statusKey = item;
+            const previousStatus = currentStatuses[statusKey] ?? "not_started";
             let result;
             let fieldKey;
-            if (item === "title") {
-                result = await this.generateTitle(script, selectedHook);
-                fieldKey = "titles";
+            try {
+                if (item === "title") {
+                    result = await this.generateTitle(script, selectedHook);
+                    fieldKey = "titles";
+                }
+                else if (item === "description") {
+                    result = await this.generateDescription(script, title, selectedHook);
+                    fieldKey = "description";
+                }
+                else if (item === "thumbnail") {
+                    result = await this.generateThumbnail(script, title, selectedHook);
+                    fieldKey = "thumbnail";
+                }
+                else {
+                    result = await this.generateShorts(script, duration);
+                    fieldKey = "shorts";
+                }
             }
-            else if (item === "description") {
-                result = await this.generateDescription(script, title, selectedHook);
-                fieldKey = "description";
+            catch (genError) {
+                // Rollback status on generation failure
+                await this.repo.update(packagingId, {
+                    [`itemStatuses.${statusKey}`]: previousStatus,
+                });
+                throw genError;
             }
-            else if (item === "thumbnail") {
-                result = await this.generateThumbnail(script, title, selectedHook);
-                fieldKey = "thumbnail";
+            // Atomic write: content + status update
+            const updateData = {
+                [fieldKey]: result,
+                [`itemStatuses.${statusKey}`]: "completed",
+            };
+            // Check if clearing stale flag is needed
+            const allItems = ["title", "description", "thumbnail", "shorts"];
+            const anyStillStale = allItems.some((k) => k !== statusKey && currentStatuses[k] === "stale");
+            if (!anyStillStale) {
+                updateData.isStale = false;
+                updateData.staleReason = null;
+                updateData.staleSince = null;
             }
-            else {
-                result = await this.generateShorts(script, duration);
-                fieldKey = "shorts";
-            }
-            await this.repo.update(packagingId, { [fieldKey]: result });
+            await this.repo.update(packagingId, updateData);
             return { id: packagingId, item, data: result };
         };
         this.updateFeedback = async (userId, packagingId, item, feedback) => {

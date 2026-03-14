@@ -2,7 +2,7 @@
 title: "Packaging API Reference"
 description: "Endpoint reference for packaging generation, save, list, and retrieval."
 date: 2026-02-27
-last_updated: 2026-02-27
+last_updated: 2026-03-15
 status: "draft"
 tags: ["api", "packaging"]
 ---
@@ -175,7 +175,9 @@ Generate a YouTube Shorts script. Structured as hook / body / CTA, written to fi
 
 ## POST `/v1/packaging/save`
 
-Save a packaging document to Firestore. Document ID is Firestore auto-generated. Client controls which fields are included. `createdBy` and `createdAt` are set server-side.
+Save a packaging document to Firestore. If `videoProjectId` is provided and a packaging document already exists for that project, the existing document is **updated** (upsert). Otherwise a new document is created with Firestore auto-ID.
+
+Server automatically sets `createdBy`, `createdAt`, `itemStatuses` (derived from which content fields are present), and stale tracking fields (`isStale: false`, `staleReason: null`, `staleSince: null`).
 
 If `videoProjectId` is provided, the server verifies ownership of the video project before saving, then calls `linkResource` (fire-and-forget) to record the `packagingId` on the project.
 
@@ -183,8 +185,20 @@ If `videoProjectId` is provided, the server verifies ownership of the video proj
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `videoProjectId` | `string` | No | If provided, links this packaging to the video project |
+| `videoProjectId` | `string` | No | If provided, links this packaging to the video project (upserts if already linked) |
 | *(any packaging fields)* | `unknown` | No | All other fields are passed through and persisted as-is |
+
+### Server-Set Fields
+
+| Field | Value |
+|---|---|
+| `itemStatuses.title` | `"completed"` if `titles` field present and non-empty, else `"not_started"` |
+| `itemStatuses.description` | `"completed"` if `description` field present and non-empty, else `"not_started"` |
+| `itemStatuses.thumbnail` | `"completed"` if `thumbnail` field present and non-empty, else `"not_started"` |
+| `itemStatuses.shorts` | `"completed"` if `shorts` field present and non-empty, else `"not_started"` |
+| `isStale` | `false` |
+| `staleReason` | `null` |
+| `staleSince` | `null` |
 
 ### Response — `200`
 ```json
@@ -267,7 +281,7 @@ Get a single packaging document. Ownership is enforced — `createdBy` must matc
 
 ## POST `/v1/packaging/:packagingId/regenerate/:item`
 
-Regenerates a single packaging item and overwrites it on the existing document. Ownership enforced.
+Regenerates a single packaging item and overwrites it on the existing document. Ownership enforced. Content and `itemStatuses.<item>: "completed"` are written atomically in a single Firestore call. If this was the last stale item, `isStale` is cleared. On AI generation failure, item status is rolled back to its previous value.
 
 ### Path Parameters
 

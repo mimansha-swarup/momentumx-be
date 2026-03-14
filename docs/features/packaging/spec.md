@@ -2,7 +2,7 @@
 title: "Packaging Feature Spec"
 description: "How the Packaging step works: what it generates, data model, pipeline position, and what's not built yet."
 date: 2026-02-27
-last_updated: 2026-02-27
+last_updated: 2026-03-15
 status: "draft"
 tags: ["feature", "packaging", "spec"]
 ---
@@ -110,46 +110,75 @@ All generation endpoints use `GENERATION_CONFIG_PACKAGING` (`responseMimeType: "
 
 ## Current Data Model
 
-Packaging documents are saved with whatever fields the client sends in `req.body`, plus three server-set fields:
+Packaging documents are saved with the client-provided fields plus server-set fields:
 
 ```typescript
 {
   ...clientProvidedFields,       // whatever the client sends to /save
   createdBy: string,             // userId from authMiddleware
   createdAt: Timestamp,          // serverTimestamp()
+  itemStatuses: {                // auto-derived from content presence on save
+    title: PackagingItemStatus,
+    description: PackagingItemStatus,
+    thumbnail: PackagingItemStatus,
+    shorts: PackagingItemStatus,
+  },
+  isStale: boolean,              // true if ANY item is "stale"
+  staleReason: "script_regenerated" | "hooks_regenerated" | null,
+  staleSince: Timestamp | null,
 }
 ```
 
 Firestore auto-generates the document ID.
 
-### `videoProjectId` Linkage
+### `videoProjectId` Linkage & Upsert
 
-When `videoProjectId` is passed to `POST /save`, the packaging document is stored with that field and `linkResource` is called fire-and-forget on the video project. Direct `scriptId` or `topicId` foreign keys still do not exist on packaging documents.
+When `videoProjectId` is passed to `POST /save`, the service checks if a packaging document already exists for that project. If it does, the existing document is updated (upsert). If not, a new document is created. This prevents duplicate packaging documents per video project.
+
+After save, `linkResource` is called fire-and-forget on the video project. Direct `scriptId` or `topicId` foreign keys still do not exist on packaging documents.
 
 ---
 
-## Per-Item Status (Not Yet Built)
+## Per-Item Status Tracking
 
-Each of the 4 packaging items will have its own independent status:
-
-```
-not_started → generating → in_review → completed
-```
-
-Nothing auto-advances to `completed`. The creator explicitly marks each item done.
-
-Items can be regenerated at any time. Regeneration resets that item's status to `generating`.
-
-When built, the packaging document will gain an `itemStatuses` map:
+Each of the 4 packaging items has its own independent status tracked in `itemStatuses`:
 
 ```typescript
+type PackagingItemStatus = "not_started" | "completed" | "stale";
+
 itemStatuses: {
-  title:       "not_started" | "generating" | "in_review" | "completed"
-  description: "not_started" | "generating" | "in_review" | "completed"
-  thumbnail:   "not_started" | "generating" | "in_review" | "completed"
-  shorts:      "not_started" | "generating" | "in_review" | "completed"
+  title:       PackagingItemStatus,
+  description: PackagingItemStatus,
+  thumbnail:   PackagingItemStatus,
+  shorts:      PackagingItemStatus,
 }
 ```
+
+### State Transitions
+
+| Transition | Trigger |
+|---|---|
+| `not_started → completed` | `savePackaging` with item content present, or `regenerateItem` succeeds |
+| `completed → stale` | Upstream script or hooks regenerated (cascade) |
+| `stale → completed` | `regenerateItem` for that specific item |
+| `not_started` stays `not_started` | Cascade skips items that were never generated |
+
+### Stale Tracking
+
+When an upstream dependency is regenerated, the packaging document is marked stale:
+
+- **Script regenerated** → all `completed` items flip to `stale`, `isStale: true`, `staleReason: "script_regenerated"`
+- **Hooks regenerated** → all `completed` items flip to `stale`, `isStale: true`, `staleReason: "hooks_regenerated"`
+
+`not_started` items are never flipped — there's nothing to invalidate.
+
+### Stale Clearing
+
+After any `regenerateItem` completes, the service checks all `itemStatuses`. If no items remain `"stale"`, the document-level stale fields are cleared: `isStale: false`, `staleReason: null`, `staleSince: null`.
+
+### Atomic Writes
+
+`regenerateItem` writes both the regenerated content and the status update (`itemStatuses.<item>: "completed"`) in a single Firestore `update()` call. On AI generation failure, the item status is rolled back to its previous value.
 
 ---
 
@@ -166,8 +195,10 @@ itemStatuses: {
 | Regenerate per item (`POST /:packagingId/regenerate/:item`) | ✅ Built |
 | Per-item feedback (`PATCH /:packagingId/feedback`) | ✅ Built |
 | Export packaging (`GET /:packagingId/export`) | ✅ Built |
-| Stale detection (`stale` flag on document) | ❌ Not built |
-| Per-item status tracking (`itemStatuses` map) | ❌ Not built |
+| Stale detection (`isStale` + `staleReason` + `staleSince`) | ✅ Built |
+| Per-item status tracking (`itemStatuses` map) | ✅ Built |
+| Stale cascade from script/hooks regeneration | ✅ Built |
+| Upsert by `videoProjectId` (prevents duplicates) | ✅ Built |
 | Direct `scriptId` / `topicId` foreign keys | ❌ Not built |
 
 ---

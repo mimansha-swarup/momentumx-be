@@ -312,8 +312,10 @@ class ContentService {
             if (this.videoProjectService) {
                 this.videoProjectService.getByScriptId(scriptId, userId)
                     .then(proj => {
-                    if (proj)
+                    if (proj) {
                         this.videoProjectService.markStale(proj.id, "script").catch(console.error);
+                        this.videoProjectService.markPackagingDocumentStale(proj.id, "script_regenerated").catch(console.error);
+                    }
                 })
                     .catch(console.error);
             }

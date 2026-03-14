@@ -1,4 +1,4 @@
-import { db } from "../config/firebase.js";
+import { db, firebase } from "../config/firebase.js";
 class PackagingRepository {
     constructor() {
         this.save = async (data) => {
@@ -64,6 +64,47 @@ class PackagingRepository {
             }
             catch (error) {
                 console.log("error updating packaging", error);
+                throw error;
+            }
+        };
+        this.findByVideoProject = async (videoProjectId) => {
+            try {
+                const snapshot = await this.db
+                    .collection(this.collection)
+                    .where("videoProjectId", "==", videoProjectId)
+                    .limit(1)
+                    .get();
+                if (snapshot.empty)
+                    return null;
+                const doc = snapshot.docs[0];
+                return { ...doc.data(), id: doc.id };
+            }
+            catch (error) {
+                console.log("error finding packaging by video project", error);
+                throw error;
+            }
+        };
+        this.markStale = async (packagingId, reason) => {
+            try {
+                const doc = await this.db.collection(this.collection).doc(packagingId).get();
+                if (!doc.exists)
+                    return;
+                const data = doc.data();
+                const currentStatuses = (data?.itemStatuses ?? {});
+                const updatedStatuses = {};
+                for (const key of ["title", "description", "thumbnail", "shorts"]) {
+                    const current = currentStatuses[key] ?? "not_started";
+                    updatedStatuses[key] = current === "completed" ? "stale" : current;
+                }
+                await this.db.collection(this.collection).doc(packagingId).update({
+                    itemStatuses: updatedStatuses,
+                    isStale: true,
+                    staleReason: reason,
+                    staleSince: firebase.firestore.FieldValue.serverTimestamp(),
+                });
+            }
+            catch (error) {
+                console.log("error marking packaging stale", error);
                 throw error;
             }
         };

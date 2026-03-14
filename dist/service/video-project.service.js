@@ -46,12 +46,6 @@ class VideoProjectService {
                         status: "not_started",
                         startedAt: null,
                         completedAt: null,
-                        items: {
-                            titles: "not_started",
-                            description: "not_started",
-                            thumbnail: "not_started",
-                            shorts: "not_started",
-                        },
                     },
                 },
                 overallStatus: "in_progress",
@@ -255,6 +249,12 @@ class VideoProjectService {
                 updates["overallStatus"] = "in_progress";
             }
             await this.repo.update(projectId, updates);
+        };
+        this.markPackagingDocumentStale = async (projectId, reason) => {
+            const project = await this.repo.findById(projectId);
+            if (!project || !project.packagingId)
+                return;
+            await this.packagingRepo.markStale(project.packagingId, reason);
         };
     }
 }

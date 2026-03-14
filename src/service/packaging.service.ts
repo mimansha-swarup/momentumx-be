@@ -90,18 +90,64 @@ class PackagingService {
     }
   };
 
+  private buildItemStatuses = (data: Record<string, unknown>) => {
+    const hasContent = (key: string) => {
+      const val = data[key];
+      if (val === undefined || val === null) return false;
+      if (Array.isArray(val)) return val.length > 0;
+      if (typeof val === "string") return val.trim().length > 0;
+      return true;
+    };
+
+    return {
+      title: hasContent("titles") ? "completed" as const : "not_started" as const,
+      description: hasContent("description") ? "completed" as const : "not_started" as const,
+      thumbnail: hasContent("thumbnail") ? "completed" as const : "not_started" as const,
+      shorts: hasContent("shorts") ? "completed" as const : "not_started" as const,
+    };
+  };
+
   savePackaging = async (userId: string, data: Record<string, unknown>, videoProjectId?: string) => {
     try {
       if (videoProjectId && this.videoProjectService) {
         await this.videoProjectService.getById(videoProjectId, userId);
       }
+
+      const itemStatuses = this.buildItemStatuses(data);
+
       const packagingData = {
         ...data,
         createdBy: userId,
-        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        itemStatuses,
+        isStale: false,
+        staleReason: null,
+        staleSince: null,
         ...(videoProjectId ? { videoProjectId } : {}),
       };
-      const result = await this.repo.save(packagingData);
+
+      let result: Record<string, unknown>;
+
+      // Upsert: check if packaging already exists for this video project
+      if (videoProjectId) {
+        const existing = await this.repo.findByVideoProject(videoProjectId);
+        if (existing) {
+          result = await this.repo.update(existing.id as string, {
+            ...packagingData,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          });
+        } else {
+          result = await this.repo.save({
+            ...packagingData,
+            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+          });
+        }
+      } else {
+        result = await this.repo.save({
+          ...packagingData,
+          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        });
+      }
+
       if (videoProjectId && this.videoProjectService) {
         this.videoProjectService
           .linkResource(videoProjectId, "packaging", result.id as string, userId)
@@ -179,24 +225,55 @@ class PackagingService {
       throw err;
     }
 
+    // Save previous item status for rollback on failure
+    const currentStatuses = (pkg.itemStatuses ?? {}) as Record<string, string>;
+    const statusKey = item as string;
+    const previousStatus = currentStatuses[statusKey] ?? "not_started";
+
     let result: unknown;
     let fieldKey: string;
 
-    if (item === "title") {
-      result = await this.generateTitle(script, selectedHook);
-      fieldKey = "titles";
-    } else if (item === "description") {
-      result = await this.generateDescription(script, title!, selectedHook);
-      fieldKey = "description";
-    } else if (item === "thumbnail") {
-      result = await this.generateThumbnail(script, title!, selectedHook);
-      fieldKey = "thumbnail";
-    } else {
-      result = await this.generateShorts(script, duration!);
-      fieldKey = "shorts";
+    try {
+      if (item === "title") {
+        result = await this.generateTitle(script, selectedHook);
+        fieldKey = "titles";
+      } else if (item === "description") {
+        result = await this.generateDescription(script, title!, selectedHook);
+        fieldKey = "description";
+      } else if (item === "thumbnail") {
+        result = await this.generateThumbnail(script, title!, selectedHook);
+        fieldKey = "thumbnail";
+      } else {
+        result = await this.generateShorts(script, duration!);
+        fieldKey = "shorts";
+      }
+    } catch (genError) {
+      // Rollback status on generation failure
+      await this.repo.update(packagingId, {
+        [`itemStatuses.${statusKey}`]: previousStatus,
+      });
+      throw genError;
     }
 
-    await this.repo.update(packagingId, { [fieldKey]: result });
+    // Atomic write: content + status update
+    const updateData: Record<string, unknown> = {
+      [fieldKey]: result,
+      [`itemStatuses.${statusKey}`]: "completed",
+    };
+
+    // Check if clearing stale flag is needed
+    const allItems = ["title", "description", "thumbnail", "shorts"];
+    const anyStillStale = allItems.some(
+      (k) => k !== statusKey && currentStatuses[k] === "stale"
+    );
+
+    if (!anyStillStale) {
+      updateData.isStale = false;
+      updateData.staleReason = null;
+      updateData.staleSince = null;
+    }
+
+    await this.repo.update(packagingId, updateData);
     return { id: packagingId, item, data: result };
   };
 

@@ -2,7 +2,7 @@
 title: "Video Project — Feature Spec"
 description: "User flow, design decisions, Firestore schema, and stale cascade rules for the Video Project entity"
 date: 2026-02-27
-last_updated: 2026-03-11
+last_updated: 2026-03-15
 status: "implemented"
 tags: ["feature", "video-project", "spec", "phase-0"]
 ---
@@ -173,7 +173,7 @@ interface VideoProject {
     research: StepState;
     script: StepState;
     hooks: StepState;
-    packaging: PackagingStepState;
+    packaging: StepState;  // per-item status lives on the packaging document, not here
   };
 
   overallStatus: "in_progress" | "completed" | "stale";
@@ -190,15 +190,6 @@ interface StepState {
   status: "not_started" | "in_progress" | "completed" | "stale";
   startedAt: Timestamp | null;
   completedAt: Timestamp | null;
-}
-
-interface PackagingStepState extends StepState {
-  items: {
-    titles:      "not_started" | "in_progress" | "completed";
-    description: "not_started" | "in_progress" | "completed";
-    thumbnail:   "not_started" | "in_progress" | "completed";
-    shorts:      "not_started" | "in_progress" | "completed";
-  };
 }
 ```
 
@@ -222,9 +213,7 @@ lastUpdatedAt     serverTimestamp()
 pipeline.research   { status: "completed", startedAt: null, completedAt: serverTimestamp() }
 pipeline.script     { status: "not_started", startedAt: null, completedAt: null }
 pipeline.hooks      { status: "not_started", startedAt: null, completedAt: null }
-pipeline.packaging  { status: "not_started", startedAt: null, completedAt: null,
-                      items: { titles: "not_started", description: "not_started",
-                               thumbnail: "not_started", shorts: "not_started" } }
+pipeline.packaging  { status: "not_started", startedAt: null, completedAt: null }
 ```
 
 ### Indexes Required
