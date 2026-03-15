@@ -61,7 +61,6 @@ class TopicController {
                 });
             }
             catch (e) {
-                console.log("e: ", e);
                 next(e);
             }
         };

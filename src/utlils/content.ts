@@ -6,6 +6,14 @@ import { firebase } from "../config/firebase.js";
 import ContentRepository from "../repository/content.repository.js";
 import ExtractService from "../service/extract.service.js";
 
+function extractChannelField(value: unknown, field: "id" | "description"): string {
+  if (typeof value === "string") return field === "id" ? value : "";
+  if (value && typeof value === "object" && field in value) {
+    return ((value as Record<string, unknown>)[field] as string) ?? "";
+  }
+  return "";
+}
+
 export const formatGeneratedTitle = async (title: string, userId: string, batchId?: string) => {
   const embedding = await embeddingModel.embedContent(title);
   return {
@@ -124,8 +132,8 @@ export async function formatUserData(
   asyncList.length = 0;
 
   asyncList.push(
-    ...[{ value: userYTId.status === 'fulfilled' ? userYTId.value : undefined }, ...competitorId]?.map((competitor: any) =>
-      extractService.getTopTenTitle(competitor.value?.id),
+    ...[{ value: userYTId.status === 'fulfilled' ? userYTId.value : undefined }, ...competitorId]?.map((competitor: { value?: unknown; status?: string }) =>
+      extractService.getTopTenTitle(extractChannelField(competitor.value, "id")),
     ),
   );
   const [userTitle, ...settledTitle] = await Promise.allSettled(asyncList);
@@ -138,24 +146,24 @@ export async function formatUserData(
       url,
       id:
         idResult && idResult.status === "fulfilled"
-          ? ((idResult.value as any)?.id as string)
+          ? extractChannelField(idResult.value, "id")
           : "",
       titles:
         titleResult && titleResult.status === "fulfilled"
           ? (titleResult.value as string[])
           : [],
     };
-  }) as any;
+  }) as unknown as typeof record.competitors;
 
   record.userTitle =
     userTitle && userTitle.status === "fulfilled"
       ? (userTitle.value as string[])
       : [];
   record.channelId =
-    userYTId?.status === "fulfilled" ? ((userYTId.value as any)?.id as string) : "";
+    userYTId?.status === "fulfilled" ? extractChannelField(userYTId.value, "id") : "";
   record.description =
     userYTId?.status === "fulfilled"
-      ? ((userYTId.value as any)?.description as string)
+      ? extractChannelField(userYTId.value, "description")
       : "";
   record.websiteContent =
     websiteContent?.status === "fulfilled"
@@ -169,12 +177,12 @@ export async function getClusteredTitles(
   userId: string,
   repo: ContentRepository,
 ) {
-  // 1️⃣ Fetch all titles + embeddings
   const titleRecord = await repo.getAllTopics({ userId });
-  const k = Math.min(8, Math.ceil(titleRecord.length / 20));
-  // console.log("ttitleRecord", titleRecord)
-  const titles: string[] = titleRecord?.map((doc) => doc.title) || [];
-  const embeddings: number[][] = titleRecord?.map((doc) => doc.embedding) || [];
+  const activeTitles = (titleRecord || []).filter((doc) => !doc.archived);
+  const capped = activeTitles.slice(0, 200);
+  const k = Math.min(8, Math.ceil(capped.length / 20));
+  const titles: string[] = capped.map((doc) => doc.title) || [];
+  const embeddings: number[][] = capped.map((doc) => doc.embedding) || [];
 
   if (titles.length <= k) {
     // If fewer titles than clusters, return all titles as one cluster

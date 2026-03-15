@@ -25,7 +25,6 @@ class PackagingService {
                 return result;
             }
             catch (error) {
-                console.log("error generating title", error);
                 throw error;
             }
         };
@@ -39,7 +38,6 @@ class PackagingService {
                 return result;
             }
             catch (error) {
-                console.log("error generating description", error);
                 throw error;
             }
         };
@@ -53,7 +51,6 @@ class PackagingService {
                 return result;
             }
             catch (error) {
-                console.log("error generating thumbnail", error);
                 throw error;
             }
         };
@@ -66,7 +63,6 @@ class PackagingService {
                 return result;
             }
             catch (error) {
-                console.log("error generating shorts", error);
                 throw error;
             }
         };
@@ -135,7 +131,6 @@ class PackagingService {
                 return result;
             }
             catch (error) {
-                console.log("error saving packaging", error);
                 throw error;
             }
         };
@@ -149,7 +144,6 @@ class PackagingService {
                 return result;
             }
             catch (error) {
-                console.log("error getting packaging", error);
                 throw error;
             }
         };
@@ -159,7 +153,6 @@ class PackagingService {
                 return result;
             }
             catch (error) {
-                console.log("error getting packaging by user", error);
                 throw error;
             }
         };

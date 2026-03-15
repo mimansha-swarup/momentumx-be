@@ -44,7 +44,7 @@ class PackagingService {
       const result = await this.generateContent(userPrompt);
       return result;
     } catch (error) {
-      console.log("error generating title", error);
+
       throw error;
     }
   };
@@ -58,7 +58,7 @@ class PackagingService {
       const result = await this.generateContent(userPrompt);
       return result;
     } catch (error) {
-      console.log("error generating description", error);
+
       throw error;
     }
   };
@@ -72,7 +72,7 @@ class PackagingService {
       const result = await this.generateContent(userPrompt);
       return result;
     } catch (error) {
-      console.log("error generating thumbnail", error);
+
       throw error;
     }
   };
@@ -85,7 +85,7 @@ class PackagingService {
       const result = await this.generateContent(userPrompt);
       return result;
     } catch (error) {
-      console.log("error generating shorts", error);
+
       throw error;
     }
   };
@@ -156,7 +156,7 @@ class PackagingService {
       }
       return result;
     } catch (error) {
-      console.log("error saving packaging", error);
+
       throw error;
     }
   };
@@ -168,7 +168,7 @@ class PackagingService {
       if (result.createdBy !== userId) throw new Error("Unauthorized");
       return result;
     } catch (error) {
-      console.log("error getting packaging", error);
+
       throw error;
     }
   };
@@ -178,7 +178,7 @@ class PackagingService {
       const result = await this.repo.getByUserId(userId);
       return result;
     } catch (error) {
-      console.log("error getting packaging by user", error);
+
       throw error;
     }
   };

@@ -12,49 +12,38 @@ class UserRepository {
   }
 
   add = async (userId: string, data: unknown) => {
-    try {
-      if (!userId) {
-        throw new Error("userId is required");
-      }
-      await this.db
-        .collection(this.collection)
-        .doc(userId)
-        .set(
-          {
-            ...(data as Record<string, unknown>),
-            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-          },
-          { merge: true }
-        );
-    } catch (error) {
-      console.log("error in add", error);
+    if (!userId) {
+      throw new Error("userId is required");
     }
-  };
-  update = async (userId: string, data: unknown) => {
-    try {
-      if (!userId) {
-        throw new Error("userId is required");
-      }
-      await this.db
-        .collection(this.collection)
-        .doc(userId)
-        .update({
+    await this.db
+      .collection(this.collection)
+      .doc(userId)
+      .set(
+        {
           ...(data as Record<string, unknown>),
+          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
           updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-        });
-    } catch (error) {
-      console.log("error", error);
+        },
+        { merge: true }
+      );
+  };
+
+  update = async (userId: string, data: unknown) => {
+    if (!userId) {
+      throw new Error("userId is required");
     }
+    await this.db
+      .collection(this.collection)
+      .doc(userId)
+      .update({
+        ...(data as Record<string, unknown>),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
   };
 
   get = async (userId: string) => {
-    try {
-      const doc = await this.db.collection(this.collection).doc(userId).get();
-      return doc.data();
-    } catch (error) {
-      console.log("error", error);
-    }
+    const doc = await this.db.collection(this.collection).doc(userId).get();
+    return doc.data();
   };
 
 }

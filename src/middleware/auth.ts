@@ -7,14 +7,13 @@ export const authMiddleware = (
   next: NextFunction
 ): void => {
   if (!req.headers.authorization) {
-    res.status(401).send("Unauthorized");
+    res.sendError({ message: "Unauthorized", statusCode: 401 });
     return;
   }
   const [bearer, token] = req.headers.authorization?.split(" ");
 
-
   if (bearer !== "Bearer" || !token) {
-    res.status(401).send("Unauthorized");
+    res.sendError({ message: "Unauthorized", statusCode: 401 });
     return;
   }
 
@@ -26,6 +25,6 @@ export const authMiddleware = (
       next();
     })
     .catch(() => {
-      res.status(403).send("Unable to authenticate");
+      res.sendError({ message: "Unable to authenticate", statusCode: 403 });
     });
 };

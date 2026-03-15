@@ -83,7 +83,6 @@ class TopicController {
         data: updatedData,
       });
     } catch (e) {
-      console.log("e: ", e);
       next(e);
     }
   };

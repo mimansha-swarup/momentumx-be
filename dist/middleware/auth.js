@@ -1,12 +1,12 @@
 import { firebase } from "../config/firebase.js";
 export const authMiddleware = (req, res, next) => {
     if (!req.headers.authorization) {
-        res.status(401).send("Unauthorized");
+        res.sendError({ message: "Unauthorized", statusCode: 401 });
         return;
     }
     const [bearer, token] = req.headers.authorization?.split(" ");
     if (bearer !== "Bearer" || !token) {
-        res.status(401).send("Unauthorized");
+        res.sendError({ message: "Unauthorized", statusCode: 401 });
         return;
     }
     firebase
@@ -17,6 +17,6 @@ export const authMiddleware = (req, res, next) => {
         next();
     })
         .catch(() => {
-        res.status(403).send("Unable to authenticate");
+        res.sendError({ message: "Unable to authenticate", statusCode: 403 });
     });
 };

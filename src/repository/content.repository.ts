@@ -13,12 +13,8 @@ class ContentRepository {
     this.script_collection = COLLECTIONS.SCRIPTS;
   }
   getTopic = async (topicId: string) => {
-    try {
-      const doc = await this.db.collection(this.collection).doc(topicId).get();
-      return doc.data();
-    } catch (error) {
-      console.log("error", error);
-    }
+    const doc = await this.db.collection(this.collection).doc(topicId).get();
+    return doc.data();
   };
 
   getTopics = async ({
@@ -69,21 +65,16 @@ class ContentRepository {
 
       return snapshot.docs.map((doc) => doc.data());
     } catch (error) {
-      console.log("error in repo", error);
+      throw error;
     }
   };
   getAllTopics = async ({ userId = "" }) => {
-    try {
-      let query = this.db
-        .collection(this.collection)
-        .where("createdBy", "==", userId);
+    const query = this.db
+      .collection(this.collection)
+      .where("createdBy", "==", userId);
 
-      const snapshot = await query.get();
-
-      return snapshot.docs.map((doc) => doc.data());
-    } catch (error) {
-      console.log("error in repo", error);
-    }
+    const snapshot = await query.get();
+    return snapshot.docs.map((doc) => doc.data());
   };
 
   getScripts = async (userId: string) => {
@@ -104,27 +95,22 @@ class ContentRepository {
 
       return docs;
     } catch (error) {
-      console.log("error in repo", error);
+      throw error;
     }
   };
   getScriptById = async (scriptId: string) => {
-    try {
-      const snapshot = await this.db
-        .collection(this.script_collection)
-        .doc(scriptId)
-        .get();
+    const snapshot = await this.db
+      .collection(this.script_collection)
+      .doc(scriptId)
+      .get();
 
-      if (!snapshot.exists) {
-        return null;
-      }
-
-      const data = snapshot.data();
-      data.createdAt = data.createdAt?.toDate();
-
-      return data;
-    } catch (error) {
-      console.log("error in repo", error);
+    if (!snapshot.exists) {
+      return null;
     }
+
+    const data = snapshot.data();
+    data.createdAt = data.createdAt?.toDate();
+    return data;
   };
 
   batchSaveTopics = async (dataList: unknown[]) => {
@@ -176,36 +162,24 @@ class ContentRepository {
   };
 
   updateTopic = async (topicId: string, data: Record<string, unknown>) => {
-    try {
-      await this.db
-        .collection(this.collection)
-        .doc(topicId)
-        .set(data, { merge: true });
-    } catch (error) {
-      console.log("error", error);
-    }
+    await this.db
+      .collection(this.collection)
+      .doc(topicId)
+      .set(data, { merge: true });
   };
 
   editScript = async (scriptId: string, data: Record<string, unknown>) => {
-    try {
-      await this.db
-        .collection(this.script_collection)
-        .doc(scriptId)
-        .set(data, { merge: true });
-    } catch (error) {
-      console.log("error", error);
-    }
+    await this.db
+      .collection(this.script_collection)
+      .doc(scriptId)
+      .set(data, { merge: true });
   };
 
   saveScript = async (scriptId: string, data: unknown) => {
-    try {
-      await this.db
-        .collection(this.script_collection)
-        .doc(scriptId)
-        .set(data, { merge: true });
-    } catch (error) {
-      console.log("error", error);
-    }
+    await this.db
+      .collection(this.script_collection)
+      .doc(scriptId)
+      .set(data, { merge: true });
   };
 }
 

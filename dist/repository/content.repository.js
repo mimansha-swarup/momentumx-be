@@ -2,13 +2,8 @@ import { db, firebase } from "../config/firebase.js";
 class ContentRepository {
     constructor() {
         this.getTopic = async (topicId) => {
-            try {
-                const doc = await this.db.collection(this.collection).doc(topicId).get();
-                return doc.data();
-            }
-            catch (error) {
-                console.log("error", error);
-            }
+            const doc = await this.db.collection(this.collection).doc(topicId).get();
+            return doc.data();
         };
         this.getTopics = async ({ userId, limit = 8, cursor, filters, }) => {
             try {
@@ -40,20 +35,15 @@ class ContentRepository {
                 return snapshot.docs.map((doc) => doc.data());
             }
             catch (error) {
-                console.log("error in repo", error);
+                throw error;
             }
         };
         this.getAllTopics = async ({ userId = "" }) => {
-            try {
-                let query = this.db
-                    .collection(this.collection)
-                    .where("createdBy", "==", userId);
-                const snapshot = await query.get();
-                return snapshot.docs.map((doc) => doc.data());
-            }
-            catch (error) {
-                console.log("error in repo", error);
-            }
+            const query = this.db
+                .collection(this.collection)
+                .where("createdBy", "==", userId);
+            const snapshot = await query.get();
+            return snapshot.docs.map((doc) => doc.data());
         };
         this.getScripts = async (userId) => {
             try {
@@ -73,25 +63,20 @@ class ContentRepository {
                 return docs;
             }
             catch (error) {
-                console.log("error in repo", error);
+                throw error;
             }
         };
         this.getScriptById = async (scriptId) => {
-            try {
-                const snapshot = await this.db
-                    .collection(this.script_collection)
-                    .doc(scriptId)
-                    .get();
-                if (!snapshot.exists) {
-                    return null;
-                }
-                const data = snapshot.data();
-                data.createdAt = data.createdAt?.toDate();
-                return data;
+            const snapshot = await this.db
+                .collection(this.script_collection)
+                .doc(scriptId)
+                .get();
+            if (!snapshot.exists) {
+                return null;
             }
-            catch (error) {
-                console.log("error in repo", error);
-            }
+            const data = snapshot.data();
+            data.createdAt = data.createdAt?.toDate();
+            return data;
         };
         this.batchSaveTopics = async (dataList) => {
             const batch = db.batch();
@@ -133,37 +118,22 @@ class ContentRepository {
             await batch.commit();
         };
         this.updateTopic = async (topicId, data) => {
-            try {
-                await this.db
-                    .collection(this.collection)
-                    .doc(topicId)
-                    .set(data, { merge: true });
-            }
-            catch (error) {
-                console.log("error", error);
-            }
+            await this.db
+                .collection(this.collection)
+                .doc(topicId)
+                .set(data, { merge: true });
         };
         this.editScript = async (scriptId, data) => {
-            try {
-                await this.db
-                    .collection(this.script_collection)
-                    .doc(scriptId)
-                    .set(data, { merge: true });
-            }
-            catch (error) {
-                console.log("error", error);
-            }
+            await this.db
+                .collection(this.script_collection)
+                .doc(scriptId)
+                .set(data, { merge: true });
         };
         this.saveScript = async (scriptId, data) => {
-            try {
-                await this.db
-                    .collection(this.script_collection)
-                    .doc(scriptId)
-                    .set(data, { merge: true });
-            }
-            catch (error) {
-                console.log("error", error);
-            }
+            await this.db
+                .collection(this.script_collection)
+                .doc(scriptId)
+                .set(data, { merge: true });
         };
         this.db = db;
         this.collection = "topics" /* COLLECTIONS.TOPICS */;

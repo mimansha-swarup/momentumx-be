@@ -9,7 +9,6 @@ class PackagingRepository {
                 return dataWithId;
             }
             catch (error) {
-                console.log("error saving packaging", error);
                 throw error;
             }
         };
@@ -29,7 +28,6 @@ class PackagingRepository {
                 return data;
             }
             catch (error) {
-                console.log("error getting packaging", error);
                 throw error;
             }
         };
@@ -50,7 +48,6 @@ class PackagingRepository {
                 });
             }
             catch (error) {
-                console.log("error getting packaging by user", error);
                 throw error;
             }
         };
@@ -63,7 +60,6 @@ class PackagingRepository {
                 return { id: packagingId, ...data };
             }
             catch (error) {
-                console.log("error updating packaging", error);
                 throw error;
             }
         };
@@ -80,7 +76,6 @@ class PackagingRepository {
                 return { ...doc.data(), id: doc.id };
             }
             catch (error) {
-                console.log("error finding packaging by video project", error);
                 throw error;
             }
         };
@@ -104,7 +99,6 @@ class PackagingRepository {
                 });
             }
             catch (error) {
-                console.log("error marking packaging stale", error);
                 throw error;
             }
         };

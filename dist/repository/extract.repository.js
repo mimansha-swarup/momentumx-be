@@ -10,7 +10,7 @@ class ExtractRepository {
                 return title;
             }
             catch (error) {
-                console.log("error:  at getYTContent", error);
+                throw error;
             }
         };
         this.retrieveChannelId = async (param) => {
@@ -20,7 +20,7 @@ class ExtractRepository {
                 return data;
             }
             catch (error) {
-                console.log("error:  at getYTContent", error);
+                throw error;
             }
         };
     }

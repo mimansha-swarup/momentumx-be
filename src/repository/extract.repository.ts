@@ -20,7 +20,7 @@ class ExtractRepository {
 
       return title;
     } catch (error) {
-      console.log("error:  at getYTContent", error);
+      throw error;
     }
   };
 
@@ -37,7 +37,7 @@ class ExtractRepository {
       } = await res.json();
       return data;
     } catch (error) {
-      console.log("error:  at getYTContent", error);
+      throw error;
     }
   };
 }

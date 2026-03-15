@@ -2,48 +2,33 @@ import { db, firebase } from "../config/firebase.js";
 class UserRepository {
     constructor() {
         this.add = async (userId, data) => {
-            try {
-                if (!userId) {
-                    throw new Error("userId is required");
-                }
-                await this.db
-                    .collection(this.collection)
-                    .doc(userId)
-                    .set({
-                    ...data,
-                    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-                }, { merge: true });
+            if (!userId) {
+                throw new Error("userId is required");
             }
-            catch (error) {
-                console.log("error in add", error);
-            }
+            await this.db
+                .collection(this.collection)
+                .doc(userId)
+                .set({
+                ...data,
+                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
         };
         this.update = async (userId, data) => {
-            try {
-                if (!userId) {
-                    throw new Error("userId is required");
-                }
-                await this.db
-                    .collection(this.collection)
-                    .doc(userId)
-                    .update({
-                    ...data,
-                    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-                });
+            if (!userId) {
+                throw new Error("userId is required");
             }
-            catch (error) {
-                console.log("error", error);
-            }
+            await this.db
+                .collection(this.collection)
+                .doc(userId)
+                .update({
+                ...data,
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            });
         };
         this.get = async (userId) => {
-            try {
-                const doc = await this.db.collection(this.collection).doc(userId).get();
-                return doc.data();
-            }
-            catch (error) {
-                console.log("error", error);
-            }
+            const doc = await this.db.collection(this.collection).doc(userId).get();
+            return doc.data();
         };
         this.db = db;
         this.collection = "users" /* COLLECTIONS.USERS */;

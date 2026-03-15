@@ -14,38 +14,22 @@ class UserService {
   }
 
   createOnboardingData = async (userId: string, data: IOnboardingPayload) => {
-    let record;
-    try {
-      record = await formatUserData(
-        { ...data, stats } as any,
-        this.extractService,
-      );
-
-      return record;
-    } catch (error) {
-      console.log("error", error);
-    } finally {
-      this.repo.add(userId, record);
-    }
+    const record = await formatUserData(
+      { ...data, stats } as IOnboardingPayload & { stats: typeof stats },
+      this.extractService,
+    );
+    await this.repo.add(userId, record);
+    return record;
   };
 
   getProfile = async (userId: string) => {
-    try {
-      const record = await this.repo.get(userId);
-      return record;
-    } catch (error) {
-      console.log("error", error);
-    }
+    return this.repo.get(userId);
   };
 
   updateProfile = async (userId: string, data: IOnboardingPayload) => {
-    try {
-      const record = await formatUserData(data, this.extractService);
-      await this.repo.update(userId, record);
-      return record;
-    } catch (error) {
-      console.log("error", error);
-    }
+    const record = await formatUserData(data, this.extractService);
+    await this.repo.update(userId, record);
+    return record;
   };
 }
 

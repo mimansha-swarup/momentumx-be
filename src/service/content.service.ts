@@ -25,6 +25,14 @@ import { IGetTopicByUserIdArgs } from "../types/repository/content.js";
 import { firebase } from "../config/firebase.js";
 
 //  createOnboardingData
+function formatCompetitorUrls(competitors: unknown): string {
+  if (!Array.isArray(competitors)) return "";
+  return competitors
+    .map((c) => (typeof c === "string" ? c : c?.url))
+    .filter(Boolean)
+    .join(", ");
+}
+
 class ContentService {
   private repo: ContentRepository;
   private userRepo: UserRepository;
@@ -74,9 +82,8 @@ class ContentService {
         })),
       };
     } catch (error) {
-      console.log("error", error);
+      throw error;
     }
-    return {};
   };
 
   generateTopics = async (userId: string) => {
@@ -88,7 +95,7 @@ class ContentService {
         .replace(/{niche}/g, userRecord?.niche ?? "")
         .replace("{website}", userRecord?.website ?? "")
         .replace("{websiteContent}", userRecord?.websiteContent ?? "")
-        .replace("{competitors}", (userRecord?.competitors as any[])?.map((c: any) => c?.url ?? c).filter(Boolean).join(", ") ?? "")
+        .replace("{competitors}", formatCompetitorUrls(userRecord?.competitors))
         .replace("{targetAudience}", userRecord?.targetAudience ?? "")
         .replace("{userName}", userRecord?.brandName ?? "");
 
@@ -121,16 +128,12 @@ class ContentService {
 
       return parsedRes;
     } catch (error) {
-      console.log("error", error);
+      throw error;
     }
   };
 
   saveBatchTopics = async (data: unknown[]) => {
-    try {
-      return await this.repo.batchSaveTopics(data);
-    } catch (error) {
-      console.log("error: ", error);
-    }
+    return this.repo.batchSaveTopics(data);
   };
 
   editTopics = async (titleId: string, userId: string, resBody: Record<string, string>) => {
@@ -161,7 +164,7 @@ class ContentService {
         userRecord?.brandName ?? "",
       )
         .replace("{targetAudience}", userRecord?.targetAudience ?? "")
-        .replace("{competitors}", (userRecord?.competitors as any[])?.map((c: any) => c?.url ?? c).filter(Boolean).join(", ") ?? "")
+        .replace("{competitors}", formatCompetitorUrls(userRecord?.competitors))
         .replace("{niche}", userRecord?.niche ?? "")
         .replace("{websiteContent}", userRecord?.websiteContent ?? "")
         .replace("{title}", titleRecord?.title ?? "");
@@ -183,66 +186,63 @@ class ContentService {
       res.setHeader("Connection", "keep-alive");
       res.flushHeaders();
 
-      for await (const chunk of result.stream) {
-        const part = chunk.text();
-        if (part) {
-          accumulatedRes += part;
-          res.write(`data: ${JSON.stringify(part)}\n\n`);
+      try {
+        for await (const chunk of result.stream) {
+          const part = chunk.text();
+          if (part) {
+            accumulatedRes += part;
+            res.write(`data: ${JSON.stringify(part)}\n\n`);
+          }
         }
+      } catch (streamError) {
+        console.error("SSE stream error", streamError);
+      } finally {
+        res.write(`data: [DONE]\n\n`);
+        res.end();
       }
 
-      res.write(`data: [DONE]\n\n`);
-      res.end();
-
-      const formattedData = formatGeneratedScript(
-        titleRecord?.title,
-        titleRecord?.id,
-        accumulatedRes,
-        userId,
-      );
-      this.repo.updateTopic(titleRecord?.id, {
-        isScriptGenerated: true,
-      });
-      await this.repo.saveScript(titleRecord?.id, formattedData);
-      this.userRepo.update(userId, {
-        "stats.scripts": firebase.firestore.FieldValue.increment(1),
-      });
-      if (titleRecord?.videoProjectId && this.videoProjectService) {
-        const vpId = titleRecord.videoProjectId;
-        const scriptId = titleRecord.id;
-        const vps = this.videoProjectService;
-        vps.linkResource(vpId, "script", scriptId, userId)
-          .then(() => vps.completeStep(vpId, "script", userId))
-          .catch(console.error);
+      try {
+        const formattedData = formatGeneratedScript(
+          titleRecord?.title,
+          titleRecord?.id,
+          accumulatedRes,
+          userId,
+        );
+        this.repo.updateTopic(titleRecord?.id, {
+          isScriptGenerated: true,
+        });
+        await this.repo.saveScript(titleRecord?.id, formattedData);
+        this.userRepo.update(userId, {
+          "stats.scripts": firebase.firestore.FieldValue.increment(1),
+        });
+        if (titleRecord?.videoProjectId && this.videoProjectService) {
+          const vpId = titleRecord.videoProjectId;
+          const scriptId = titleRecord.id;
+          const vps = this.videoProjectService;
+          vps.linkResource(vpId, "script", scriptId, userId)
+            .then(() => vps.completeStep(vpId, "script", userId))
+            .catch(console.error);
+        }
+      } catch (saveError) {
+        console.error("Post-stream save error", saveError);
       }
 
       return accumulatedRes;
     } catch (error) {
-      console.log("error", error);
+      console.error("Script generation error", error);
+      throw error;
     }
-    return {};
   };
 
   getUsersScript = async (userId: string) => {
-    try {
-      const doc = await this.repo.getScripts(userId);
-      return doc;
-    } catch (error) {
-      console.log("error", error);
-    }
-    return {};
+    return this.repo.getScripts(userId);
   };
 
   getScriptById = async (scriptId: string, userId: string) => {
-    try {
-      const doc = await this.repo.getScriptById(scriptId);
-      if (!doc) return null;
-      if (doc.createdBy !== userId) throw new Error("Forbidden");
-      return doc;
-    } catch (error) {
-      console.log("error", error);
-      throw error;
-    }
+    const doc = await this.repo.getScriptById(scriptId);
+    if (!doc) return null;
+    if (doc.createdBy !== userId) throw new Error("Forbidden");
+    return doc;
   };
 
   regenerateAll = async (userId: string) => {
@@ -397,7 +397,7 @@ class ContentService {
       userRecord?.brandName ?? "",
     )
       .replace("{targetAudience}", userRecord?.targetAudience ?? "")
-      .replace("{competitors}", (userRecord?.competitors as any[])?.map((c: any) => c?.url ?? c).filter(Boolean).join(", ") ?? "")
+      .replace("{competitors}", formatCompetitorUrls(userRecord?.competitors))
       .replace("{niche}", userRecord?.niche ?? "")
       .replace("{websiteContent}", userRecord?.websiteContent ?? "")
       .replace("{title}", scriptDoc.title as string);
