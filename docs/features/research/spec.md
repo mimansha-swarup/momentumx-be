@@ -1,8 +1,8 @@
 ---
 title: "Research — Feature Spec"
 description: "User flow, states, regeneration behavior, and edge cases for the Research step"
-status: "draft"
-last_updated: 2026-03-11
+status: "implemented"
+last_updated: 2026-03-17
 tags: ["feature", "research", "topics", "spec"]
 ---
 

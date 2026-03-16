@@ -9,38 +9,65 @@ Commit message format, branch naming, and dist/ build rules. Keeps git history c
 
 ---
 
-## Commit Message Format
+## Commit Message Format — Conventional Commits
+
+Follows [Conventional Commits v1.0.0](https://www.conventionalcommits.org/en/v1.0.0/).
 
 ```
-type(scope): short description
-
-Types:  feat | fix | refactor | prompt | chore | docs | test
-Scopes: user | content | packaging | ai | db | deploy | config
+<type>[optional scope]: <description>
 ```
+
+- Keep the description short (under 72 chars) — no body or footer needed
+- Never add a `Co-Authored-By` or any other footer to commits
+
+**Types:** `feat` | `fix` | `refactor` | `chore` | `docs` | `test` | `perf` | `ci` | `build` | `style` | `revert`
+**Scopes:** `user` | `content` | `packaging` | `hooks` | `video-project` | `research` | `ai` | `db` | `deploy` | `config`
+
+Breaking changes use `!` after the type/scope: `feat(content)!: redesign topic response shape`
 
 **Examples:**
+
 ```
 feat(content): add trending topics endpoint
 fix(ai): handle malformed JSON from Gemini
-prompt(ai): refine script system prompt for retention
+refactor(packaging): extract generation into separate service methods
 test(content): add unit tests for topic service
 docs(api): update packaging endpoint reference
 chore(db): add scriptId field to packaging collection
-refactor(packaging): extract generation into separate service methods
+perf(content): cap KMeans clustering at 200 topics
 ```
 
 ---
 
-## Branch Naming
+## Branch Naming — Conventional Branch
+
+Follows [Conventional Branch](https://conventional-branch.github.io/).
 
 ```
-feat/research-phase
-feat/script-iteration
-fix/sse-token-auth
-refactor/error-handling
-test/content-service
-prompt/title-generation
+<type>/<description>
 ```
+
+**Types:** `feature/` or `feat/` | `bugfix/` or `fix/` | `hotfix/` | `release/` | `chore/`
+
+**Examples:**
+
+```
+feature/add-trending-topics-endpoint
+feature/sse-script-streaming
+bugfix/fix-stale-cascade
+bugfix/malformed-json-handling
+hotfix/security-patch
+release/v1.2.0
+chore/update-dependencies
+feature/issue-123-hooks-generation
+```
+
+Rules:
+
+- Always lowercase letters, numbers, and hyphens only
+- No consecutive or leading/trailing hyphens
+- Dots allowed in release versions (`release/v1.2.0`)
+- Optionally include ticket number: `feature/issue-123-description`
 
 ---
 

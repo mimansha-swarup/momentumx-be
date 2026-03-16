@@ -2,8 +2,8 @@
 title: "Onboarding — Feature Spec"
 description: "User flow, data enrichment, and edge cases for the Onboarding step"
 date: 2026-02-27
-last_updated: 2026-02-27
-status: "draft"
+last_updated: 2026-03-17
+status: "implemented"
 tags: ["feature", "onboarding", "spec"]
 ---
 

@@ -64,6 +64,8 @@ Collection.TOPICS
 Collection.SCRIPTS
 Collection.USERS
 Collection.PACKAGING
+Collection.HOOKS
+Collection.VIDEO_PROJECTS
 
 // ❌ Never hardcode strings
 'topics'
@@ -107,19 +109,15 @@ Filtering by `userId` first is required for both security (only return the user'
 
 ---
 
-## Data Model Gap — Known Issue
-
-Packaging documents have no `scriptId` or `topicId` foreign key. The packaging collection is disconnected from topics and scripts by design until the video project data model is formally defined.
-
-**Do not** add new packaging features that depend on this link until the video project schema is decided. Flag this gap if a task requires cross-collection relationships involving packaging.
-
----
-
 ## Firestore Collections
 
 ```
-users      — user profiles, onboarding data, channel/competitor info
-topics     — generated title ideas with vector embeddings
-scripts    — full video scripts (document ID = topic ID)
-packaging  — packaged assets (currently disconnected from topics/scripts)
+users          — user profiles, onboarding data, channel/competitor info
+topics         — generated title ideas with vector embeddings
+scripts        — full video scripts (document ID = topic ID)
+hooks          — hook batches tied to video projects, per-hook feedback
+packaging      — packaged assets with per-item status tracking and stale cascade
+videoProjects  — pipeline state machine linking topics → scripts → hooks → packaging
 ```
+
+Video projects connect the collections: each project links to a topicId, scriptId, hooksId, and packagingId. Packaging documents track per-item generation status (`itemStatuses`) and stale state (`isStale`, `staleReason`, `staleSince`).

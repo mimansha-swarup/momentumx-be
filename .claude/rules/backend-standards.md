@@ -39,6 +39,8 @@ async generateTopics(req: Request, res: Response) {
 
 ## File Naming — `{resource}.{layer}.ts`
 
+Folder names are **singular**: `src/controller/`, `src/service/`, `src/repository/` (NOT `controllers/`, `services/`, `repositories/`).
+
 ```
 ✅ user.controller.ts       ✅ content.service.ts
 ✅ packaging.repository.ts  ✅ extract.service.ts

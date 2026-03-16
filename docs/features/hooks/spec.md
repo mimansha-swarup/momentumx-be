@@ -2,8 +2,8 @@
 title: "Hooks Feature Spec"
 description: "How the Hooks step works — hook generation, selection mechanic, and state machine behavior"
 date: 2026-02-27
-last_updated: 2026-03-08
-status: "draft"
+last_updated: 2026-03-17
+status: "implemented"
 tags: ["feature", "hooks", "spec"]
 ---
 

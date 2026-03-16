@@ -2,8 +2,8 @@
 title: "Product Overview"
 description: "What MomentumX is, who it's for, and what it offers"
 date: 2026-02-26
-last_updated: 2026-02-27
-status: "draft"
+last_updated: 2026-03-17
+status: "final"
 tags: ["product", "positioning", "overview"]
 ---
 

@@ -35,7 +35,7 @@ REST conventions and response standards for the MomentumX API. All endpoints —
 GET    — read only, no side effects
 POST   — create new resource or trigger generation
 PATCH  — partial update (not PUT)
-DELETE — remove (not yet used — follow this when added)
+DELETE — remove (soft delete via isDeleted flag)
 ```
 
 ---

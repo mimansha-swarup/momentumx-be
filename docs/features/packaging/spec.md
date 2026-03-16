@@ -2,8 +2,8 @@
 title: "Packaging Feature Spec"
 description: "How the Packaging step works: what it generates, data model, pipeline position, and what's not built yet."
 date: 2026-02-27
-last_updated: 2026-03-15
-status: "draft"
+last_updated: 2026-03-17
+status: "implemented"
 tags: ["feature", "packaging", "spec"]
 ---
 

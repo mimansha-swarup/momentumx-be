@@ -2,8 +2,8 @@
 title: "Packaging API Reference"
 description: "Endpoint reference for packaging generation, save, list, and retrieval."
 date: 2026-02-27
-last_updated: 2026-03-15
-status: "draft"
+last_updated: 2026-03-17
+status: "implemented"
 tags: ["api", "packaging"]
 ---
 

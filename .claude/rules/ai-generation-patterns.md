@@ -71,34 +71,58 @@ res.setHeader('Cache-Control', 'no-cache');
 res.setHeader('Connection', 'keep-alive');
 res.flushHeaders();
 
-// 2. Stream chunks
-for await (const chunk of result.stream) {
-  const text = chunk.text();
-  if (text) res.write('data: ' + text + '\n\n');
+// 2. Stream chunks with error recovery
+try {
+  for await (const chunk of result.stream) {
+    const text = chunk.text();
+    if (text) res.write('data: ' + text + '\n\n');
+  }
+} catch (streamError) {
+  console.error("SSE stream error", streamError);
+} finally {
+  // 3. End stream — always fires, even on error
+  res.write('data: [DONE]\n\n');
+  res.end();
 }
 
-// 3. End stream — both lines required
-res.write('data: [DONE]\n\n');
-res.end();
+// 4. Post-stream work (save to DB) in separate try/catch
+try {
+  await saveScript(...);
+} catch (saveError) {
+  console.error("Post-stream save error", saveError);
+}
 ```
 
 Non-negotiable:
 - `res.flushHeaders()` must be called before the streaming loop
-- `res.write('data: [DONE]\n\n')` always ends the stream
-- `res.end()` always follows
+- `res.write('data: [DONE]\n\n')` and `res.end()` must be in a `finally` block
+- Stream errors must NOT leave the client hanging — `finally` guarantees termination
+- Post-stream saves (Firestore writes) must be in a separate try/catch — a save failure must not affect the already-completed stream
 - Every text chunk sent as `data: <text>\n\n`
 
 ---
 
-## KMeans Guard — Always Check Before Clustering
+## KMeans — Guards and Preprocessing
 
 ```typescript
-if (titles.length <= k) return [titles]; // skip clustering
+// 1. Filter archived topics and cap at 200
+const activeTitles = (titleRecord || []).filter((doc) => !doc.archived);
+const capped = activeTitles.slice(0, 200);
+
+// 2. Calculate k
+const k = Math.min(8, Math.ceil(capped.length / 20));
+
+// 3. Guard — skip clustering if too few titles
+if (titles.length <= k) return [titles];
 ```
 
-Clustering with `k > n` throws. This guard is non-negotiable — never remove it.
+Non-negotiable:
+- Always filter out archived topics before clustering
+- Cap at 200 topics to prevent KMeans timeout on Vercel
+- Guard `titles.length <= k` prevents clustering crash when `k > n`
+- Never remove any of these guards
 
-`k = Math.min(8, Math.ceil(titleRecord.length / 20))` — this calculation is in `src/utlils/content.ts`.
+All KMeans logic is in `src/utlils/content.ts` → `getClusteredTitles`.
 
 ---
 
