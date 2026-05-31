@@ -65,8 +65,7 @@ data: "chunk text here"\n\n
 
 Stream end signal:
 ```
-event: done\n
-data: [done]\n\n
+data: [DONE]\n\n
 ```
 
 ### Side Effects on Completion

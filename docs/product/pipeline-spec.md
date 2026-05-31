@@ -95,7 +95,7 @@ What's happening inside an individual step. State machine per step — see schem
 | Action | Transition |
 |---|---|
 | Creator initiates script generation | `not_started` → `in_progress` |
-| Creator marks script done | `in_progress` → `completed` |
+| Generated script is saved (stream completes) | `in_progress` → `completed` (automatic, server-side) |
 | Creator regenerates | any → `in_progress` |
 
 **Stale:** If script is regenerated while Hooks or Packaging exist downstream, those steps have `status` set to `"stale"`.
@@ -242,7 +242,7 @@ A creator can have multiple video projects active simultaneously. Each video pro
 
 ```
 videoProjects/{videoProjectId}
-  projectId: string           // same as Firestore doc ID, stored for queries
+  id: string                  // Firestore auto-generated doc ID
   userId: string              // owner — always filter by this first
   title: string               // working title (from selected topic)
   topicId: string             // ref to topics collection

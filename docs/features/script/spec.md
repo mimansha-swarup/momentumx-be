@@ -26,7 +26,7 @@ Pipeline position: Research → **Script** → Hooks → Packaging
 | Step | 2 of 4 |
 | Requires | Selected topic from Research step |
 | Unlocks | Hooks step |
-| Completion mechanic | Creator explicitly marks script done ("Use This Script") |
+| Completion mechanic | Automatic — the Script step is completed server-side as soon as the generated script is saved |
 
 ---
 
@@ -56,8 +56,7 @@ data: "chunk text here"\n\n
 
 Stream end signal:
 ```
-event: done\n
-data: [done]\n\n
+data: [DONE]\n\n
 ```
 
 **Prompt:** `SCRIPT_USER_PROMPT` in `src/constants/prompt.ts`. Injects `{userName}`, `{targetAudience}`, `{competitors}`, `{niche}`, `{websiteContent}`, `{title}`. Uses `GENERATION_CONFIG_SCRIPTS` (plain text output config — NOT JSON).

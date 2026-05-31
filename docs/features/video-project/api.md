@@ -43,7 +43,7 @@ Create a new Video Project from a selected topic. Called when the creator picks 
 1. Validate `topicId` present
 2. Fetch topic from `Collection.TOPICS` — 404 if not found
 3. Verify `topic.createdBy == req.userId` — 403 if not
-4. Fetch `topic.title` for `workingTitle`
+4. Fetch `topic.title` for `title`
 5. Create `videoProjects` document with Firestore auto-ID
 6. Set all creation fields per schema in spec.md
 
@@ -53,7 +53,7 @@ Create a new Video Project from a selected topic. Called when the creator picks 
   "success": true,
   "data": {
     "id": "string",
-    "workingTitle": "string",
+    "title": "string",
     "topicId": "string",
     "currentStep": "research",
     "overallStatus": "in_progress",
@@ -68,7 +68,7 @@ Create a new Video Project from a selected topic. Called when the creator picks 
       }
     },
     "createdAt": "<timestamp>",
-    "lastUpdatedAt": "<timestamp>"
+    "updatedAt": "<timestamp>"
   }
 }
 ```
@@ -102,10 +102,10 @@ List all Video Projects for the authenticated user. Powers the dashboard.
     "projects": [
       {
         "id": "string",
-        "workingTitle": "string",
+        "title": "string",
         "currentStep": "script",
         "overallStatus": "in_progress",
-        "lastUpdatedAt": "<timestamp>",
+        "updatedAt": "<timestamp>",
         "createdAt": "<timestamp>",
         "thumbnailHint": "string | null"
       }
@@ -137,7 +137,7 @@ Get a single Video Project with full pipeline state.
   "success": true,
   "data": {
     "id": "string",
-    "workingTitle": "string",
+    "title": "string",
     "topicId": "string",
     "scriptId": "string | null",
     "hooksId": "string | null",
@@ -157,7 +157,7 @@ Get a single Video Project with full pipeline state.
     },
     "isDeleted": false,
     "createdAt": "<timestamp>",
-    "lastUpdatedAt": "<timestamp>"
+    "updatedAt": "<timestamp>"
   }
 }
 ```
@@ -173,20 +173,20 @@ Get a single Video Project with full pipeline state.
 
 ## PATCH `/v1/video-projects/:projectId`
 
-Update mutable project fields. Currently only `workingTitle`.
+Update mutable project fields. Currently only `title`.
 
 ### Request Body
 ```json
-{ "workingTitle": "New title" }
+{ "title": "New title" }
 ```
 
-At least one field required. Empty body returns 400. Empty string `workingTitle` returns 400.
+At least one field required. Empty body returns 400. Empty string `title` returns 400.
 
 ### Response — `200`
 ```json
 {
   "success": true,
-  "data": { "id": "string", "workingTitle": "string", "lastUpdatedAt": "<timestamp>" }
+  "data": { "id": "string", "title": "string", "updatedAt": "<timestamp>" }
 }
 ```
 
@@ -227,7 +227,7 @@ Idempotent — if step is already `in_progress` or `completed`, returns 200 with
     "pipeline": {
       "script": { "status": "in_progress", "startedAt": "<timestamp>", "completedAt": null }
     },
-    "lastUpdatedAt": "<timestamp>"
+    "updatedAt": "<timestamp>"
   }
 }
 ```
@@ -243,7 +243,7 @@ Idempotent — if step is already `in_progress` or `completed`, returns 200 with
 
 ## PATCH `/v1/video-projects/:projectId/step/:stepName/complete`
 
-Mark a step as `completed`. Requires explicit creator action. Stale cascade does NOT apply here — only regeneration triggers staleness.
+Mark a step as `completed`. For the Script step the backend fires this automatically after the generated script is saved; Hooks/Packaging complete via their own mechanics. The endpoint stays available for explicit/manual completion. Stale cascade does NOT apply here — only regeneration triggers staleness.
 
 If all four steps are `completed`, sets `overallStatus = "completed"`.
 
@@ -283,7 +283,7 @@ Link a saved resource to the project. Called after a script, hooks batch, or pac
     "scriptId": "string | null",
     "hooksId": "string | null",
     "packagingId": "string | null",
-    "lastUpdatedAt": "<timestamp>"
+    "updatedAt": "<timestamp>"
   }
 }
 ```

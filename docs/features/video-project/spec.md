@@ -30,11 +30,11 @@ A Video Project is created the moment the creator selects a topic from Research 
 
 **Reasoning:** Selecting a topic already expresses intent. Creating the project at that moment captures intent immediately, keeps the UI simple, and ensures no orphaned topics exist without project context.
 
-**Implication:** When a topic is selected, the frontend calls `POST /v1/video-projects` with `{ topicId }`. The backend creates the project and returns `projectId`. All subsequent calls (Script, Hooks, Packaging) include `projectId`.
+**Implication:** When a topic is selected, the frontend calls `POST /v1/video-projects` with `{ topicId }`. The backend creates the project and returns its `id`. All subsequent calls (Script, Hooks, Packaging) pass that value as the `:projectId` path param.
 
 ### B. No Blank Project State
 
-Topic selection is always Step 1. A project cannot exist without a topic. The project's `workingTitle` is set from the selected topic's title at creation.
+Topic selection is always Step 1. A project cannot exist without a topic. The project's `title` is set from the selected topic's title at creation.
 
 **Conflict with pipeline-spec flag:** `pipeline-spec.md` describes Research as a step with `not_started` status, implying Research could happen inside a project created before topic selection. This spec overrides that. The project is created only after a topic is selected. Research-inside-a-project (to replace the topic) is a future feature, not Phase 0.
 
@@ -43,7 +43,7 @@ Topic selection is always Step 1. A project cannot exist without a topic. The pr
 The list endpoint returns 7 fields per project: enough to identify and navigate, not the full pipeline state.
 
 ```
-projectId, workingTitle, currentStep, overallStatus, lastUpdatedAt, createdAt, thumbnailHint
+id, title, currentStep, overallStatus, updatedAt, createdAt, thumbnailHint
 ```
 
 `thumbnailHint` is `null` until packaging is reached. Full pipeline detail is only on the single-project GET.
@@ -56,13 +56,16 @@ The creator can jump to any step at any time, including completed steps. Viewing
 
 `isDeleted: true` + `deletedAt`. Linked topic, script, hooks, and packaging documents are NOT deleted. Dashboard list filters `isDeleted == false`. Recoverable.
 
-### F. Script Step Completion — Explicit "Use This Script" Action
+### F. Step Completion Mechanics
 
-The Script step (and Hooks, Packaging) are completed by an explicit user action. Moving to the next step does NOT auto-complete the previous step.
+Each step completes by its own mechanic:
 
-**Research exception:** Research is auto-completed at project creation — it's already done when you pick a topic.
+- **Research:** auto-completed at project creation — already done when you pick a topic.
+- **Script:** auto-completed server-side as soon as the generated script is saved (no explicit "approve" action). The creator can still edit the saved script afterward.
+- **Hooks:** completed when the creator selects a hook (`POST /v1/hooks/:hooksId/select`).
+- **Packaging:** items complete as they are saved/regenerated on the packaging document.
 
-**API mechanic:** `PATCH /v1/video-projects/:projectId/step/script/complete`
+The generic `PATCH /v1/video-projects/:projectId/step/:stepName/complete` endpoint remains available (idempotent), but for the Script step completion is fired automatically by the backend after save.
 
 ### G. Multiple Projects Per Topic — Allowed
 
@@ -76,7 +79,7 @@ A creator can start multiple Video Projects using the same topic. No lock on top
 
 ```
 1. Creator opens MomentumX dashboard.
-2. System fetches all video projects (isDeleted == false), ordered by lastUpdatedAt desc.
+2. System fetches all video projects (isDeleted == false), ordered by updatedAt desc.
 3. Creator sees project cards: working title, current step, status, last updated.
 4. Creator clicks a card to open the project.
 5. Creator is taken to the current active step.
@@ -89,10 +92,10 @@ A creator can start multiple Video Projects using the same topic. No lock on top
 2. Creator selects a topic.
 3. Frontend calls POST /v1/video-projects with { topicId }.
 4. Backend creates the project:
-   - workingTitle = topic.title
+   - title = topic.title
    - pipeline.research.status = "completed"
    - all other steps = "not_started"
-5. Backend returns { projectId, workingTitle, pipeline }.
+5. Backend returns { id, title, pipeline }.
 6. Frontend navigates creator to the Script step.
 ```
 
@@ -102,11 +105,9 @@ A creator can start multiple Video Projects using the same topic. No lock on top
 1. Creator opens Script step.
 2. Frontend calls PATCH /video-projects/:projectId/step/script/start → status = "in_progress".
 3. Creator generates script (existing SSE endpoint, now includes projectId).
-4. Script saves → backend sets project.scriptId.
-5. Creator edits, iterates.
-6. Creator clicks "Use This Script".
-7. Frontend calls PATCH /video-projects/:projectId/step/script/complete.
-8. Script step = "completed". Frontend shows "Next: Hooks".
+4. Script saves → backend sets project.scriptId AND auto-completes the Script step.
+5. Script step = "completed". Frontend shows "Next: Hooks".
+6. Creator may still edit the saved script (PATCH /scripts/edit/:scriptId) without changing step status.
 ```
 
 ### Hooks Step
@@ -159,9 +160,9 @@ Document ID: Firestore auto-generated.
 
 ```typescript
 interface VideoProject {
-  projectId: string;              // same as Firestore doc ID, stored for queries
+  id: string;                     // Firestore auto-generated doc ID
   userId: string;                 // from req.userId
-  workingTitle: string;           // from topic.title at creation; can be renamed
+  title: string;           // from topic.title at creation; can be renamed
 
   topicId: string;                // always set — required for creation
   scriptId: string | null;        // set when script is saved
@@ -183,7 +184,7 @@ interface VideoProject {
   deletedAt: Timestamp | null;
 
   createdAt: Timestamp;
-  lastUpdatedAt: Timestamp;
+  updatedAt: Timestamp;
 }
 
 interface StepState {
@@ -196,9 +197,9 @@ interface StepState {
 ### Fields Set at Creation
 
 ```
-projectId         auto-id
+id                auto-id
 userId            req.userId
-workingTitle      from topic.title
+title      from topic.title
 topicId           from request body
 scriptId             null
 hooksId              null
@@ -209,7 +210,7 @@ currentStep       "research"
 isDeleted         false
 deletedAt         null
 createdAt         serverTimestamp()
-lastUpdatedAt     serverTimestamp()
+updatedAt     serverTimestamp()
 pipeline.research   { status: "completed", startedAt: null, completedAt: serverTimestamp() }
 pipeline.script     { status: "not_started", startedAt: null, completedAt: null }
 pipeline.hooks      { status: "not_started", startedAt: null, completedAt: null }
@@ -219,7 +220,7 @@ pipeline.packaging  { status: "not_started", startedAt: null, completedAt: null 
 ### Indexes Required
 
 ```
-Composite index 1: userId ASC, isDeleted ASC, lastUpdatedAt DESC
+Composite index 1: userId ASC, isDeleted ASC, updatedAt DESC
   → powers dashboard list query
 
 Composite index 2: userId ASC, isDeleted ASC, overallStatus ASC
