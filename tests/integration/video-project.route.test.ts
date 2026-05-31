@@ -24,9 +24,16 @@ jest.mock("../../src/config/firebase", () => ({
   },
 }));
 
-// Replace authMiddleware with a simple stub that sets req.userId
+// Replace auth middleware with simple stubs that set req.userId.
+// Both authMiddleware and sseAuthMiddleware must be mocked: app.ts loads every
+// router (including scripts.route, which wires sseAuthMiddleware on the SSE
+// endpoint), so an undefined export would break route registration at import.
 jest.mock("../../src/middleware/auth", () => ({
   authMiddleware: (req: any, _res: any, next: any) => {
+    req.userId = "test-user-id";
+    next();
+  },
+  sseAuthMiddleware: (req: any, _res: any, next: any) => {
     req.userId = "test-user-id";
     next();
   },
@@ -37,6 +44,7 @@ const mockServiceInstance = {
   create: jest.fn(),
   list: jest.fn(),
   getById: jest.fn(),
+  getReconciledById: jest.fn(),
   update: jest.fn(),
   delete: jest.fn(),
   startStep: jest.fn(),
@@ -70,8 +78,8 @@ function makeServiceError(message: string, statusCode: number) {
 
 const PROJECT_STUB = {
   id: "proj-1",
-  userId: "test-user-id",
-  workingTitle: "Test Video",
+  createdBy: "test-user-id",
+  title: "Test Video",
   topicId: "topic-1",
   scriptId: null,
   hooksId: null,
@@ -85,10 +93,10 @@ const PROJECT_STUB = {
     research: { status: "completed", startedAt: null, completedAt: null },
     script: { status: "not_started", startedAt: null, completedAt: null },
     hooks: { status: "not_started", startedAt: null, completedAt: null },
-    packaging: { status: "not_started", startedAt: null, completedAt: null, items: {} },
+    packaging: { status: "not_started", startedAt: null, completedAt: null },
   },
   createdAt: "2024-01-01",
-  lastUpdatedAt: "2024-01-01",
+  updatedAt: "2024-01-01",
 };
 
 // ---------------------------------------------------------------------------
@@ -195,7 +203,7 @@ describe("GET /v1/video-projects", () => {
 
 describe("GET /v1/video-projects/:projectId", () => {
   it("returns 200 with project data", async () => {
-    getService().getById.mockResolvedValueOnce(PROJECT_STUB as any);
+    getService().getReconciledById.mockResolvedValueOnce(PROJECT_STUB as any);
 
     const res = await request(app).get("/v1/video-projects/proj-1");
 
@@ -205,7 +213,7 @@ describe("GET /v1/video-projects/:projectId", () => {
   });
 
   it("returns 404 when project not found", async () => {
-    getService().getById.mockRejectedValueOnce(makeServiceError("Not found", 404));
+    getService().getReconciledById.mockRejectedValueOnce(makeServiceError("Not found", 404));
 
     const res = await request(app).get("/v1/video-projects/missing");
 
@@ -214,7 +222,7 @@ describe("GET /v1/video-projects/:projectId", () => {
   });
 
   it("returns 403 when user does not own the project", async () => {
-    getService().getById.mockRejectedValueOnce(makeServiceError("Forbidden", 403));
+    getService().getReconciledById.mockRejectedValueOnce(makeServiceError("Forbidden", 403));
 
     const res = await request(app).get("/v1/video-projects/proj-other");
 
@@ -228,19 +236,19 @@ describe("GET /v1/video-projects/:projectId", () => {
 // ---------------------------------------------------------------------------
 
 describe("PATCH /v1/video-projects/:projectId", () => {
-  it("returns 200 with updated workingTitle", async () => {
-    getService().update.mockResolvedValueOnce({ workingTitle: "New Title" } as any);
+  it("returns 200 with updated title", async () => {
+    getService().update.mockResolvedValueOnce({ title: "New Title" } as any);
 
     const res = await request(app)
       .patch("/v1/video-projects/proj-1")
-      .send({ workingTitle: "New Title" });
+      .send({ title: "New Title" });
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
   });
 
-  it("returns 400 when workingTitle missing (service throws 400)", async () => {
-    getService().update.mockRejectedValueOnce(makeServiceError("workingTitle is required", 400));
+  it("returns 400 when title missing (service throws 400)", async () => {
+    getService().update.mockRejectedValueOnce(makeServiceError("title is required", 400));
 
     const res = await request(app)
       .patch("/v1/video-projects/proj-1")
@@ -255,7 +263,7 @@ describe("PATCH /v1/video-projects/:projectId", () => {
 
     const res = await request(app)
       .patch("/v1/video-projects/missing")
-      .send({ workingTitle: "Title" });
+      .send({ title: "Title" });
 
     expect(res.status).toBe(404);
   });

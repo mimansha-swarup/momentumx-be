@@ -6,7 +6,7 @@ import UserRepository from "../../repository/user.repository.js";
 import VideoProjectRepository from "../../repository/video-project.repository.js";
 import VideoProjectService from "../../service/video-project.service.js";
 import PackagingRepository from "../../repository/packaging.repository.js";
-import { authMiddleware } from "../../middleware/auth.js";
+import { authMiddleware, sseAuthMiddleware } from "../../middleware/auth.js";
 
 const router = Router();
 
@@ -18,8 +18,8 @@ const videoProjectService = new VideoProjectService(videoProjectRepo, contentRep
 const contentService = new ContentService(contentRepository, userRepository, videoProjectService);
 const scriptController = new ScriptController(contentService);
 
-// SSE endpoint — no authMiddleware (uses ?token= query param)
-router.get("/stream/:scriptId", scriptController.generateScript);
+// SSE endpoint — uses sseAuthMiddleware (?token= query param -> req.userId)
+router.get("/stream/:scriptId", sseAuthMiddleware, scriptController.generateScript);
 
 router.use(authMiddleware);
 

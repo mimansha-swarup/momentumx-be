@@ -56,7 +56,7 @@ class PackagingRepository {
                 await this.db
                     .collection(this.collection)
                     .doc(packagingId)
-                    .set(data, { merge: true });
+                    .update(data);
                 return { id: packagingId, ...data };
             }
             catch (error) {

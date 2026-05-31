@@ -37,7 +37,7 @@ class VideoProjectRepository {
   ): Promise<{ projects: IVideoProject[]; hasMore: boolean; nextCursor: string | null }> => {
     let query = this.db
       .collection(this.collection)
-      .where("userId", "==", userId)
+      .where("createdBy", "==", userId)
       .where("isDeleted", "==", false);
 
     if (status) {
@@ -45,7 +45,7 @@ class VideoProjectRepository {
     }
 
     query = query
-      .orderBy("lastUpdatedAt", "desc")
+      .orderBy("updatedAt", "desc")
       .orderBy(FieldPath.documentId(), "desc");
 
     if (cursor) {
@@ -77,16 +77,16 @@ class VideoProjectRepository {
     await this.db
       .collection(this.collection)
       .doc(projectId)
-      .set(
-        { ...data, lastUpdatedAt: firebase.firestore.FieldValue.serverTimestamp() },
-        { merge: true }
-      );
+      .update({
+        ...data,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
   };
 
   findByScriptId = async (scriptId: string, userId: string): Promise<IVideoProject | null> => {
     const snap = await this.db.collection(this.collection)
       .where("scriptId", "==", scriptId)
-      .where("userId", "==", userId)
+      .where("createdBy", "==", userId)
       .where("isDeleted", "==", false)
       .limit(1)
       .get();

@@ -100,6 +100,7 @@ describe("ContentService — regenerateScript", () => {
   const mockVpService = {
     getByScriptId: jest.fn(),
     markStale: jest.fn(),
+    markPackagingDocumentStale: jest.fn(),
   };
 
   const scriptDoc = { id: "script-1", createdBy: "user-1", title: "My Title", videoProjectId: "proj-1" };
@@ -188,5 +189,64 @@ describe("ContentService — exportScript", () => {
     });
     const result = await service.exportScript("user-1", "script-1");
     expect(result).toEqual({ title: "My Title", text: "Full script text here." });
+  });
+});
+
+describe("ContentService — edit whitelist & SSE ownership guard", () => {
+  let service: ContentService;
+  let mockContentRepo: jest.Mocked<ContentRepository>;
+  let mockUserRepo: jest.Mocked<UserRepository>;
+
+  beforeEach(() => {
+    mockContentRepo = new MockContentRepo() as jest.Mocked<ContentRepository>;
+    mockUserRepo = new MockUserRepo() as jest.Mocked<UserRepository>;
+    service = new ContentService(mockContentRepo, mockUserRepo);
+  });
+
+  afterEach(() => jest.clearAllMocks());
+
+  it("editTopics ignores non-whitelisted fields (only title persisted)", async () => {
+    mockContentRepo.getTopic = jest.fn().mockResolvedValue({ id: "t-1", createdBy: "user-1" });
+    mockContentRepo.updateTopic = jest.fn().mockResolvedValue(undefined);
+    const result = await service.editTopics("t-1", "user-1", {
+      title: "New Title",
+      archived: "false",
+      videoProjectId: "evil",
+      embedding: "[1,2,3]",
+      createdBy: "victim",
+    } as any);
+    expect(mockContentRepo.updateTopic).toHaveBeenCalledWith("t-1", { title: "New Title" });
+    expect(result).toEqual({ title: "New Title" });
+  });
+
+  it("editTopics throws 400 when no editable field is provided", async () => {
+    mockContentRepo.getTopic = jest.fn().mockResolvedValue({ id: "t-1", createdBy: "user-1" });
+    mockContentRepo.updateTopic = jest.fn();
+    const err = await service.editTopics("t-1", "user-1", { archived: "false" } as any).catch((e) => e);
+    expect(err.statusCode).toBe(400);
+    expect(mockContentRepo.updateTopic).not.toHaveBeenCalled();
+  });
+
+  it("editScript persists only script and title", async () => {
+    mockContentRepo.getScriptById = jest.fn().mockResolvedValue({ id: "s-1", createdBy: "user-1" });
+    mockContentRepo.editScript = jest.fn().mockResolvedValue(undefined);
+    const result = await service.editScript("s-1", "user-1", {
+      script: "new body",
+      title: "new title",
+      createdBy: "victim",
+      videoProjectId: "evil",
+    } as any);
+    expect(mockContentRepo.editScript).toHaveBeenCalledWith("s-1", { script: "new body", title: "new title" });
+    expect(result).toEqual({ script: "new body", title: "new title" });
+  });
+
+  it("generateScripts throws 403 and does not stream when the topic belongs to another user", async () => {
+    mockUserRepo.get = jest.fn().mockResolvedValue({});
+    mockContentRepo.getTopic = jest.fn().mockResolvedValue({ id: "t-1", createdBy: "other-user", title: "T" });
+    const res = { setHeader: jest.fn(), flushHeaders: jest.fn(), write: jest.fn(), end: jest.fn() };
+    const err = await service.generateScripts("user-1", "t-1", res as any).catch((e) => e);
+    expect(err.statusCode).toBe(403);
+    expect(res.flushHeaders).not.toHaveBeenCalled();
+    expect(mockGenerateStreaming).not.toHaveBeenCalled();
   });
 });

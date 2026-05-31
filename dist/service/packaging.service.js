@@ -2,6 +2,7 @@ import { PACKAGING_SYSTEM_PROMPT, GENERATE_TITLE_PROMPT, GENERATE_DESCRIPTION_PR
 import { GENERATION_CONFIG_PACKAGING } from "../constants/firebase.js";
 import { generateStreamingContent } from "../utlils/ai.js";
 import { firebase } from "../config/firebase.js";
+import { BadRequest, Forbidden, NotFound } from "../utlils/errors.js";
 class PackagingService {
     constructor(repo, videoProjectService) {
         this.videoProjectService = videoProjectService;
@@ -123,10 +124,13 @@ class PackagingService {
                     });
                 }
                 if (videoProjectId && this.videoProjectService) {
-                    this.videoProjectService
-                        .linkResource(videoProjectId, "packaging", result.id, userId)
-                        .then(() => this.videoProjectService.completeStep(videoProjectId, "packaging", userId))
-                        .catch(console.error);
+                    try {
+                        await this.videoProjectService.linkResource(videoProjectId, "packaging", result.id, userId);
+                        await this.videoProjectService.completeStep(videoProjectId, "packaging", userId);
+                    }
+                    catch (pipelineError) {
+                        console.error(JSON.stringify({ event: "pipeline_transition_failed", step: "packaging", projectId: videoProjectId, packagingId: result.id, userId, message: pipelineError?.message }));
+                    }
                 }
                 return result;
             }
@@ -140,7 +144,7 @@ class PackagingService {
                 if (!result)
                     return null;
                 if (result.createdBy !== userId)
-                    throw new Error("Unauthorized");
+                    throw Forbidden();
                 return result;
             }
             catch (error) {
@@ -159,35 +163,23 @@ class PackagingService {
         this.regenerateItem = async (userId, packagingId, item, script, title, duration, selectedHook) => {
             const pkg = await this.repo.get(packagingId);
             if (!pkg) {
-                const err = new Error("Packaging not found");
-                err.statusCode = 404;
-                throw err;
+                throw NotFound("Packaging not found");
             }
             if (pkg.createdBy !== userId) {
-                const err = new Error("Forbidden");
-                err.statusCode = 403;
-                throw err;
+                throw Forbidden();
             }
             const validItems = ["title", "description", "thumbnail", "shorts"];
             if (!validItems.includes(item)) {
-                const err = new Error(`item must be one of: ${validItems.join(", ")}`);
-                err.statusCode = 400;
-                throw err;
+                throw BadRequest(`item must be one of: ${validItems.join(", ")}`);
             }
             if (!script) {
-                const err = new Error("script is required");
-                err.statusCode = 400;
-                throw err;
+                throw BadRequest("script is required");
             }
             if ((item === "description" || item === "thumbnail") && !title) {
-                const err = new Error("title is required for description and thumbnail regeneration");
-                err.statusCode = 400;
-                throw err;
+                throw BadRequest("title is required for description and thumbnail regeneration");
             }
             if (item === "shorts" && !duration) {
-                const err = new Error("duration is required for shorts regeneration");
-                err.statusCode = 400;
-                throw err;
+                throw BadRequest("duration is required for shorts regeneration");
             }
             // Save previous item status for rollback on failure
             const currentStatuses = (pkg.itemStatuses ?? {});
@@ -239,26 +231,18 @@ class PackagingService {
         this.updateFeedback = async (userId, packagingId, item, feedback) => {
             const pkg = await this.repo.get(packagingId);
             if (!pkg) {
-                const err = new Error("Packaging not found");
-                err.statusCode = 404;
-                throw err;
+                throw NotFound("Packaging not found");
             }
             if (pkg.createdBy !== userId) {
-                const err = new Error("Forbidden");
-                err.statusCode = 403;
-                throw err;
+                throw Forbidden();
             }
             const validItems = ["title", "description", "thumbnail", "shorts"];
             if (!validItems.includes(item)) {
-                const err = new Error(`item must be one of: ${validItems.join(", ")}`);
-                err.statusCode = 400;
-                throw err;
+                throw BadRequest(`item must be one of: ${validItems.join(", ")}`);
             }
             const validFeedback = ["like", "dislike", null];
             if (!validFeedback.includes(feedback)) {
-                const err = new Error('feedback must be "like", "dislike", or null');
-                err.statusCode = 400;
-                throw err;
+                throw BadRequest('feedback must be "like", "dislike", or null');
             }
             await this.repo.update(packagingId, { [`feedback.${item}`]: feedback });
             return { id: packagingId, item, feedback };
@@ -266,14 +250,10 @@ class PackagingService {
         this.exportPackaging = async (userId, packagingId) => {
             const pkg = await this.repo.get(packagingId);
             if (!pkg) {
-                const err = new Error("Packaging not found");
-                err.statusCode = 404;
-                throw err;
+                throw NotFound("Packaging not found");
             }
             if (pkg.createdBy !== userId) {
-                const err = new Error("Forbidden");
-                err.statusCode = 403;
-                throw err;
+                throw Forbidden();
             }
             const today = new Date().toLocaleDateString("en-US", {
                 year: "numeric",

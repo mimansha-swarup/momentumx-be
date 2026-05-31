@@ -86,6 +86,7 @@ describe("HooksService — regenerate", () => {
     mockRepo.update = jest.fn().mockResolvedValue(undefined);
     mockVpService.clearSelectedHook = jest.fn().mockResolvedValue(undefined);
     mockVpService.markStale = jest.fn().mockResolvedValue(undefined);
+    mockVpService.markPackagingDocumentStale = jest.fn().mockResolvedValue(undefined);
 
     const result = await service.regenerate("user-1", "hooks-1", "my script");
 

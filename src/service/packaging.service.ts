@@ -10,6 +10,7 @@ import PackagingRepository from "../repository/packaging.repository.js";
 import VideoProjectService from "./video-project.service.js";
 import { generateStreamingContent } from "../utlils/ai.js";
 import { firebase } from "../config/firebase.js";
+import { BadRequest, Forbidden, NotFound } from "../utlils/errors.js";
 
 class PackagingService {
   private repo: PackagingRepository;
@@ -149,10 +150,12 @@ class PackagingService {
       }
 
       if (videoProjectId && this.videoProjectService) {
-        this.videoProjectService
-          .linkResource(videoProjectId, "packaging", result.id as string, userId)
-          .then(() => this.videoProjectService!.completeStep(videoProjectId, "packaging", userId))
-          .catch(console.error);
+        try {
+          await this.videoProjectService.linkResource(videoProjectId, "packaging", result.id as string, userId);
+          await this.videoProjectService.completeStep(videoProjectId, "packaging", userId);
+        } catch (pipelineError) {
+          console.error(JSON.stringify({ event: "pipeline_transition_failed", step: "packaging", projectId: videoProjectId, packagingId: result.id, userId, message: (pipelineError as Error)?.message }));
+        }
       }
       return result;
     } catch (error) {
@@ -165,7 +168,7 @@ class PackagingService {
     try {
       const result = await this.repo.get(packagingId);
       if (!result) return null;
-      if (result.createdBy !== userId) throw new Error("Unauthorized");
+      if (result.createdBy !== userId) throw Forbidden();
       return result;
     } catch (error) {
 
@@ -194,35 +197,23 @@ class PackagingService {
   ) => {
     const pkg = await this.repo.get(packagingId);
     if (!pkg) {
-      const err = new Error("Packaging not found") as Error & { statusCode: number };
-      err.statusCode = 404;
-      throw err;
+      throw NotFound("Packaging not found");
     }
     if (pkg.createdBy !== userId) {
-      const err = new Error("Forbidden") as Error & { statusCode: number };
-      err.statusCode = 403;
-      throw err;
+      throw Forbidden();
     }
     const validItems = ["title", "description", "thumbnail", "shorts"];
     if (!validItems.includes(item)) {
-      const err = new Error(`item must be one of: ${validItems.join(", ")}`) as Error & { statusCode: number };
-      err.statusCode = 400;
-      throw err;
+      throw BadRequest(`item must be one of: ${validItems.join(", ")}`);
     }
     if (!script) {
-      const err = new Error("script is required") as Error & { statusCode: number };
-      err.statusCode = 400;
-      throw err;
+      throw BadRequest("script is required");
     }
     if ((item === "description" || item === "thumbnail") && !title) {
-      const err = new Error("title is required for description and thumbnail regeneration") as Error & { statusCode: number };
-      err.statusCode = 400;
-      throw err;
+      throw BadRequest("title is required for description and thumbnail regeneration");
     }
     if (item === "shorts" && !duration) {
-      const err = new Error("duration is required for shorts regeneration") as Error & { statusCode: number };
-      err.statusCode = 400;
-      throw err;
+      throw BadRequest("duration is required for shorts regeneration");
     }
 
     // Save previous item status for rollback on failure
@@ -285,26 +276,18 @@ class PackagingService {
   ) => {
     const pkg = await this.repo.get(packagingId);
     if (!pkg) {
-      const err = new Error("Packaging not found") as Error & { statusCode: number };
-      err.statusCode = 404;
-      throw err;
+      throw NotFound("Packaging not found");
     }
     if (pkg.createdBy !== userId) {
-      const err = new Error("Forbidden") as Error & { statusCode: number };
-      err.statusCode = 403;
-      throw err;
+      throw Forbidden();
     }
     const validItems = ["title", "description", "thumbnail", "shorts"];
     if (!validItems.includes(item)) {
-      const err = new Error(`item must be one of: ${validItems.join(", ")}`) as Error & { statusCode: number };
-      err.statusCode = 400;
-      throw err;
+      throw BadRequest(`item must be one of: ${validItems.join(", ")}`);
     }
     const validFeedback = ["like", "dislike", null];
     if (!validFeedback.includes(feedback)) {
-      const err = new Error('feedback must be "like", "dislike", or null') as Error & { statusCode: number };
-      err.statusCode = 400;
-      throw err;
+      throw BadRequest('feedback must be "like", "dislike", or null');
     }
 
     await this.repo.update(packagingId, { [`feedback.${item}`]: feedback });
@@ -314,14 +297,10 @@ class PackagingService {
   exportPackaging = async (userId: string, packagingId: string) => {
     const pkg = await this.repo.get(packagingId);
     if (!pkg) {
-      const err = new Error("Packaging not found") as Error & { statusCode: number };
-      err.statusCode = 404;
-      throw err;
+      throw NotFound("Packaging not found");
     }
     if (pkg.createdBy !== userId) {
-      const err = new Error("Forbidden") as Error & { statusCode: number };
-      err.statusCode = 403;
-      throw err;
+      throw Forbidden();
     }
 
     const today = new Date().toLocaleDateString("en-US", {

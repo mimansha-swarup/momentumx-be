@@ -4,6 +4,7 @@ import { generateContent, generateStreamingContent } from "../utlils/ai.js";
 import { formatCreatorsData, formatGeneratedScript, formatGeneratedTitle, getClusteredTitles, } from "../utlils/content.js";
 import { GENERATION_CONFIG_SCRIPTS, GENERATION_CONFIG_TITLES, } from "../constants/firebase.js";
 import { firebase } from "../config/firebase.js";
+import { BadRequest, Forbidden, NotFound } from "../utlils/errors.js";
 //  createOnboardingData
 function formatCompetitorUrls(competitors) {
     if (!Array.isArray(competitors))
@@ -85,20 +86,37 @@ class ContentService {
         this.editTopics = async (titleId, userId, resBody) => {
             const topic = await this.repo.getTopic(titleId);
             if (!topic)
-                throw new Error("Topic not found");
+                throw NotFound("Topic not found");
             if (topic.createdBy !== userId)
-                throw new Error("Forbidden");
-            await this.repo.updateTopic(titleId, resBody);
-            return resBody;
+                throw Forbidden();
+            // Whitelist: only `title` is client-editable. Never let the client touch
+            // server-owned fields (archived, videoProjectId, embedding, isScriptGenerated, createdBy, batchId).
+            const updates = {};
+            if (typeof resBody.title === "string")
+                updates.title = resBody.title;
+            if (Object.keys(updates).length === 0) {
+                throw BadRequest("No editable fields provided (allowed: title)");
+            }
+            await this.repo.updateTopic(titleId, updates);
+            return updates;
         };
         this.editScript = async (scriptId, userId, resBody) => {
             const script = await this.repo.getScriptById(scriptId);
             if (!script)
-                throw new Error("Script not found");
+                throw NotFound("Script not found");
             if (script.createdBy !== userId)
-                throw new Error("Forbidden");
-            await this.repo.editScript(scriptId, resBody);
-            return resBody;
+                throw Forbidden();
+            // Whitelist: only `script` and `title` are client-editable.
+            const updates = {};
+            if (typeof resBody.script === "string")
+                updates.script = resBody.script;
+            if (typeof resBody.title === "string")
+                updates.title = resBody.title;
+            if (Object.keys(updates).length === 0) {
+                throw BadRequest("No editable fields provided (allowed: script, title)");
+            }
+            await this.repo.editScript(scriptId, updates);
+            return updates;
         };
         this.generateScripts = async (userId, scriptId, res) => {
             try {
@@ -106,6 +124,14 @@ class ContentService {
                     this.userRepo.get(userId),
                     this.repo.getTopic(scriptId),
                 ]);
+                // Existence + ownership guards — every other script method enforces these; the SSE
+                // path must too. Checked before flushHeaders so the controller can return a clean status.
+                if (!titleRecord) {
+                    throw NotFound("Topic not found");
+                }
+                if (titleRecord.createdBy !== userId) {
+                    throw Forbidden();
+                }
                 let userPrompt = SCRIPT_USER_PROMPT.replace("{userName}", userRecord?.brandName ?? "")
                     .replace("{targetAudience}", userRecord?.targetAudience ?? "")
                     .replace("{competitors}", formatCompetitorUrls(userRecord?.competitors))
@@ -115,7 +141,12 @@ class ContentService {
                 const result = await generateStreamingContent(SCRIPT_SYSTEM_PROMPT, userPrompt, GENERATION_CONFIG_SCRIPTS);
                 let accumulatedRes = "";
                 if (titleRecord?.videoProjectId && this.videoProjectService) {
-                    this.videoProjectService.startStep(titleRecord.videoProjectId, "script", userId).catch(console.error);
+                    try {
+                        await this.videoProjectService.startStep(titleRecord.videoProjectId, "script", userId);
+                    }
+                    catch (stepError) {
+                        console.error(JSON.stringify({ event: "pipeline_start_failed", step: "script", projectId: titleRecord.videoProjectId, userId, message: stepError?.message }));
+                    }
                 }
                 res.setHeader("Content-Type", "text/event-stream");
                 res.setHeader("Cache-Control", "no-cache");
@@ -139,21 +170,29 @@ class ContentService {
                 }
                 try {
                     const formattedData = formatGeneratedScript(titleRecord?.title, titleRecord?.id, accumulatedRes, userId);
-                    this.repo.updateTopic(titleRecord?.id, {
+                    await this.repo.updateTopic(titleRecord?.id, {
                         isScriptGenerated: true,
                     });
                     await this.repo.saveScript(titleRecord?.id, formattedData);
-                    this.userRepo.update(userId, {
-                        "stats.scripts": firebase.firestore.FieldValue.increment(1),
-                    });
+                    // Pipeline transition (script saved -> mark step complete). Awaited so it
+                    // actually runs — fire-and-forget after res.end() can be dropped on serverless —
+                    // and logged with context instead of silently swallowed.
                     if (titleRecord?.videoProjectId && this.videoProjectService) {
                         const vpId = titleRecord.videoProjectId;
                         const scriptId = titleRecord.id;
                         const vps = this.videoProjectService;
-                        vps.linkResource(vpId, "script", scriptId, userId)
-                            .then(() => vps.completeStep(vpId, "script", userId))
-                            .catch(console.error);
+                        try {
+                            await vps.linkResource(vpId, "script", scriptId, userId);
+                            await vps.completeStep(vpId, "script", userId);
+                        }
+                        catch (pipelineError) {
+                            console.error(JSON.stringify({ event: "pipeline_transition_failed", step: "script", projectId: vpId, scriptId, userId, message: pipelineError?.message }));
+                        }
                     }
+                    // Non-critical stats counter, last so a failure here can't skip the pipeline.
+                    await this.userRepo.update(userId, {
+                        "stats.scripts": firebase.firestore.FieldValue.increment(1),
+                    });
                 }
                 catch (saveError) {
                     console.error("Post-stream save error", saveError);
@@ -173,7 +212,7 @@ class ContentService {
             if (!doc)
                 return null;
             if (doc.createdBy !== userId)
-                throw new Error("Forbidden");
+                throw Forbidden();
             return doc;
         };
         this.regenerateAll = async (userId) => {
@@ -182,7 +221,12 @@ class ContentService {
             if (this.videoProjectService) {
                 for (const topic of activeTopics) {
                     if (topic.videoProjectId) {
-                        this.videoProjectService.markStale(topic.videoProjectId, "research").catch((err) => console.error("markStale failed for project", topic.videoProjectId, err));
+                        try {
+                            await this.videoProjectService.markStale(topic.videoProjectId, "research");
+                        }
+                        catch (err) {
+                            console.error(JSON.stringify({ event: "stale_cascade_failed", from: "research", projectId: topic.videoProjectId, message: err?.message }));
+                        }
                     }
                 }
             }
@@ -203,14 +247,10 @@ class ContentService {
         this.regenerateOne = async (userId, topicId) => {
             const topic = await this.repo.getTopic(topicId);
             if (!topic) {
-                const err = new Error("Topic not found");
-                err.statusCode = 404;
-                throw err;
+                throw NotFound("Topic not found");
             }
             if (topic.createdBy !== userId) {
-                const err = new Error("Forbidden");
-                err.statusCode = 403;
-                throw err;
+                throw Forbidden();
             }
             const titles = await this.generateTopics(userId);
             if (!titles || titles.length === 0) {
@@ -230,20 +270,14 @@ class ContentService {
         this.updateFeedback = async (userId, topicId, feedback) => {
             const topic = await this.repo.getTopic(topicId);
             if (!topic) {
-                const err = new Error("Topic not found");
-                err.statusCode = 404;
-                throw err;
+                throw NotFound("Topic not found");
             }
             if (topic.createdBy !== userId) {
-                const err = new Error("Forbidden");
-                err.statusCode = 403;
-                throw err;
+                throw Forbidden();
             }
             const validFeedback = ["like", "dislike", null];
             if (!validFeedback.includes(feedback)) {
-                const err = new Error('feedback must be "like", "dislike", or null');
-                err.statusCode = 400;
-                throw err;
+                throw BadRequest('feedback must be "like", "dislike", or null');
             }
             await this.repo.updateTopic(topicId, { userFeedback: feedback });
             return { id: topicId, userFeedback: feedback };
@@ -251,20 +285,14 @@ class ContentService {
         this.updateScriptFeedback = async (userId, scriptId, feedback) => {
             const script = await this.repo.getScriptById(scriptId);
             if (!script) {
-                const err = new Error("Script not found");
-                err.statusCode = 404;
-                throw err;
+                throw NotFound("Script not found");
             }
             if (script.createdBy !== userId) {
-                const err = new Error("Forbidden");
-                err.statusCode = 403;
-                throw err;
+                throw Forbidden();
             }
             const validFeedback = ["like", "dislike", null];
             if (!validFeedback.includes(feedback)) {
-                const err = new Error('feedback must be "like", "dislike", or null');
-                err.statusCode = 400;
-                throw err;
+                throw BadRequest('feedback must be "like", "dislike", or null');
             }
             await this.repo.editScript(scriptId, { userFeedback: feedback });
             return { id: scriptId, userFeedback: feedback };
@@ -272,28 +300,20 @@ class ContentService {
         this.exportScript = async (userId, scriptId) => {
             const script = await this.repo.getScriptById(scriptId);
             if (!script) {
-                const err = new Error("Script not found");
-                err.statusCode = 404;
-                throw err;
+                throw NotFound("Script not found");
             }
             if (script.createdBy !== userId) {
-                const err = new Error("Forbidden");
-                err.statusCode = 403;
-                throw err;
+                throw Forbidden();
             }
             return { title: script.title, text: script.script };
         };
         this.regenerateScript = async (userId, scriptId) => {
             const scriptDoc = await this.repo.getScriptById(scriptId);
             if (!scriptDoc) {
-                const err = new Error("Script not found");
-                err.statusCode = 404;
-                throw err;
+                throw NotFound("Script not found");
             }
             if (scriptDoc.createdBy !== userId) {
-                const err = new Error("Forbidden");
-                err.statusCode = 403;
-                throw err;
+                throw Forbidden();
             }
             const userRecord = await this.userRepo.get(userId);
             const userPrompt = SCRIPT_USER_PROMPT.replace("{userName}", userRecord?.brandName ?? "")
@@ -311,14 +331,16 @@ class ContentService {
             }
             await this.repo.editScript(scriptId, { script: accumulatedRes });
             if (this.videoProjectService) {
-                this.videoProjectService.getByScriptId(scriptId, userId)
-                    .then(proj => {
+                try {
+                    const proj = await this.videoProjectService.getByScriptId(scriptId, userId);
                     if (proj) {
-                        this.videoProjectService.markStale(proj.id, "script").catch(console.error);
-                        this.videoProjectService.markPackagingDocumentStale(proj.id, "script_regenerated").catch(console.error);
+                        await this.videoProjectService.markStale(proj.id, "script");
+                        await this.videoProjectService.markPackagingDocumentStale(proj.id, "script_regenerated");
                     }
-                })
-                    .catch(console.error);
+                }
+                catch (cascadeError) {
+                    console.error(JSON.stringify({ event: "stale_cascade_failed", from: "script", scriptId, userId, message: cascadeError?.message }));
+                }
             }
             return { id: scriptId, title: scriptDoc.title, script: accumulatedRes };
         };

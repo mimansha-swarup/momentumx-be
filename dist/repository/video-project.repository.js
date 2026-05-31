@@ -17,13 +17,13 @@ class VideoProjectRepository {
         this.list = async (userId, { status, limit, cursor }) => {
             let query = this.db
                 .collection(this.collection)
-                .where("userId", "==", userId)
+                .where("createdBy", "==", userId)
                 .where("isDeleted", "==", false);
             if (status) {
                 query = query.where("overallStatus", "==", status);
             }
             query = query
-                .orderBy("lastUpdatedAt", "desc")
+                .orderBy("updatedAt", "desc")
                 .orderBy(FieldPath.documentId(), "desc");
             if (cursor) {
                 const cursorDoc = await this.db.collection(this.collection).doc(cursor).get();
@@ -47,12 +47,15 @@ class VideoProjectRepository {
             await this.db
                 .collection(this.collection)
                 .doc(projectId)
-                .set({ ...data, lastUpdatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+                .update({
+                ...data,
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            });
         };
         this.findByScriptId = async (scriptId, userId) => {
             const snap = await this.db.collection(this.collection)
                 .where("scriptId", "==", scriptId)
-                .where("userId", "==", userId)
+                .where("createdBy", "==", userId)
                 .where("isDeleted", "==", false)
                 .limit(1)
                 .get();

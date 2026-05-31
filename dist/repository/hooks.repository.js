@@ -18,7 +18,7 @@ class HooksRepository {
             return doc.data();
         };
         this.update = async (hooksId, data) => {
-            await this.db.collection(this.collection).doc(hooksId).set(data, { merge: true });
+            await this.db.collection(this.collection).doc(hooksId).update(data);
         };
         this.db = db;
         this.collection = "hooks" /* COLLECTIONS.HOOKS */;

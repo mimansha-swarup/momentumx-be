@@ -1,3 +1,4 @@
+import { BadRequest } from "../utlils/errors.js";
 class ResearchService {
     constructor(repo, userRepo) {
         this.repo = repo;
@@ -5,9 +6,7 @@ class ResearchService {
         this.getTrending = async (userId) => {
             const userRecord = await this.userRepo.get(userId);
             if (!userRecord?.niche) {
-                const err = new Error("User niche not set — complete onboarding first");
-                err.statusCode = 400;
-                throw err;
+                throw BadRequest("User niche not set — complete onboarding first");
             }
             return this.repo.getTrendingVideos(userRecord.niche);
         };
@@ -26,9 +25,7 @@ class ResearchService {
         };
         this.getKeywords = async (query) => {
             if (!query || query.trim() === "") {
-                const err = new Error("query is required");
-                err.statusCode = 400;
-                throw err;
+                throw BadRequest("query is required");
             }
             return this.repo.getKeywordSignals(query);
         };

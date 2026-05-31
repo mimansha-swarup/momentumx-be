@@ -192,6 +192,8 @@ describe("PackagingService — savePackaging with videoProjectId", () => {
     mockRepo = new MockPackagingRepo() as jest.Mocked<PackagingRepository>;
     service = new PackagingService(mockRepo);
     mockRepo.save = jest.fn().mockResolvedValue({ id: "pkg-new" });
+    // savePackaging upserts by project: no existing doc -> save path
+    mockRepo.findByVideoProject = jest.fn().mockResolvedValue(null);
   });
 
   it("saves videoProjectId on the document when provided", async () => {

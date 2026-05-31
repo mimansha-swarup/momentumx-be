@@ -3,6 +3,7 @@ import ResearchRepository, {
   TrendingVideo,
 } from "../repository/research.repository.js";
 import UserRepository from "../repository/user.repository.js";
+import { BadRequest } from "../utlils/errors.js";
 
 export type { TrendingVideo, KeywordSignal };
 
@@ -20,11 +21,7 @@ class ResearchService {
   getTrending = async (userId: string): Promise<TrendingVideo[]> => {
     const userRecord = await this.userRepo.get(userId);
     if (!userRecord?.niche) {
-      const err = new Error("User niche not set — complete onboarding first") as Error & {
-        statusCode: number;
-      };
-      err.statusCode = 400;
-      throw err;
+      throw BadRequest("User niche not set — complete onboarding first");
     }
 
     return this.repo.getTrendingVideos(userRecord.niche);
@@ -51,9 +48,7 @@ class ResearchService {
 
   getKeywords = async (query: string): Promise<KeywordSignal[]> => {
     if (!query || query.trim() === "") {
-      const err = new Error("query is required") as Error & { statusCode: number };
-      err.statusCode = 400;
-      throw err;
+      throw BadRequest("query is required");
     }
 
     return this.repo.getKeywordSignals(query);

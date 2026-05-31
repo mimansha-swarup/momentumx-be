@@ -40,8 +40,8 @@ import { IVideoProject } from "../../src/types/routes/video-project";
 function makeProject(overrides: Partial<IVideoProject> = {}): IVideoProject {
   return {
     id: "proj-1",
-    userId: "user-1",
-    workingTitle: "My Video",
+    createdBy: "user-1",
+    title: "My Video",
     topicId: "topic-1",
     scriptId: null,
     hooksId: null,
@@ -60,11 +60,10 @@ function makeProject(overrides: Partial<IVideoProject> = {}): IVideoProject {
         status: "not_started",
         startedAt: null,
         completedAt: null,
-        items: { titles: "not_started", description: "not_started", thumbnail: "not_started", shorts: "not_started" },
       },
     },
     createdAt: null as any,
-    lastUpdatedAt: null as any,
+    updatedAt: null as any,
     ...overrides,
   };
 }
@@ -185,7 +184,7 @@ describe("VideoProjectService", () => {
       const item = result.projects[0] as any;
 
       expect(item.id).toBe("proj-1");
-      expect(item.workingTitle).toBe("My Video");
+      expect(item.title).toBe("My Video");
       expect(item.currentStep).toBeDefined();
       expect(item.overallStatus).toBeDefined();
       expect(item.thumbnailHint).toBe("Some hint");
@@ -258,7 +257,7 @@ describe("VideoProjectService", () => {
     });
 
     it("throws 403 when project belongs to a different user", async () => {
-      repo.findById.mockResolvedValue(makeProject({ userId: "other-user" }));
+      repo.findById.mockResolvedValue(makeProject({ createdBy: "other-user" }));
 
       await expect(service.getById("proj-1", "user-1")).rejects.toMatchObject({
         message: "Forbidden",
@@ -268,29 +267,78 @@ describe("VideoProjectService", () => {
   });
 
   // --------------------------------------------------------------------------
+  // getReconciledById (computed read-time reconcile — no persistence)
+  // --------------------------------------------------------------------------
+
+  describe("getReconciledById(projectId, userId)", () => {
+    it("promotes a not_started/in_progress step to completed when its resource is linked, without writing", async () => {
+      repo.findById.mockResolvedValue(
+        makeProject({
+          scriptId: "script-1",
+          selectedHookIndex: 2,
+          pipeline: {
+            research: { status: "completed", startedAt: null, completedAt: null },
+            script: { status: "in_progress", startedAt: null, completedAt: null },
+            hooks: { status: "not_started", startedAt: null, completedAt: null },
+            packaging: { status: "not_started", startedAt: null, completedAt: null },
+          },
+        })
+      );
+
+      const result = await service.getReconciledById("proj-1", "user-1");
+
+      expect(result.pipeline.script.status).toBe("completed"); // scriptId set
+      expect(result.pipeline.hooks.status).toBe("completed"); // selectedHookIndex set
+      expect(result.pipeline.packaging.status).toBe("not_started"); // no packagingId
+      expect(repo.update).not.toHaveBeenCalled(); // computed, never persisted
+    });
+
+    it("never promotes a stale step", async () => {
+      repo.findById.mockResolvedValue(
+        makeProject({
+          scriptId: "script-1",
+          selectedHookIndex: 1,
+          pipeline: {
+            research: { status: "completed", startedAt: null, completedAt: null },
+            script: { status: "completed", startedAt: null, completedAt: null },
+            hooks: { status: "stale", startedAt: null, completedAt: null },
+            packaging: { status: "stale", startedAt: null, completedAt: null },
+          },
+        })
+      );
+
+      const result = await service.getReconciledById("proj-1", "user-1");
+
+      expect(result.pipeline.hooks.status).toBe("stale");
+      expect(result.overallStatus).toBe("stale");
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+  });
+
+  // --------------------------------------------------------------------------
   // update
   // --------------------------------------------------------------------------
 
   describe("update(projectId, userId, data)", () => {
-    it("calls repo.update with workingTitle when valid", async () => {
+    it("calls repo.update with title when valid", async () => {
       repo.findById.mockResolvedValue(makeProject());
       repo.update.mockResolvedValue(undefined);
 
-      await service.update("proj-1", "user-1", { workingTitle: "New Title" });
+      await service.update("proj-1", "user-1", { title: "New Title" });
 
-      expect(repo.update).toHaveBeenCalledWith("proj-1", { workingTitle: "New Title" });
+      expect(repo.update).toHaveBeenCalledWith("proj-1", { title: "New Title" });
     });
 
-    it("throws 400 when workingTitle is empty string", async () => {
+    it("throws 400 when title is empty string", async () => {
       repo.findById.mockResolvedValue(makeProject());
 
-      await expect(service.update("proj-1", "user-1", { workingTitle: "" })).rejects.toMatchObject({
+      await expect(service.update("proj-1", "user-1", { title: "" })).rejects.toMatchObject({
         statusCode: 400,
       });
       expect(repo.update).not.toHaveBeenCalled();
     });
 
-    it("throws 400 when workingTitle is undefined", async () => {
+    it("throws 400 when title is undefined", async () => {
       repo.findById.mockResolvedValue(makeProject());
 
       await expect(service.update("proj-1", "user-1", {})).rejects.toMatchObject({
@@ -299,10 +347,10 @@ describe("VideoProjectService", () => {
       expect(repo.update).not.toHaveBeenCalled();
     });
 
-    it("throws 400 when workingTitle is whitespace only", async () => {
+    it("throws 400 when title is whitespace only", async () => {
       repo.findById.mockResolvedValue(makeProject());
 
-      await expect(service.update("proj-1", "user-1", { workingTitle: "   " })).rejects.toMatchObject({
+      await expect(service.update("proj-1", "user-1", { title: "   " })).rejects.toMatchObject({
         statusCode: 400,
       });
     });
@@ -310,7 +358,7 @@ describe("VideoProjectService", () => {
     it("throws 404 when project not found (delegates to getById)", async () => {
       repo.findById.mockResolvedValue(null);
 
-      await expect(service.update("proj-1", "user-1", { workingTitle: "Title" })).rejects.toMatchObject({
+      await expect(service.update("proj-1", "user-1", { title: "Title" })).rejects.toMatchObject({
         statusCode: 404,
       });
     });
@@ -350,7 +398,7 @@ describe("VideoProjectService", () => {
     });
 
     it("throws 403 when project belongs to a different user", async () => {
-      repo.findById.mockResolvedValue(makeProject({ userId: "other-user" }));
+      repo.findById.mockResolvedValue(makeProject({ createdBy: "other-user" }));
 
       await expect(service.delete("proj-1", "user-1")).rejects.toMatchObject({
         statusCode: 403,
@@ -508,7 +556,7 @@ describe("VideoProjectService", () => {
 
     it("packaging -> packaging (terminal step stays)", async () => {
       repo.findById.mockResolvedValue(
-        makeProject({ currentStep: "packaging", pipeline: { ...makeProject().pipeline, packaging: { status: "in_progress", startedAt: null, completedAt: null, items: { titles: "not_started", description: "not_started", thumbnail: "not_started", shorts: "not_started" } } } })
+        makeProject({ currentStep: "packaging", pipeline: { ...makeProject().pipeline, packaging: { status: "in_progress", startedAt: null, completedAt: null } } })
       );
       repo.update.mockResolvedValue(undefined);
 
@@ -522,7 +570,7 @@ describe("VideoProjectService", () => {
         research: { status: "completed", startedAt: null, completedAt: null },
         script: { status: "completed", startedAt: null, completedAt: null },
         hooks: { status: "completed", startedAt: null, completedAt: null },
-        packaging: { status: "in_progress", startedAt: null, completedAt: null, items: { titles: "not_started", description: "not_started", thumbnail: "not_started", shorts: "not_started" } },
+        packaging: { status: "in_progress", startedAt: null, completedAt: null },
       };
       repo.findById.mockResolvedValue(makeProject({ pipeline: allCompletedPipeline }));
       repo.update.mockResolvedValue(undefined);
@@ -639,7 +687,7 @@ describe("VideoProjectService", () => {
             research: { status: "completed", startedAt: null, completedAt: null },
             script: { status: "completed", startedAt: null, completedAt: null },
             hooks: { status: "completed", startedAt: null, completedAt: null },
-            packaging: { status: "in_progress", startedAt: null, completedAt: null, items: { titles: "not_started", description: "not_started", thumbnail: "not_started", shorts: "not_started" } },
+            packaging: { status: "in_progress", startedAt: null, completedAt: null },
           },
         })
       );
@@ -663,7 +711,7 @@ describe("VideoProjectService", () => {
             research: { status: "completed", startedAt: null, completedAt: null },
             script: { status: "completed", startedAt: null, completedAt: null },
             hooks: { status: "not_started", startedAt: null, completedAt: null },
-            packaging: { status: "not_started", startedAt: null, completedAt: null, items: { titles: "not_started", description: "not_started", thumbnail: "not_started", shorts: "not_started" } },
+            packaging: { status: "not_started", startedAt: null, completedAt: null },
           },
         })
       );
@@ -673,7 +721,7 @@ describe("VideoProjectService", () => {
       expect(repo.update).not.toHaveBeenCalled();
     });
 
-    it("sets overallStatus to in_progress when it was completed", async () => {
+    it("sets overallStatus to stale when a downstream step is staled", async () => {
       repo.findById.mockResolvedValue(
         makeProject({
           overallStatus: "completed",
@@ -681,7 +729,7 @@ describe("VideoProjectService", () => {
             research: { status: "completed", startedAt: null, completedAt: null },
             script: { status: "completed", startedAt: null, completedAt: null },
             hooks: { status: "completed", startedAt: null, completedAt: null },
-            packaging: { status: "completed", startedAt: null, completedAt: null, items: { titles: "not_started", description: "not_started", thumbnail: "not_started", shorts: "not_started" } },
+            packaging: { status: "completed", startedAt: null, completedAt: null },
           },
         })
       );
@@ -691,7 +739,7 @@ describe("VideoProjectService", () => {
 
       expect(repo.update).toHaveBeenCalledWith(
         "proj-1",
-        expect.objectContaining({ overallStatus: "in_progress" })
+        expect.objectContaining({ overallStatus: "stale" })
       );
     });
 
@@ -702,7 +750,7 @@ describe("VideoProjectService", () => {
             research: { status: "completed", startedAt: null, completedAt: null },
             script: { status: "completed", startedAt: null, completedAt: null },
             hooks: { status: "not_started", startedAt: null, completedAt: null },
-            packaging: { status: "not_started", startedAt: null, completedAt: null, items: { titles: "not_started", description: "not_started", thumbnail: "not_started", shorts: "not_started" } },
+            packaging: { status: "not_started", startedAt: null, completedAt: null },
           },
         })
       );

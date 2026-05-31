@@ -29,8 +29,8 @@ export interface IVideoProjectPipeline {
 
 export interface IVideoProject {
   id: string;
-  userId: string;
-  workingTitle: string;
+  createdBy: string;
+  title: string;
   topicId: string;
   scriptId: string | null;
   hooksId: string | null;
@@ -43,7 +43,7 @@ export interface IVideoProject {
   isDeleted: boolean;
   deletedAt: Timestamp | null;
   createdAt: Timestamp;
-  lastUpdatedAt: Timestamp;
+  updatedAt: Timestamp;
 }
 
 export interface ICreateVideoProjectBody {
@@ -51,7 +51,7 @@ export interface ICreateVideoProjectBody {
 }
 
 export interface IUpdateVideoProjectBody {
-  workingTitle?: string;
+  title?: string;
 }
 
 export interface ILinkResourceBody {
