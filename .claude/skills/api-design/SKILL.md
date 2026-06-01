@@ -182,7 +182,7 @@ PATCH  /v1/topics/edit/:topicId
 POST   /v1/topics/:topicId/regenerate
 PATCH  /v1/topics/:topicId/feedback
 
-GET    /v1/scripts/stream/:scriptId    (SSE, ?token= auth)
+GET    /v1/scripts/stream/:projectId    (SSE, ?token= auth)
 GET    /v1/scripts
 GET    /v1/scripts/:scriptId
 PATCH  /v1/scripts/edit/:scriptId

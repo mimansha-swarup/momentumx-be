@@ -41,7 +41,7 @@ Generate 3 alternative title variations. Titles are 50–70 characters, search-o
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `script` | `string` | Yes | Full script text |
-| `selectedHook` | `string` | No | If provided, AI uses this hook as context when generating titles |
+| `videoProjectId` | `string` | No | If provided, the server resolves the project's selected hook (`hooksId` + `selectedHookIndex`) and injects it as context. The hook is never sent by the client. |
 
 ### Response — `200`
 ```json
@@ -71,7 +71,7 @@ Generate an SEO-optimized YouTube description. Hook before "Show More", keywords
 |---|---|---|---|
 | `script` | `string` | Yes | Full script text |
 | `title` | `string` | Yes | Video title |
-| `selectedHook` | `string` | No | If provided, AI uses this hook as context |
+| `videoProjectId` | `string` | No | If provided, the server resolves the project's selected hook and injects it as context. The hook is never sent by the client. |
 
 ### Response — `200`
 ```json
@@ -97,7 +97,7 @@ Generate 3 thumbnail design concepts. Each is a design brief (not a rendered ima
 |---|---|---|---|
 | `script` | `string` | Yes | Full script text |
 | `title` | `string` | Yes | Video title |
-| `selectedHook` | `string` | No | If provided, AI uses this hook as context |
+| `videoProjectId` | `string` | No | If provided, the server resolves the project's selected hook and injects it as context. The hook is never sent by the client. |
 
 ### Response — `200`
 ```json
@@ -297,7 +297,8 @@ Regenerates a single packaging item and overwrites it on the existing document. 
 | `script` | `string` | Yes | Full script text |
 | `title` | `string` | No | Required when `item` is `description` or `thumbnail` |
 | `duration` | `number` | No | Required when `item` is `shorts` |
-| `selectedHook` | `string` | No | Passed as context for `title`, `description`, `thumbnail` |
+
+> **No `videoProjectId` in the body.** On regenerate the server reads the `videoProjectId` already stored on the packaging document and resolves the project's selected hook from it. The client never sends `videoProjectId` (or the hook) here — sending one is ignored. (First-time generation via `/generate-title|description|thumbnail` still accepts `videoProjectId` in the body, because no packaging document exists yet.)
 
 ### Response — `200`
 

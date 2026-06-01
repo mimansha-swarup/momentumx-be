@@ -19,7 +19,7 @@ All endpoints require `Authorization: Bearer <token>`. `authMiddleware` applied 
 
 | Method | URL | Purpose |
 |---|---|---|
-| `POST` | `/v1/video-projects` | Create project from selected topic |
+| `POST` | `/v1/video-projects` | Create project from a topic id or a new title |
 | `GET` | `/v1/video-projects` | List user's projects (dashboard) |
 | `GET` | `/v1/video-projects/:projectId` | Get single project with full pipeline state |
 | `PATCH` | `/v1/video-projects/:projectId` | Update working title |
@@ -32,20 +32,25 @@ All endpoints require `Authorization: Bearer <token>`. `authMiddleware` applied 
 
 ## POST `/v1/video-projects`
 
-Create a new Video Project from a selected topic. Called when the creator picks a topic in Research.
+Create a new Video Project. Accepts **exactly one** of `topicId` (commit an AI candidate) or `title` ("add your own idea"). Providing both or neither returns 400.
 
 ### Request Body
 ```json
 { "topicId": "string" }
 ```
+or
+```json
+{ "title": "string" }
+```
 
 ### Server-Side Behavior
-1. Validate `topicId` present
-2. Fetch topic from `Collection.TOPICS` — 404 if not found
-3. Verify `topic.createdBy == req.userId` — 403 if not
-4. Fetch `topic.title` for `title`
-5. Create `videoProjects` document with Firestore auto-ID
-6. Set all creation fields per schema in spec.md
+1. Validate exactly one of `topicId` / `title` is present — 400 otherwise
+2. **`title` path:** create the topic (with embedding) via `createFromTitle`, then proceed with the new topic's id
+3. Fetch topic from `Collection.TOPICS` — 404 if not found
+4. Verify `topic.createdBy == req.userId` — 403 if not
+5. Use `topic.title` as the project `title`
+6. Create `videoProjects` document with Firestore auto-ID
+7. Set all creation fields per schema in spec.md
 
 ### Response — `201`
 ```json
@@ -76,9 +81,9 @@ Create a new Video Project from a selected topic. Called when the creator picks 
 ### Error Cases
 | Status | Condition |
 |---|---|
-| `400` | `topicId` missing |
-| `403` | Topic belongs to a different user |
-| `404` | Topic not found |
+| `400` | Neither or both of `topicId` / `title` provided |
+| `403` | Topic belongs to a different user (`topicId` path) |
+| `404` | Topic not found (`topicId` path) |
 | `500` | Firestore write failed |
 
 ---

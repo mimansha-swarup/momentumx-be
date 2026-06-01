@@ -114,7 +114,7 @@ Filtering by `userId` first is required for both security (only return the user'
 ```
 users          — user profiles, onboarding data, channel/competitor info
 topics         — generated title ideas with vector embeddings
-scripts        — full video scripts (document ID = topic ID)
+scripts        — full video scripts (document ID = own UUID; topicId + videoProjectId FKs link back)
 hooks          — hook batches tied to video projects, per-hook feedback
 packaging      — packaged assets with per-item status tracking and stale cascade
 videoProjects  — pipeline state machine linking topics → scripts → hooks → packaging

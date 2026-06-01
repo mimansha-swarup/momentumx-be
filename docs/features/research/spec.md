@@ -114,7 +114,7 @@ Creates a completely fresh batch of 10 topic ideas. Old batch is archived, not d
 - Old topics: `archived: true` on all documents in the old batch.
 - New topics get a new `batchId`.
 - KMeans clustering includes the newly archived batch for the next generation.
-- **Stale cascade:** If a video project has a selected topic from the old batch, the Script, Hooks, and Packaging steps are marked `stale: true`. The video project is not deleted — the stale warning prompts the creator to take action.
+- **Stale cascade:** For each archived topic, the cascade fans out to **all** video projects backed by that topic (looked up via `getProjectsByTopic` → `findByTopicId`) — the Script, Hooks, and Packaging steps on every such project are marked `stale: true`. The projects are not deleted — the stale warning prompts the creator to take action.
 
 ### Regenerate One
 
@@ -155,7 +155,7 @@ Each generated topic is saved to Firestore with:
 | Generation fails (Gemini error) | Error response returned. Status stays `not_started` or `in_review`. Creator can retry. |
 | All generated titles fail embedding | Titles where embedding fails are silently dropped from the batch. If zero succeed, a "Unable to generate at the moment" error is returned. |
 | Creator has no onboarding data | Generation will produce generic output. No explicit error — this is a product gap to address with onboarding enforcement. |
-| Creator regenerates while a video project has a selected topic | Old batch is archived, selected topic is stale-cascaded to downstream steps (Script, Hooks, Packaging). Creator is warned. |
+| Creator regenerates while video projects exist on active topics | Old batch is archived; the stale cascade fans out to all projects backed by each archived topic, marking their downstream steps (Script, Hooks, Packaging) stale. Creator is warned. |
 | Creator selects a topic from an archived batch | Not currently prevented. Will need a guard once video project model ships. |
 
 ---

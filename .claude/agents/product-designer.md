@@ -46,7 +46,7 @@ Packaging documents have no `scriptId` or `topicId` foreign key. Do not design f
 **Firestore collections (current):**
 - `users` — user profiles, onboarding data, channel/competitor info
 - `topics` — generated title ideas with vector embeddings
-- `scripts` — full video scripts (document ID = topic ID)
+- `scripts` — full video scripts (document ID = own UUID; topicId + videoProjectId FKs link back)
 - `packaging` — packaged assets (disconnected from topic/script by ID)
 
 **Existing API routes:**
@@ -54,7 +54,7 @@ Packaging documents have no `scriptId` or `topicId` foreign key. Do not design f
 /v1/user      — PATCH /onboarding, GET /profile, PATCH /profile
 /v1/topics    — POST /generate, GET /, GET /export, POST /regenerate-all,
                 PATCH /edit/:topicId, POST /:topicId/regenerate, PATCH /:topicId/feedback
-/v1/scripts   — GET /stream/:scriptId (SSE, ?token=), GET /, GET /:scriptId,
+/v1/scripts   — GET /stream/:projectId (SSE, ?token=), GET /, GET /:scriptId,
                 PATCH /edit/:scriptId, POST /:scriptId/regenerate,
                 PATCH /:scriptId/feedback, GET /:scriptId/export
 /v1/hooks     — POST /generate, POST /:hooksId/select, POST /:hooksId/regenerate,

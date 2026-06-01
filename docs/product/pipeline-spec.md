@@ -205,7 +205,7 @@ Replaces the entire current batch of generated items. Old batch is **archived** 
 - Triggers: `any status` → `generating`
 - Old items: `archived: true` on all documents in the old batch
 - New batch gets a new `batchId`
-- Stale cascade fires on downstream steps
+- Stale cascade fires on downstream steps of **every** project backed by each archived topic (looked up via `getProjectsByTopic` → `findByTopicId`), not just a single linked project
 
 ### Regenerate One
 
@@ -232,7 +232,9 @@ Rationale:
 
 ## Concurrent Video Projects
 
-A creator can have multiple video projects active simultaneously. Each video project is independent — status transitions on one do not affect any other. There is no cross-project KMeans context — clustering is already per-user globally.
+A creator can have multiple video projects active simultaneously, **including multiple projects on the same topic** — each project owns its own script document (via the script's decoupled UUID id), so they never collide. Each video project is independent — status transitions on one do not affect any other. There is no cross-project KMeans context — clustering is already per-user globally.
+
+When the source topic is regenerated (Regenerate All), the stale cascade fans out to **all** projects backed by that topic, not just one.
 
 ---
 
@@ -295,11 +297,20 @@ Add to existing topic documents:
 
 ### Updated: `scripts`
 
-Add to existing script documents:
+A script document now has its **own** `randomUUID` document ID — it is no longer the source topic's ID. The script links back to its topic and project via foreign-key fields:
+
 ```
-  videoProjectId: string | null
-  stale: boolean
+scripts/{scriptId}
+  id: string                 // own randomUUID — NOT the topicId
+  title: string              // title of the source topic
+  createdBy: string          // userId of the owner
+  createdAt: Timestamp       // server-side
+  script: string             // full script text
+  topicId: string            // FK → topics collection (source topic)
+  videoProjectId: string     // FK → videoProjects collection (owning project)
 ```
+
+Because each project mints its own script doc, multiple projects can share one topic while each owns an independent script.
 
 ### Updated: `packaging`
 

@@ -18,7 +18,7 @@ REST conventions and response standards for the MomentumX API. All endpoints —
 
 ```
 ✅ /v1/topics
-✅ /v1/scripts/stream/:scriptId
+✅ /v1/scripts/stream/:projectId
 ✅ /v1/packaging/generate-title
 ✅ /v1/user/profile
 
@@ -51,7 +51,7 @@ router.use(authMiddleware);
 router.get('/topics', controller.getTopics);
 ```
 
-**SSE exception:** `GET /v1/scripts/stream/:scriptId` uses `?token=` query param.
+**SSE exception:** `GET /v1/scripts/stream/:projectId` uses `?token=` query param.
 Reason: browser EventSource API cannot send Authorization headers.
 Token is verified manually in the controller before the stream starts.
 
@@ -142,7 +142,7 @@ All collection names live in `src/constants/collection.ts`. Add new names there 
   PATCH /:topicId/feedback     — like/dislike on a topic
 
 /v1/scripts
-  GET   /stream/:scriptId      — SSE: generate + stream script (?token= auth)
+  GET   /stream/:projectId     — SSE: generate + stream script (?token= auth)
   GET   /                      — list saved scripts
   GET   /:scriptId             — get single script
   PATCH /edit/:scriptId        — update script content
