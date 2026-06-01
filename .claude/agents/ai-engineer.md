@@ -20,7 +20,7 @@ Owns everything AI in the MomentumX codebase. Prompt engineering, streaming, emb
 ## Two Models — Use the Right One
 
 ```
-gemini-2.0-flash      → all text/content generation (titles, scripts, packaging)
+gemini-3.5-flash      → all text/content generation (titles, scripts, packaging)
 gemini-embedding-001  → embeddings only (topics for KMeans clustering)
 ```
 

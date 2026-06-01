@@ -150,12 +150,19 @@ A creator can start multiple Video Projects on the same topic. No lock on topics
 5. Backend applies cascade:
    - pipeline.hooks.status = "stale"
    - pipeline.packaging.status = "stale"
-   - overallStatus = "in_progress"
+   - overallStatus = "stale"
 6. Creator sees stale warning on Hooks and Packaging.
 7. Creator re-does Hooks and Packaging.
 ```
 
 > There is no client-callable stale endpoint. Stale cascade is triggered automatically server-side by regeneration services.
+
+### Stale Recovery (Clearing a Stale Step)
+
+Stale clears only by regenerating the affected step — there is no "dismiss" action. Re-completing a step recomputes `overallStatus` (it stays `"stale"` while any step is still stale, becomes `"completed"` when all steps are completed, else `"in_progress"`):
+
+- **Packaging:** when the last stale packaging item is regenerated, `PackagingService.regenerateItem` clears the packaging document's stale flags and calls `VideoProjectService.refreshPackagingStep`, which flips `pipeline.packaging.status` `stale → completed` and recomputes `overallStatus`. Best-effort: a sync failure is logged and never fails the regeneration.
+- **Script / Hooks:** re-completing these steps through their normal flow (script save, hook re-selection) clears their stale status the same way.
 
 ---
 

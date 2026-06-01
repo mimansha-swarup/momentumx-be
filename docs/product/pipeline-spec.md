@@ -163,7 +163,7 @@ The packaging pipeline step uses `StepState` like all other steps. Per-item stat
 | `staleReason: "script_regenerated" \| "hooks_regenerated" \| null` | What caused the stale cascade |
 | `staleSince: Timestamp \| null` | When the cascade happened |
 
-When the last stale item is regenerated, `isStale`, `staleReason`, and `staleSince` are all cleared.
+When the last stale item is regenerated, `isStale`, `staleReason`, and `staleSince` are all cleared on the packaging document. The same regeneration also clears the **project's** stale packaging step: `pipeline.packaging.status` flips `stale → completed` and `overallStatus` is recomputed (it stays `"stale"` if Script or Hooks are still stale), so the dashboard "needs update" badge clears. This project sync is best-effort — a failure is logged and never fails the already-saved regeneration.
 
 ---
 

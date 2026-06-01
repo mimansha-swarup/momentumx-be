@@ -46,7 +46,7 @@ Streams a full video script for the given **video project**. The `:projectId` UR
 3. User profile and the topic (from `project.topicId`) are fetched in parallel — 404 if the topic is missing
 4. The script id is `project.scriptId ?? randomUUID()` — an existing script id is reused on regenerate so the old doc is not orphaned
 5. The script prompt is built by injecting the topic title and user context into `SCRIPT_USER_PROMPT`
-6. Gemini (`gemini-2.0-flash`) streams the response using `GENERATION_CONFIG_SCRIPTS`
+6. Gemini (`gemini-3.5-flash`) streams the response using `GENERATION_CONFIG_SCRIPTS`
 7. Each chunk is forwarded to the client as an SSE event
 8. After the stream ends, the full accumulated text is formatted via `formatGeneratedScript` (storing `topicId` and `videoProjectId` FKs) and saved to Firestore
 9. The topic document is updated: `isScriptGenerated: true`, and the script is linked to the project via `linkResource` + `completeStep`
