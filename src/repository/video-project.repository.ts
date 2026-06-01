@@ -83,6 +83,16 @@ class VideoProjectRepository {
       });
   };
 
+  findByTopicId = async (topicId: string, userId: string): Promise<IVideoProject[]> => {
+    // Equality-only filters (no orderBy) so no composite index is required.
+    const snap = await this.db.collection(this.collection)
+      .where("createdBy", "==", userId)
+      .where("topicId", "==", topicId)
+      .where("isDeleted", "==", false)
+      .get();
+    return snap.docs.map((doc) => doc.data() as IVideoProject);
+  };
+
   findByScriptId = async (scriptId: string, userId: string): Promise<IVideoProject | null> => {
     const snap = await this.db.collection(this.collection)
       .where("scriptId", "==", scriptId)

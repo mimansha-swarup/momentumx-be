@@ -31,16 +31,20 @@ export const formatGeneratedTitle = async (title: string, userId: string, batchI
 };
 export const formatGeneratedScript = (
   title: string,
-  id: string,
+  scriptId: string,
+  topicId: string,
+  videoProjectId: string,
   script: string,
   userId: string,
 ) => {
   return {
-    id: id,
+    id: scriptId,
     title,
     createdBy: userId || "",
     createdAt: firebase.firestore.FieldValue.serverTimestamp(),
     script,
+    topicId,
+    videoProjectId,
   };
 };
 

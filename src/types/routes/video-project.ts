@@ -5,7 +5,7 @@ export type OverallStatus = "in_progress" | "completed" | "stale";
 export type StepName = "research" | "script" | "hooks" | "packaging";
 export type ResourceType = "script" | "hooks" | "packaging";
 export type PackagingItemStatus = "not_started" | "completed" | "stale";
-export type StaleReason = "script_regenerated" | "hooks_regenerated" | null;
+export type StaleReason = "research_regenerated" | "script_regenerated" | "hooks_regenerated" | null;
 
 export interface StepState {
   status: StepStatus;
@@ -47,7 +47,8 @@ export interface IVideoProject {
 }
 
 export interface ICreateVideoProjectBody {
-  topicId: string;
+  topicId?: string;
+  title?: string;
 }
 
 export interface IUpdateVideoProjectBody {

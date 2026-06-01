@@ -7,8 +7,8 @@ class ScriptController {
         // by sseAuthMiddleware (?token= -> req.userId) before this runs.
         this.generateScript = async (req, res) => {
             try {
-                const scriptId = req.params.scriptId;
-                await this.service.generateScripts(req.userId, scriptId, res);
+                const projectId = req.params.projectId;
+                await this.service.generateScripts(req.userId, projectId, res);
             }
             catch (error) {
                 // If the stream hasn't started (e.g. ownership failure before flushHeaders),

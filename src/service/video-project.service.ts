@@ -10,6 +10,7 @@ import {
   StepState,
 } from "../types/routes/video-project.js";
 import { BadRequest, Forbidden, NotFound } from "../utlils/errors.js";
+import { formatGeneratedTitle } from "../utlils/content.js";
 
 const STEP_ORDER: StepName[] = ["research", "script", "hooks", "packaging"];
 const NEXT_STEP: Record<string, StepName> = {
@@ -71,6 +72,19 @@ class VideoProjectService {
     const project = await this.repo.create(projectData);
     await this.contentRepo.updateTopic(topicId, { videoProjectId: project.id });
     return project;
+  };
+
+  createFromTitle = async (userId: string, title: string): Promise<IVideoProject> => {
+    if (!title || !title.trim()) {
+      throw BadRequest("title is required");
+    }
+    const formatted = await formatGeneratedTitle(title.trim(), userId);
+    const [saved] = await this.contentRepo.batchSaveTopics([formatted]);
+    return this.create(userId, saved.id);
+  };
+
+  getProjectsByTopic = async (topicId: string, userId: string): Promise<IVideoProject[]> => {
+    return this.repo.findByTopicId(topicId, userId);
   };
 
   list = async (

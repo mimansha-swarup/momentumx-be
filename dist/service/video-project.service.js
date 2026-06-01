@@ -1,5 +1,6 @@
 import { firebase } from "../config/firebase.js";
 import { BadRequest, Forbidden, NotFound } from "../utlils/errors.js";
+import { formatGeneratedTitle } from "../utlils/content.js";
 const STEP_ORDER = ["research", "script", "hooks", "packaging"];
 const NEXT_STEP = {
     script: "hooks",
@@ -55,6 +56,17 @@ class VideoProjectService {
             const project = await this.repo.create(projectData);
             await this.contentRepo.updateTopic(topicId, { videoProjectId: project.id });
             return project;
+        };
+        this.createFromTitle = async (userId, title) => {
+            if (!title || !title.trim()) {
+                throw BadRequest("title is required");
+            }
+            const formatted = await formatGeneratedTitle(title.trim(), userId);
+            const [saved] = await this.contentRepo.batchSaveTopics([formatted]);
+            return this.create(userId, saved.id);
+        };
+        this.getProjectsByTopic = async (topicId, userId) => {
+            return this.repo.findByTopicId(topicId, userId);
         };
         this.list = async (userId, { status, limit = 20, cursor }) => {
             const validStatuses = ["in_progress", "completed", "stale"];

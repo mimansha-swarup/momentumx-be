@@ -16,7 +16,7 @@ const videoProjectService = new VideoProjectService(videoProjectRepo, contentRep
 const contentService = new ContentService(contentRepository, userRepository, videoProjectService);
 const scriptController = new ScriptController(contentService);
 // SSE endpoint — uses sseAuthMiddleware (?token= query param -> req.userId)
-router.get("/stream/:scriptId", sseAuthMiddleware, scriptController.generateScript);
+router.get("/stream/:projectId", sseAuthMiddleware, scriptController.generateScript);
 router.use(authMiddleware);
 router.get("/", scriptController.retrieveScripts);
 router.patch("/edit/:scriptId", scriptController.editScript);

@@ -27,11 +27,16 @@ jest.mock("../../src/config/firebase", () => ({
   },
 }));
 
+jest.mock("../../src/utlils/content", () => ({
+  formatGeneratedTitle: jest.fn(),
+}));
+
 import VideoProjectService from "../../src/service/video-project.service";
 import VideoProjectRepository from "../../src/repository/video-project.repository";
 import ContentRepository from "../../src/repository/content.repository";
 import PackagingRepository from "../../src/repository/packaging.repository";
 import { IVideoProject } from "../../src/types/routes/video-project";
+import { formatGeneratedTitle } from "../../src/utlils/content";
 
 // ---------------------------------------------------------------------------
 // Factories
@@ -72,13 +77,14 @@ function makeMockRepo(): jest.Mocked<VideoProjectRepository> {
   return {
     create: jest.fn(),
     findById: jest.fn(),
+    findByTopicId: jest.fn(),
     list: jest.fn(),
     update: jest.fn(),
   } as unknown as jest.Mocked<VideoProjectRepository>;
 }
 
 function makeMockContentRepo(): jest.Mocked<ContentRepository> {
-  return { getTopic: jest.fn(), updateTopic: jest.fn() } as unknown as jest.Mocked<ContentRepository>;
+  return { getTopic: jest.fn(), updateTopic: jest.fn(), batchSaveTopics: jest.fn() } as unknown as jest.Mocked<ContentRepository>;
 }
 
 function makeMockPackagingRepo(): jest.Mocked<PackagingRepository> {
@@ -168,6 +174,50 @@ describe("VideoProjectService", () => {
       const payload = repo.create.mock.calls[0][0] as any;
       expect(payload.overallStatus).toBe("in_progress");
       expect(payload.currentStep).toBe("research");
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // createFromTitle (add-your-own-idea)
+  // --------------------------------------------------------------------------
+
+  describe("createFromTitle(userId, title)", () => {
+    it("creates a topic from the title, then a project from the saved topic id", async () => {
+      (formatGeneratedTitle as jest.Mock).mockResolvedValue({ title: "My Idea", createdBy: "user-1" });
+      contentRepo.batchSaveTopics.mockResolvedValue([{ id: "topic-x", title: "My Idea", createdBy: "user-1" }] as any);
+      contentRepo.getTopic.mockResolvedValue({ title: "My Idea", createdBy: "user-1" });
+      repo.create.mockResolvedValue(makeProject({ topicId: "topic-x" }));
+
+      const result = await service.createFromTitle("user-1", "My Idea");
+
+      expect(formatGeneratedTitle).toHaveBeenCalledWith("My Idea", "user-1");
+      expect(contentRepo.batchSaveTopics).toHaveBeenCalledTimes(1);
+      // create() was reused with the saved topic id
+      expect(contentRepo.getTopic).toHaveBeenCalledWith("topic-x");
+      expect(repo.create).toHaveBeenCalledTimes(1);
+      expect(result).toBeDefined();
+    });
+
+    it("throws 400 on a blank/whitespace title and does not create anything", async () => {
+      await expect(service.createFromTitle("user-1", "   ")).rejects.toMatchObject({ statusCode: 400 });
+      expect(formatGeneratedTitle).not.toHaveBeenCalled();
+      expect(contentRepo.batchSaveTopics).not.toHaveBeenCalled();
+      expect(repo.create).not.toHaveBeenCalled();
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // getProjectsByTopic (Regenerate-All stale fan-out support)
+  // --------------------------------------------------------------------------
+
+  describe("getProjectsByTopic(topicId, userId)", () => {
+    it("delegates to repo.findByTopicId and returns all matching projects", async () => {
+      repo.findByTopicId.mockResolvedValue([makeProject(), makeProject({ id: "proj-2" })]);
+
+      const result = await service.getProjectsByTopic("topic-1", "user-1");
+
+      expect(repo.findByTopicId).toHaveBeenCalledWith("topic-1", "user-1");
+      expect(result).toHaveLength(2);
     });
   });
 

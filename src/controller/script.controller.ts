@@ -15,8 +15,8 @@ class ScriptController {
   // by sseAuthMiddleware (?token= -> req.userId) before this runs.
   generateScript = async (req: Request, res: Response) => {
     try {
-      const scriptId = req.params.scriptId;
-      await this.service.generateScripts(req.userId, scriptId, res);
+      const projectId = req.params.projectId;
+      await this.service.generateScripts(req.userId, projectId, res);
     } catch (error) {
       // If the stream hasn't started (e.g. ownership failure before flushHeaders),
       // return a clean error. Once headers are flushed, only [DONE] can be sent, so just end.

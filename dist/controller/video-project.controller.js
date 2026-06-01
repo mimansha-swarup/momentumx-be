@@ -4,11 +4,13 @@ class VideoProjectController {
     constructor(service) {
         this.service = service;
         this.create = asyncHandler(async (req, res) => {
-            const { topicId } = req.body;
-            if (!topicId) {
-                throw BadRequest("topicId is required");
+            const { topicId, title } = req.body;
+            if (Boolean(topicId) === Boolean(title)) {
+                throw BadRequest("Provide exactly one of topicId or title");
             }
-            const data = await this.service.create(req.userId, topicId);
+            const data = topicId
+                ? await this.service.create(req.userId, topicId)
+                : await this.service.createFromTitle(req.userId, title);
             res.sendSuccess({ data, message: "Video project created successfully", statusCode: 201 });
         });
         this.list = asyncHandler(async (req, res) => {

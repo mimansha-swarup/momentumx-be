@@ -98,7 +98,7 @@ describe("ContentService — regenerateScript", () => {
   let mockContentRepo: jest.Mocked<ContentRepository>;
   let mockUserRepo: jest.Mocked<UserRepository>;
   const mockVpService = {
-    getByScriptId: jest.fn(),
+    getById: jest.fn(),
     markStale: jest.fn(),
     markPackagingDocumentStale: jest.fn(),
   };
@@ -114,8 +114,9 @@ describe("ContentService — regenerateScript", () => {
     mockUserRepo.get = jest.fn().mockResolvedValue(userRecord);
     mockContentRepo.editScript = jest.fn().mockResolvedValue(undefined);
     mockGenerateStreaming.mockResolvedValue(makeScriptStream("Generated script text."));
-    mockVpService.getByScriptId.mockResolvedValue({ id: "proj-1" });
+    mockVpService.getById.mockResolvedValue({ id: "proj-1" });
     mockVpService.markStale.mockResolvedValue(undefined);
+    mockVpService.markPackagingDocumentStale.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -149,7 +150,7 @@ describe("ContentService — regenerateScript", () => {
   });
 
   it("does not throw if no linked project", async () => {
-    mockVpService.getByScriptId.mockResolvedValue(null);
+    mockContentRepo.getScriptById = jest.fn().mockResolvedValue({ ...scriptDoc, videoProjectId: null });
     const result = await service.regenerateScript("user-1", "script-1");
     await new Promise(r => setTimeout(r, 0));
     expect(result.id).toBe("script-1");
@@ -240,13 +241,81 @@ describe("ContentService — edit whitelist & SSE ownership guard", () => {
     expect(result).toEqual({ script: "new body", title: "new title" });
   });
 
-  it("generateScripts throws 403 and does not stream when the topic belongs to another user", async () => {
+  it("generateScripts throws 403 and does not stream when the project belongs to another user", async () => {
+    // Project ownership is now enforced by videoProjectService.getById, which
+    // throws Forbidden for a project the user doesn't own.
+    const { Forbidden } = await import("../../src/utlils/errors");
+    const mockVp = {
+      getById: jest.fn().mockRejectedValue(Forbidden()),
+      startStep: jest.fn(),
+      completeStep: jest.fn(),
+      linkResource: jest.fn(),
+    };
+    service = new ContentService(mockContentRepo, mockUserRepo, mockVp as any);
     mockUserRepo.get = jest.fn().mockResolvedValue({});
-    mockContentRepo.getTopic = jest.fn().mockResolvedValue({ id: "t-1", createdBy: "other-user", title: "T" });
     const res = { setHeader: jest.fn(), flushHeaders: jest.fn(), write: jest.fn(), end: jest.fn() };
-    const err = await service.generateScripts("user-1", "t-1", res as any).catch((e) => e);
+    const err = await service.generateScripts("user-1", "proj-1", res as any).catch((e) => e);
     expect(err.statusCode).toBe(403);
     expect(res.flushHeaders).not.toHaveBeenCalled();
     expect(mockGenerateStreaming).not.toHaveBeenCalled();
+  });
+});
+
+describe("ContentService — generateScripts project-scoped script id & FKs", () => {
+  let service: ContentService;
+  let mockContentRepo: jest.Mocked<ContentRepository>;
+  let mockUserRepo: jest.Mocked<UserRepository>;
+  let mockVp: {
+    getById: jest.Mock;
+    startStep: jest.Mock;
+    completeStep: jest.Mock;
+    linkResource: jest.Mock;
+  };
+
+  const makeRes = () => ({ setHeader: jest.fn(), flushHeaders: jest.fn(), write: jest.fn(), end: jest.fn() });
+
+  beforeEach(() => {
+    mockContentRepo = new MockContentRepo() as jest.Mocked<ContentRepository>;
+    mockUserRepo = new MockUserRepo() as jest.Mocked<UserRepository>;
+    mockVp = {
+      getById: jest.fn(),
+      startStep: jest.fn().mockResolvedValue(undefined),
+      completeStep: jest.fn().mockResolvedValue(undefined),
+      linkResource: jest.fn().mockResolvedValue(undefined),
+    };
+    service = new ContentService(mockContentRepo, mockUserRepo, mockVp as any);
+    mockUserRepo.get = jest.fn().mockResolvedValue({ brandName: "B", targetAudience: "a", competitors: [], niche: "n", websiteContent: "c" });
+    mockUserRepo.update = jest.fn().mockResolvedValue(undefined);
+    mockContentRepo.getTopic = jest.fn().mockResolvedValue({ id: "topic-1", createdBy: "user-1", title: "My Topic" });
+    mockContentRepo.saveScript = jest.fn().mockResolvedValue(undefined);
+    mockContentRepo.updateTopic = jest.fn().mockResolvedValue(undefined);
+    mockGenerateStreaming.mockResolvedValue(makeScriptStream("Streamed script body."));
+  });
+
+  afterEach(() => jest.clearAllMocks());
+
+  it("saves a script whose id !== topicId and carries topicId + videoProjectId FKs (first generation)", async () => {
+    mockVp.getById.mockResolvedValue({ id: "proj-1", topicId: "topic-1", scriptId: null });
+    await service.generateScripts("user-1", "proj-1", makeRes() as any);
+
+    expect(mockContentRepo.saveScript).toHaveBeenCalledTimes(1);
+    const [savedId, savedDoc] = mockContentRepo.saveScript.mock.calls[0] as [string, Record<string, unknown>];
+    expect(savedId).not.toBe("topic-1");
+    expect(typeof savedId).toBe("string");
+    expect(savedDoc.topicId).toBe("topic-1");
+    expect(savedDoc.videoProjectId).toBe("proj-1");
+    // FK on the saved doc matches the document id it was stored under
+    expect(savedDoc.id).toBe(savedId);
+    // pipeline linked the same id
+    expect(mockVp.linkResource).toHaveBeenCalledWith("proj-1", "script", savedId, "user-1");
+  });
+
+  it("reuses project.scriptId on regenerate (no new id minted)", async () => {
+    mockVp.getById.mockResolvedValue({ id: "proj-1", topicId: "topic-1", scriptId: "existing-script-id" });
+    await service.generateScripts("user-1", "proj-1", makeRes() as any);
+
+    const [savedId] = mockContentRepo.saveScript.mock.calls[0];
+    expect(savedId).toBe("existing-script-id");
+    expect(mockVp.linkResource).toHaveBeenCalledWith("proj-1", "script", "existing-script-id", "user-1");
   });
 });

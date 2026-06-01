@@ -3,39 +3,39 @@ import { BadRequest, NotFound } from "../utlils/errors.js";
 class PackagingController {
     constructor(service) {
         this.generateTitle = asyncHandler(async (req, res) => {
-            const { script, selectedHook } = req.body;
+            const { script, videoProjectId } = req.body;
             if (!script) {
                 throw BadRequest("Script is required");
             }
-            const data = await this.service.generateTitle(script, selectedHook);
+            const data = await this.service.generateTitle(req.userId, script, videoProjectId);
             res.sendSuccess({
                 message: "Title generated successfully",
                 data,
             });
         });
         this.generateDescription = asyncHandler(async (req, res) => {
-            const { script, title, selectedHook } = req.body;
+            const { script, title, videoProjectId } = req.body;
             if (!script) {
                 throw BadRequest("Script is required");
             }
             if (!title) {
                 throw BadRequest("Title is required");
             }
-            const data = await this.service.generateDescription(script, title, selectedHook);
+            const data = await this.service.generateDescription(req.userId, script, title, videoProjectId);
             res.sendSuccess({
                 message: "Description generated successfully",
                 data,
             });
         });
         this.generateThumbnail = asyncHandler(async (req, res) => {
-            const { script, title, selectedHook } = req.body;
+            const { script, title, videoProjectId } = req.body;
             if (!script) {
                 throw BadRequest("Script is required");
             }
             if (!title) {
                 throw BadRequest("Title is required");
             }
-            const data = await this.service.generateThumbnail(script, title, selectedHook);
+            const data = await this.service.generateThumbnail(req.userId, script, title, videoProjectId);
             res.sendSuccess({
                 message: "Thumbnail instructions generated successfully",
                 data,
@@ -83,11 +83,11 @@ class PackagingController {
         });
         this.regenerateItem = asyncHandler(async (req, res) => {
             const { packagingId, item } = req.params;
-            const { script, title, duration, selectedHook } = req.body;
+            const { script, title, duration } = req.body;
             if (!script) {
                 throw BadRequest("script is required");
             }
-            const data = await this.service.regenerateItem(req.userId, packagingId, item, script, title, duration, selectedHook);
+            const data = await this.service.regenerateItem(req.userId, packagingId, item, script, title, duration);
             res.sendSuccess({ message: "Packaging item regenerated successfully", data });
         });
         this.updateFeedback = asyncHandler(async (req, res) => {

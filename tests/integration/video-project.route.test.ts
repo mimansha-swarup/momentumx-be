@@ -42,6 +42,7 @@ jest.mock("../../src/middleware/auth", () => ({
 // Stable service mock instance (mock-prefix allows use in hoisted jest.mock factory)
 const mockServiceInstance = {
   create: jest.fn(),
+  createFromTitle: jest.fn(),
   list: jest.fn(),
   getById: jest.fn(),
   getReconciledById: jest.fn(),
@@ -116,10 +117,32 @@ describe("POST /v1/video-projects", () => {
     expect(res.body.data).toBeDefined();
   });
 
-  it("returns 400 when topicId is missing", async () => {
+  it("returns 201 creating from a title (project-first, no pre-existing topic)", async () => {
+    getService().createFromTitle.mockResolvedValueOnce({ ...PROJECT_STUB, title: "My Idea" } as any);
+
+    const res = await request(app)
+      .post("/v1/video-projects")
+      .send({ title: "My Idea" });
+
+    expect(res.status).toBe(201);
+    expect(res.body.success).toBe(true);
+    expect(getService().createFromTitle).toHaveBeenCalledWith("test-user-id", "My Idea");
+    expect(getService().create).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 when neither topicId nor title is provided", async () => {
     const res = await request(app)
       .post("/v1/video-projects")
       .send({});
+
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+  });
+
+  it("returns 400 when both topicId and title are provided", async () => {
+    const res = await request(app)
+      .post("/v1/video-projects")
+      .send({ topicId: "topic-1", title: "My Idea" });
 
     expect(res.status).toBe(400);
     expect(res.body.success).toBe(false);

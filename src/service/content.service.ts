@@ -87,7 +87,7 @@ class ContentService {
     }
   };
 
-  generateTopics = async (userId: string) => {
+  generateTopics = async (userId: string, countTowardStats = true) => {
     try {
       const similarTitles = await getClusteredTitles(userId, this.repo);
 
@@ -121,11 +121,13 @@ class ContentService {
 
       const parsedRes = JSON.parse(accumulatedRes) as string[];
 
-      this.userRepo.update(userId, {
-        "stats.topics": firebase.firestore.FieldValue.increment(
-          parsedRes.length,
-        ),
-      });
+      if (countTowardStats) {
+        this.userRepo.update(userId, {
+          "stats.topics": firebase.firestore.FieldValue.increment(
+            parsedRes.length,
+          ),
+        });
+      }
 
       return parsedRes;
     } catch (error) {
@@ -167,21 +169,27 @@ class ContentService {
     return updates;
   };
 
-  generateScripts = async (userId: string, scriptId: string, res: Response) => {
+  generateScripts = async (userId: string, projectId: string, res: Response) => {
     try {
-      const [userRecord, titleRecord] = await Promise.all([
+      // Project is mandatory now — load it first (throws NotFound/Forbidden).
+      const vps = this.videoProjectService;
+      if (!vps) {
+        throw NotFound("Video project service unavailable");
+      }
+      const project = await vps.getById(projectId, userId);
+
+      const [userRecord, topic] = await Promise.all([
         this.userRepo.get(userId),
-        this.repo.getTopic(scriptId),
+        this.repo.getTopic(project.topicId),
       ]);
 
-      // Existence + ownership guards — every other script method enforces these; the SSE
-      // path must too. Checked before flushHeaders so the controller can return a clean status.
-      if (!titleRecord) {
+      if (!topic) {
         throw NotFound("Topic not found");
       }
-      if (titleRecord.createdBy !== userId) {
-        throw Forbidden();
-      }
+
+      // Reuse the existing script id on regenerate — minting a new uuid when
+      // project.scriptId is set would orphan the old script doc.
+      const scriptId = project.scriptId ?? randomUUID();
 
       let userPrompt = SCRIPT_USER_PROMPT.replace(
         "{userName}",
@@ -191,7 +199,7 @@ class ContentService {
         .replace("{competitors}", formatCompetitorUrls(userRecord?.competitors))
         .replace("{niche}", userRecord?.niche ?? "")
         .replace("{websiteContent}", userRecord?.websiteContent ?? "")
-        .replace("{title}", titleRecord?.title ?? "");
+        .replace("{title}", topic?.title ?? "");
 
       const result = await generateStreamingContent(
         SCRIPT_SYSTEM_PROMPT,
@@ -201,12 +209,10 @@ class ContentService {
 
       let accumulatedRes = "";
 
-      if (titleRecord?.videoProjectId && this.videoProjectService) {
-        try {
-          await this.videoProjectService.startStep(titleRecord.videoProjectId, "script", userId);
-        } catch (stepError) {
-          console.error(JSON.stringify({ event: "pipeline_start_failed", step: "script", projectId: titleRecord.videoProjectId, userId, message: (stepError as Error)?.message }));
-        }
+      try {
+        await vps.startStep(projectId, "script", userId);
+      } catch (stepError) {
+        console.error(JSON.stringify({ event: "pipeline_start_failed", step: "script", projectId, userId, message: (stepError as Error)?.message }));
       }
 
       res.setHeader("Content-Type", "text/event-stream");
@@ -231,29 +237,26 @@ class ContentService {
 
       try {
         const formattedData = formatGeneratedScript(
-          titleRecord?.title,
-          titleRecord?.id,
+          topic.title,
+          scriptId,
+          project.topicId,
+          projectId,
           accumulatedRes,
           userId,
         );
-        await this.repo.updateTopic(titleRecord?.id, {
+        await this.repo.saveScript(scriptId, formattedData);
+        await this.repo.updateTopic(project.topicId, {
           isScriptGenerated: true,
         });
-        await this.repo.saveScript(titleRecord?.id, formattedData);
 
         // Pipeline transition (script saved -> mark step complete). Awaited so it
         // actually runs — fire-and-forget after res.end() can be dropped on serverless —
         // and logged with context instead of silently swallowed.
-        if (titleRecord?.videoProjectId && this.videoProjectService) {
-          const vpId = titleRecord.videoProjectId;
-          const scriptId = titleRecord.id;
-          const vps = this.videoProjectService;
-          try {
-            await vps.linkResource(vpId, "script", scriptId, userId);
-            await vps.completeStep(vpId, "script", userId);
-          } catch (pipelineError) {
-            console.error(JSON.stringify({ event: "pipeline_transition_failed", step: "script", projectId: vpId, scriptId, userId, message: (pipelineError as Error)?.message }));
-          }
+        try {
+          await vps.linkResource(projectId, "script", scriptId, userId);
+          await vps.completeStep(projectId, "script", userId);
+        } catch (pipelineError) {
+          console.error(JSON.stringify({ event: "pipeline_transition_failed", step: "script", projectId, scriptId, userId, message: (pipelineError as Error)?.message }));
         }
 
         // Non-critical stats counter, last so a failure here can't skip the pipeline.
@@ -285,14 +288,24 @@ class ContentService {
   regenerateAll = async (userId: string) => {
     const activeTopics = await this.repo.getActiveBatch(userId);
 
-    // Fire stale cascade for any topics linked to a video project
+    // Fan out the stale cascade to ALL projects on each active topic — a topic
+    // can back multiple video projects, so keying off topic.videoProjectId alone
+    // would only reach one of them.
     if (this.videoProjectService) {
       for (const topic of activeTopics) {
-        if (topic.videoProjectId) {
+        let projects: Awaited<ReturnType<VideoProjectService["getProjectsByTopic"]>> = [];
+        try {
+          projects = await this.videoProjectService.getProjectsByTopic(topic.id, userId);
+        } catch (err) {
+          console.error(JSON.stringify({ event: "stale_cascade_lookup_failed", from: "research", topicId: topic.id, userId, message: (err as Error)?.message }));
+          continue;
+        }
+        for (const project of projects) {
           try {
-            await this.videoProjectService.markStale(topic.videoProjectId, "research");
+            await this.videoProjectService.markStale(project.id, "research");
+            await this.videoProjectService.markPackagingDocumentStale(project.id, "research_regenerated");
           } catch (err) {
-            console.error(JSON.stringify({ event: "stale_cascade_failed", from: "research", projectId: topic.videoProjectId, message: (err as Error)?.message }));
+            console.error(JSON.stringify({ event: "stale_cascade_failed", from: "research", projectId: project.id, userId, message: (err as Error)?.message }));
           }
         }
       }
@@ -327,7 +340,9 @@ class ContentService {
       throw Forbidden();
     }
 
-    const titles = await this.generateTopics(userId);
+    // Suppress the batch-length stats increment — regenerating a single slot
+    // keeps only titles[0], so a full +batch.length here would 10x-inflate stats.topics.
+    const titles = await this.generateTopics(userId, false);
     if (!titles || titles.length === 0) {
       throw new Error("Unable to generate topics at the moment");
     }
@@ -341,6 +356,11 @@ class ContentService {
       isScriptGenerated: false,
       videoProjectId: null,
       userFeedback: null,
+    });
+
+    // One topic regenerated -> count exactly one toward stats.
+    await this.userRepo.update(userId, {
+      "stats.topics": firebase.firestore.FieldValue.increment(1),
     });
 
     return { ...formatted, id: topicId };
@@ -433,9 +453,9 @@ class ContentService {
 
     await this.repo.editScript(scriptId, { script: accumulatedRes });
 
-    if (this.videoProjectService) {
+    if (this.videoProjectService && scriptDoc.videoProjectId) {
       try {
-        const proj = await this.videoProjectService.getByScriptId(scriptId, userId);
+        const proj = await this.videoProjectService.getById(scriptDoc.videoProjectId as string, userId);
         if (proj) {
           await this.videoProjectService.markStale(proj.id, "script");
           await this.videoProjectService.markPackagingDocumentStale(proj.id, "script_regenerated");

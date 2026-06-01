@@ -25,13 +25,15 @@ export const formatGeneratedTitle = async (title, userId, batchId) => {
         userFeedback: null,
     };
 };
-export const formatGeneratedScript = (title, id, script, userId) => {
+export const formatGeneratedScript = (title, scriptId, topicId, videoProjectId, script, userId) => {
     return {
-        id: id,
+        id: scriptId,
         title,
         createdBy: userId || "",
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         script,
+        topicId,
+        videoProjectId,
     };
 };
 export function formatCreatorsData(creator, similarTitles) {

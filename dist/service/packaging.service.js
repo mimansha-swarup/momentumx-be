@@ -4,8 +4,20 @@ import { generateStreamingContent } from "../utlils/ai.js";
 import { firebase } from "../config/firebase.js";
 import { BadRequest, Forbidden, NotFound } from "../utlils/errors.js";
 class PackagingService {
-    constructor(repo, videoProjectService) {
+    constructor(repo, hooksRepo, videoProjectService) {
+        this.hooksRepo = hooksRepo;
         this.videoProjectService = videoProjectService;
+        this.resolveSelectedHook = async (videoProjectId, userId) => {
+            if (!videoProjectId || !this.videoProjectService)
+                return "";
+            const project = await this.videoProjectService.getById(videoProjectId, userId);
+            if (!project.hooksId || project.selectedHookIndex == null)
+                return "";
+            const hooksBatch = await this.hooksRepo.findById(project.hooksId);
+            if (!hooksBatch)
+                return "";
+            return hooksBatch.hooks?.[project.selectedHookIndex] ?? "";
+        };
         this.generateContent = async (userPrompt) => {
             const result = await generateStreamingContent(PACKAGING_SYSTEM_PROMPT, userPrompt, GENERATION_CONFIG_PACKAGING);
             let accumulatedRes = "";
@@ -17,11 +29,12 @@ class PackagingService {
             }
             return JSON.parse(accumulatedRes);
         };
-        this.generateTitle = async (script, selectedHook) => {
+        this.generateTitle = async (userId, script, videoProjectId) => {
             try {
+                const selectedHook = await this.resolveSelectedHook(videoProjectId, userId);
                 const userPrompt = GENERATE_TITLE_PROMPT
                     .replace("{script}", script)
-                    .replace("{selectedHook}", selectedHook ?? "");
+                    .replace("{selectedHook}", selectedHook);
                 const result = await this.generateContent(userPrompt);
                 return result;
             }
@@ -29,12 +42,13 @@ class PackagingService {
                 throw error;
             }
         };
-        this.generateDescription = async (script, title, selectedHook) => {
+        this.generateDescription = async (userId, script, title, videoProjectId) => {
             try {
+                const selectedHook = await this.resolveSelectedHook(videoProjectId, userId);
                 const userPrompt = GENERATE_DESCRIPTION_PROMPT
                     .replace("{script}", script)
                     .replace("{title}", title)
-                    .replace("{selectedHook}", selectedHook ?? "");
+                    .replace("{selectedHook}", selectedHook);
                 const result = await this.generateContent(userPrompt);
                 return result;
             }
@@ -42,12 +56,13 @@ class PackagingService {
                 throw error;
             }
         };
-        this.generateThumbnail = async (script, title, selectedHook) => {
+        this.generateThumbnail = async (userId, script, title, videoProjectId) => {
             try {
+                const selectedHook = await this.resolveSelectedHook(videoProjectId, userId);
                 const userPrompt = GENERATE_THUMBNAIL_PROMPT
                     .replace("{script}", script)
                     .replace("{title}", title)
-                    .replace("{selectedHook}", selectedHook ?? "");
+                    .replace("{selectedHook}", selectedHook);
                 const result = await this.generateContent(userPrompt);
                 return result;
             }
@@ -160,7 +175,7 @@ class PackagingService {
                 throw error;
             }
         };
-        this.regenerateItem = async (userId, packagingId, item, script, title, duration, selectedHook) => {
+        this.regenerateItem = async (userId, packagingId, item, script, title, duration) => {
             const pkg = await this.repo.get(packagingId);
             if (!pkg) {
                 throw NotFound("Packaging not found");
@@ -168,6 +183,9 @@ class PackagingService {
             if (pkg.createdBy !== userId) {
                 throw Forbidden();
             }
+            // Resolve the selected hook from the STORED project on this packaging doc —
+            // never from a client-supplied id (that would re-open the trust gap on regenerate).
+            const videoProjectId = pkg.videoProjectId;
             const validItems = ["title", "description", "thumbnail", "shorts"];
             if (!validItems.includes(item)) {
                 throw BadRequest(`item must be one of: ${validItems.join(", ")}`);
@@ -189,15 +207,15 @@ class PackagingService {
             let fieldKey;
             try {
                 if (item === "title") {
-                    result = await this.generateTitle(script, selectedHook);
+                    result = await this.generateTitle(userId, script, videoProjectId);
                     fieldKey = "titles";
                 }
                 else if (item === "description") {
-                    result = await this.generateDescription(script, title, selectedHook);
+                    result = await this.generateDescription(userId, script, title, videoProjectId);
                     fieldKey = "description";
                 }
                 else if (item === "thumbnail") {
-                    result = await this.generateThumbnail(script, title, selectedHook);
+                    result = await this.generateThumbnail(userId, script, title, videoProjectId);
                     fieldKey = "thumbnail";
                 }
                 else {

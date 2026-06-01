@@ -23,13 +23,22 @@ jest.mock("../../src/config/firebase", () => ({
 
 import PackagingService from "../../src/service/packaging.service";
 import PackagingRepository from "../../src/repository/packaging.repository";
+import HooksRepository from "../../src/repository/hooks.repository";
 import { generateStreamingContent } from "../../src/utlils/ai";
 
 jest.mock("../../src/repository/packaging.repository");
+jest.mock("../../src/repository/hooks.repository");
 jest.mock("../../src/utlils/ai", () => ({ generateStreamingContent: jest.fn() }));
 
 const MockPackagingRepo = PackagingRepository as jest.MockedClass<typeof PackagingRepository>;
+const MockHooksRepo = HooksRepository as jest.MockedClass<typeof HooksRepository>;
 const mockGenerate = generateStreamingContent as jest.MockedFunction<typeof generateStreamingContent>;
+
+// Hooks are resolved server-side from the video project, so most suites pass a
+// bare hooks repo and no videoProjectService (selectedHook resolves to "").
+function makeHooksRepo() {
+  return new MockHooksRepo() as jest.Mocked<HooksRepository>;
+}
 
 function makeStream(text: string) {
   return {
@@ -52,7 +61,7 @@ describe("PackagingService — regenerateItem", () => {
 
   beforeEach(() => {
     mockRepo = new MockPackagingRepo() as jest.Mocked<PackagingRepository>;
-    service = new PackagingService(mockRepo);
+    service = new PackagingService(mockRepo, makeHooksRepo());
     mockGenerate.mockResolvedValue(makeStream('{"titles":["New A","New B","New C"]}'));
   });
 
@@ -138,7 +147,7 @@ describe("PackagingService — updateFeedback", () => {
 
   beforeEach(() => {
     mockRepo = new MockPackagingRepo() as jest.Mocked<PackagingRepository>;
-    service = new PackagingService(mockRepo);
+    service = new PackagingService(mockRepo, makeHooksRepo());
   });
 
   it("throws 404 if not found", async () => {
@@ -190,7 +199,7 @@ describe("PackagingService — savePackaging with videoProjectId", () => {
 
   beforeEach(() => {
     mockRepo = new MockPackagingRepo() as jest.Mocked<PackagingRepository>;
-    service = new PackagingService(mockRepo);
+    service = new PackagingService(mockRepo, makeHooksRepo());
     mockRepo.save = jest.fn().mockResolvedValue({ id: "pkg-new" });
     // savePackaging upserts by project: no existing doc -> save path
     mockRepo.findByVideoProject = jest.fn().mockResolvedValue(null);
@@ -209,27 +218,41 @@ describe("PackagingService — savePackaging with videoProjectId", () => {
   });
 });
 
-describe("PackagingService — generateTitle with selectedHook", () => {
+describe("PackagingService — generateTitle with server-side hook resolution", () => {
   let service: PackagingService;
   let mockRepo: jest.Mocked<PackagingRepository>;
+  let mockHooksRepo: jest.Mocked<HooksRepository>;
+  let mockVp: { getById: jest.Mock };
 
   beforeEach(() => {
     mockRepo = new MockPackagingRepo() as jest.Mocked<PackagingRepository>;
-    service = new PackagingService(mockRepo);
+    mockHooksRepo = makeHooksRepo();
+    mockVp = { getById: jest.fn() };
+    service = new PackagingService(mockRepo, mockHooksRepo, mockVp as any);
   });
 
-  it("calls generateStreamingContent and returns parsed result", async () => {
+  it("resolves the selected hook server-side from the project and injects it into the prompt", async () => {
     const fakeTitles = [{ title: "Title A", characterCount: 55 }];
     mockGenerate.mockResolvedValue(makeStream(JSON.stringify({ titles: fakeTitles })));
-    const result = await service.generateTitle("script text", "my hook opener");
-    expect(mockGenerate).toHaveBeenCalled();
+    // Project points to a hooks batch + selected index; service resolves the hook itself.
+    mockVp.getById.mockResolvedValue({ id: "proj-1", hooksId: "hooks-1", selectedHookIndex: 1 });
+    mockHooksRepo.findById = jest.fn().mockResolvedValue({ id: "hooks-1", hooks: ["hook zero", "my hook opener"] });
+
+    const result = await service.generateTitle("user-1", "script text", "proj-1");
+
+    expect(mockVp.getById).toHaveBeenCalledWith("proj-1", "user-1");
+    expect(mockHooksRepo.findById).toHaveBeenCalledWith("hooks-1");
+    // Resolved hook must reach the generation prompt (client never sends it).
+    const userPromptArg = mockGenerate.mock.calls[0][1] as string;
+    expect(userPromptArg).toContain("my hook opener");
     expect(result).toEqual({ titles: fakeTitles });
   });
 
-  it("works without selectedHook", async () => {
+  it("works without a videoProjectId (hook resolves to empty, no project lookup)", async () => {
     const fakeTitles = [{ title: "Title B", characterCount: 50 }];
     mockGenerate.mockResolvedValue(makeStream(JSON.stringify({ titles: fakeTitles })));
-    const result = await service.generateTitle("script text");
+    const result = await service.generateTitle("user-1", "script text");
+    expect(mockVp.getById).not.toHaveBeenCalled();
     expect(mockGenerate).toHaveBeenCalled();
     expect(result).toEqual({ titles: fakeTitles });
   });
@@ -241,7 +264,7 @@ describe("PackagingService — exportPackaging", () => {
 
   beforeEach(() => {
     mockRepo = new MockPackagingRepo() as jest.Mocked<PackagingRepository>;
-    service = new PackagingService(mockRepo);
+    service = new PackagingService(mockRepo, makeHooksRepo());
   });
 
   it("throws 404 if not found", async () => {

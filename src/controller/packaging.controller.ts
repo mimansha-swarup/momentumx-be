@@ -11,11 +11,11 @@ class PackagingController {
   }
 
   generateTitle = asyncHandler(async (req: Request, res: Response) => {
-    const { script, selectedHook } = req.body;
+    const { script, videoProjectId } = req.body;
     if (!script) {
       throw BadRequest("Script is required");
     }
-    const data = await this.service.generateTitle(script, selectedHook);
+    const data = await this.service.generateTitle(req.userId, script, videoProjectId);
     res.sendSuccess({
       message: "Title generated successfully",
       data,
@@ -23,14 +23,14 @@ class PackagingController {
   });
 
   generateDescription = asyncHandler(async (req: Request, res: Response) => {
-    const { script, title, selectedHook } = req.body;
+    const { script, title, videoProjectId } = req.body;
     if (!script) {
       throw BadRequest("Script is required");
     }
     if (!title) {
       throw BadRequest("Title is required");
     }
-    const data = await this.service.generateDescription(script, title, selectedHook);
+    const data = await this.service.generateDescription(req.userId, script, title, videoProjectId);
     res.sendSuccess({
       message: "Description generated successfully",
       data,
@@ -38,14 +38,14 @@ class PackagingController {
   });
 
   generateThumbnail = asyncHandler(async (req: Request, res: Response) => {
-    const { script, title, selectedHook } = req.body;
+    const { script, title, videoProjectId } = req.body;
     if (!script) {
       throw BadRequest("Script is required");
     }
     if (!title) {
       throw BadRequest("Title is required");
     }
-    const data = await this.service.generateThumbnail(script, title, selectedHook);
+    const data = await this.service.generateThumbnail(req.userId, script, title, videoProjectId);
     res.sendSuccess({
       message: "Thumbnail instructions generated successfully",
       data,
@@ -98,11 +98,11 @@ class PackagingController {
 
   regenerateItem = asyncHandler(async (req: Request, res: Response) => {
     const { packagingId, item } = req.params;
-    const { script, title, duration, selectedHook } = req.body as { script: string; title?: string; duration?: number; selectedHook?: string };
+    const { script, title, duration } = req.body as { script: string; title?: string; duration?: number };
     if (!script) {
       throw BadRequest("script is required");
     }
-    const data = await this.service.regenerateItem(req.userId, packagingId, item, script, title, duration, selectedHook);
+    const data = await this.service.regenerateItem(req.userId, packagingId, item, script, title, duration);
     res.sendSuccess({ message: "Packaging item regenerated successfully", data });
   });
 
