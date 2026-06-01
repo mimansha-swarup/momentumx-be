@@ -4,6 +4,7 @@ import PackagingRepository from "../repository/packaging.repository.js";
 import VideoProjectRepository from "../repository/video-project.repository.js";
 import {
   IVideoProject,
+  IVideoProjectPipeline,
   OverallStatus,
   StaleReason,
   StepName,
@@ -24,6 +25,17 @@ const STALE_CASCADE: Record<string, StepName[]> = {
   hooks: ["packaging"],
 };
 const VALID_MUTABLE_STEPS = ["script", "hooks", "packaging"];
+
+// Single source of the overall-status arithmetic, shared by reconcileView (read path)
+// and refreshPackagingStep (write path) so the two can never drift.
+const computeOverallStatus = (pipeline: IVideoProjectPipeline): OverallStatus => {
+  const statuses = STEP_ORDER.map((st) => pipeline[st].status);
+  return statuses.includes("stale")
+    ? "stale"
+    : statuses.every((x) => x === "completed")
+      ? "completed"
+      : "in_progress";
+};
 
 class VideoProjectService {
   constructor(
@@ -145,18 +157,34 @@ class VideoProjectService {
         pipeline[step] = { ...s, status: "completed" };
       }
     });
-    const statuses = STEP_ORDER.map((st) => pipeline[st].status);
-    const overallStatus: OverallStatus = statuses.includes("stale")
-      ? "stale"
-      : statuses.every((x) => x === "completed")
-        ? "completed"
-        : "in_progress";
-    return { ...project, pipeline, overallStatus };
+    return { ...project, pipeline, overallStatus: computeOverallStatus(pipeline) };
   };
 
   getReconciledById = async (projectId: string, userId: string): Promise<IVideoProject> => {
     const project = await this.getById(projectId, userId);
     return this.reconcileView(project);
+  };
+
+  /**
+   * Clear the project's stale packaging step after the last stale packaging item is
+   * regenerated, then recompute overallStatus. Only ever flips `stale -> completed`
+   * (so it can't throw like completeStep on a not_started step) and is a no-op when
+   * the step isn't stale. overallStatus stays "stale" if script/hooks are still stale.
+   * Caller must gate on "no packaging item remains stale".
+   */
+  refreshPackagingStep = async (projectId: string, userId: string): Promise<void> => {
+    const project = await this.getById(projectId, userId);
+    if (project.pipeline.packaging.status !== "stale") return;
+
+    const updatedPipeline: IVideoProjectPipeline = {
+      ...project.pipeline,
+      packaging: { ...project.pipeline.packaging, status: "completed" },
+    };
+
+    await this.repo.update(projectId, {
+      "pipeline.packaging.status": "completed",
+      overallStatus: computeOverallStatus(updatedPipeline),
+    });
   };
 
   update = async (

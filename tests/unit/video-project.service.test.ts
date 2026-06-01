@@ -366,6 +366,68 @@ describe("VideoProjectService", () => {
   });
 
   // --------------------------------------------------------------------------
+  // refreshPackagingStep (clear stale packaging step after last item regenerated)
+  // --------------------------------------------------------------------------
+
+  describe("refreshPackagingStep(projectId, userId)", () => {
+    const staleProject = (overrides: Partial<IVideoProject["pipeline"]> = {}) =>
+      makeProject({
+        scriptId: "script-1",
+        hooksId: "hooks-1",
+        selectedHookIndex: 0,
+        packagingId: "pkg-1",
+        overallStatus: "stale",
+        pipeline: {
+          research: { status: "completed", startedAt: null, completedAt: null },
+          script: { status: "completed", startedAt: null, completedAt: null },
+          hooks: { status: "completed", startedAt: null, completedAt: null },
+          packaging: { status: "stale", startedAt: null, completedAt: null },
+          ...overrides,
+        },
+      });
+
+    it("clears the stale packaging step and recomputes overallStatus to completed when all else is done", async () => {
+      repo.findById.mockResolvedValue(staleProject());
+
+      await service.refreshPackagingStep("proj-1", "user-1");
+
+      expect(repo.update).toHaveBeenCalledWith("proj-1", {
+        "pipeline.packaging.status": "completed",
+        overallStatus: "completed",
+      });
+    });
+
+    it("keeps overallStatus 'stale' when another step is still stale", async () => {
+      repo.findById.mockResolvedValue(
+        staleProject({ script: { status: "stale", startedAt: null, completedAt: null } })
+      );
+
+      await service.refreshPackagingStep("proj-1", "user-1");
+
+      expect(repo.update).toHaveBeenCalledWith("proj-1", {
+        "pipeline.packaging.status": "completed",
+        overallStatus: "stale",
+      });
+    });
+
+    it("is a no-op (no write) when the packaging step is not stale", async () => {
+      repo.findById.mockResolvedValue(
+        makeProject({ packagingId: "pkg-1", pipeline: { ...makeProject().pipeline, packaging: { status: "completed", startedAt: null, completedAt: null } } })
+      );
+
+      await service.refreshPackagingStep("proj-1", "user-1");
+
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+
+    it("throws (caller catches) when the project is not owned by the user", async () => {
+      repo.findById.mockResolvedValue(staleProject({}));
+      await expect(service.refreshPackagingStep("proj-1", "other-user")).rejects.toMatchObject({ statusCode: 403 });
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+  });
+
+  // --------------------------------------------------------------------------
   // update
   // --------------------------------------------------------------------------
 

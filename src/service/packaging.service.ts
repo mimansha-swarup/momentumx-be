@@ -287,6 +287,18 @@ class PackagingService {
     }
 
     await this.repo.update(packagingId, updateData);
+
+    // Packaging is fresh again — clear the project's stale packaging step so the
+    // dashboard "needs update" badge actually clears. Best-effort: a sync failure
+    // must not fail the already-saved regeneration.
+    if (!anyStillStale && videoProjectId && this.videoProjectService) {
+      try {
+        await this.videoProjectService.refreshPackagingStep(videoProjectId, userId);
+      } catch (syncError) {
+        console.error(JSON.stringify({ event: "stale_cascade_clear_failed", projectId: videoProjectId, packagingId, userId, message: (syncError as Error)?.message }));
+      }
+    }
+
     return { id: packagingId, item, data: result };
   };
 

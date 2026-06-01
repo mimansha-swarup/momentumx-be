@@ -141,6 +141,74 @@ describe("PackagingService — regenerateItem", () => {
   });
 });
 
+describe("PackagingService — regenerateItem project sync (DA6 stale clear)", () => {
+  let service: PackagingService;
+  let mockRepo: jest.Mocked<PackagingRepository>;
+  let mockVp: { getById: jest.Mock; refreshPackagingStep: jest.Mock };
+
+  // pkg linked to a project, with only `title` stale and the rest completed.
+  const linkedPkg = (itemStatuses: Record<string, string>) => ({
+    ...mockPkg,
+    videoProjectId: "proj-1",
+    itemStatuses,
+  });
+
+  beforeEach(() => {
+    mockRepo = new MockPackagingRepo() as jest.Mocked<PackagingRepository>;
+    mockVp = {
+      getById: jest.fn().mockResolvedValue({}), // no selected hook -> resolves to ""
+      refreshPackagingStep: jest.fn().mockResolvedValue(undefined),
+    };
+    service = new PackagingService(mockRepo, makeHooksRepo(), mockVp as any);
+    mockGenerate.mockResolvedValue(makeStream('{"titles":["New A","New B","New C"]}'));
+    mockRepo.update = jest.fn().mockResolvedValue(undefined);
+  });
+
+  it("calls refreshPackagingStep when the LAST stale item is regenerated", async () => {
+    mockRepo.get = jest.fn().mockResolvedValue(
+      linkedPkg({ title: "stale", description: "completed", thumbnail: "completed", shorts: "completed" })
+    );
+
+    await service.regenerateItem("user-1", "pkg-1", "title", "script text");
+
+    expect(mockRepo.update).toHaveBeenCalledWith("pkg-1", expect.objectContaining({ isStale: false }));
+    expect(mockVp.refreshPackagingStep).toHaveBeenCalledWith("proj-1", "user-1");
+  });
+
+  it("does NOT call refreshPackagingStep on a partial regen (another item still stale)", async () => {
+    mockRepo.get = jest.fn().mockResolvedValue(
+      linkedPkg({ title: "stale", description: "stale", thumbnail: "completed", shorts: "completed" })
+    );
+
+    await service.regenerateItem("user-1", "pkg-1", "title", "script text");
+
+    expect(mockRepo.update).not.toHaveBeenCalledWith("pkg-1", expect.objectContaining({ isStale: false }));
+    expect(mockVp.refreshPackagingStep).not.toHaveBeenCalled();
+  });
+
+  it("does NOT call refreshPackagingStep when the packaging has no videoProjectId", async () => {
+    mockRepo.get = jest.fn().mockResolvedValue(
+      { ...mockPkg, itemStatuses: { title: "stale", description: "completed", thumbnail: "completed", shorts: "completed" } }
+    );
+
+    await service.regenerateItem("user-1", "pkg-1", "title", "script text");
+
+    expect(mockVp.refreshPackagingStep).not.toHaveBeenCalled();
+  });
+
+  it("still resolves the regeneration when the project sync fails (best-effort)", async () => {
+    mockRepo.get = jest.fn().mockResolvedValue(
+      linkedPkg({ title: "stale", description: "completed", thumbnail: "completed", shorts: "completed" })
+    );
+    mockVp.refreshPackagingStep.mockRejectedValue(new Error("sync boom"));
+
+    const result = await service.regenerateItem("user-1", "pkg-1", "title", "script text");
+
+    expect(result.id).toBe("pkg-1");
+    expect(mockVp.refreshPackagingStep).toHaveBeenCalled();
+  });
+});
+
 describe("PackagingService — updateFeedback", () => {
   let service: PackagingService;
   let mockRepo: jest.Mocked<PackagingRepository>;
