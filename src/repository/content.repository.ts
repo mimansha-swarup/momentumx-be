@@ -2,6 +2,7 @@ import { Firestore } from "firebase-admin/firestore";
 import { COLLECTIONS } from "../constants/collection.js";
 import { db, firebase } from "../config/firebase.js";
 import { IGetTopicByUserIdArgs } from "../types/repository/content.js";
+import { ITopic, IScript } from "../types/routes/content.js";
 
 class ContentRepository {
   private collection: `${COLLECTIONS}`;
@@ -12,9 +13,9 @@ class ContentRepository {
     this.collection = COLLECTIONS.TOPICS;
     this.script_collection = COLLECTIONS.SCRIPTS;
   }
-  getTopic = async (topicId: string) => {
+  getTopic = async (topicId: string): Promise<ITopic | undefined> => {
     const doc = await this.db.collection(this.collection).doc(topicId).get();
-    return doc.data();
+    return doc.data() as ITopic | undefined;
   };
 
   getTopics = async ({
@@ -26,7 +27,9 @@ class ContentRepository {
     try {
       let query = this.db
         .collection(this.collection)
-        .where("createdBy", "==", userId);
+        .where("createdBy", "==", userId)
+        // Active batch only — archived topics must never appear in the list
+        .where("archived", "==", false);
 
       // Optional filtering
       if (
@@ -68,37 +71,41 @@ class ContentRepository {
       throw error;
     }
   };
-  getAllTopics = async ({ userId = "" }) => {
-    const query = this.db
+  // Bounded read for KMeans clustering — projects to title + embedding only and
+  // caps at 200 docs at the query level so we never pull every embedding array.
+  getTopicsForClustering = async (
+    userId: string,
+  ): Promise<Pick<ITopic, "title" | "embedding">[]> => {
+    const snapshot = await this.db
       .collection(this.collection)
-      .where("createdBy", "==", userId);
-
-    const snapshot = await query.get();
-    return snapshot.docs.map((doc) => doc.data());
+      .where("createdBy", "==", userId)
+      .where("archived", "==", false)
+      .limit(200)
+      .select("title", "embedding")
+      .get();
+    return snapshot.docs.map(
+      (doc) => doc.data() as Pick<ITopic, "title" | "embedding">,
+    );
   };
 
-  getScripts = async (userId: string) => {
+  getScripts = async (userId: string): Promise<IScript[]> => {
     try {
       const snapshot = await this.db
         .collection(this.script_collection)
         .where("createdBy", "==", userId)
         .orderBy("createdAt", "desc")
         .get();
-      const docs = snapshot.docs.map((doc) => {
+      return snapshot.docs.map((doc) => {
         const data = doc.data();
-        return {
-          ...data,
-          id: doc.id,
-          createdAt: data.createdAt?.toDate(),
-        };
+        data.id = doc.id;
+        data.createdAt = data.createdAt?.toDate();
+        return data as IScript;
       });
-
-      return docs;
     } catch (error) {
       throw error;
     }
   };
-  getScriptById = async (scriptId: string) => {
+  getScriptById = async (scriptId: string): Promise<IScript | null> => {
     const snapshot = await this.db
       .collection(this.script_collection)
       .doc(scriptId)
@@ -110,17 +117,23 @@ class ContentRepository {
 
     const data = snapshot.data();
     data.createdAt = data.createdAt?.toDate();
-    return data;
+    return data as IScript;
   };
 
   batchSaveTopics = async (dataList: unknown[]) => {
     const batch = db.batch();
     const collectionRef = db.collection(this.collection);
 
-    const updatedDataList = dataList?.map((data) => {
-      const newDocRef = collectionRef.doc();
-      const dataWithId = { ...(data as {}), id: newDocRef.id };
-      batch.set(newDocRef, dataWithId);
+    const updatedDataList = (dataList ?? []).map((data) => {
+      const topic = data as { id?: string } & Record<string, unknown>;
+      // Topics convention: doc id = the UUID generated in formatGeneratedTitle.
+      // Fall back to a Firestore auto-id only if no id was supplied.
+      const docId =
+        typeof topic.id === "string" && topic.id
+          ? topic.id
+          : collectionRef.doc().id;
+      const dataWithId = { ...topic, id: docId };
+      batch.set(collectionRef.doc(docId), dataWithId);
       return dataWithId;
     });
     try {
@@ -132,33 +145,49 @@ class ContentRepository {
     }
   };
 
-  getActiveBatch = async (userId: string) => {
-    const allTopics = await this.getAllTopics({ userId });
-    return (allTopics || []).filter((t) => t.archived !== true);
+  // Active batch for regenerate/export — excludes embeddings (not needed here).
+  getActiveBatch = async (
+    userId: string,
+  ): Promise<Pick<ITopic, "id" | "title" | "createdAt" | "videoProjectId">[]> => {
+    const snapshot = await this.db
+      .collection(this.collection)
+      .where("createdBy", "==", userId)
+      .where("archived", "==", false)
+      .select("title", "createdAt", "videoProjectId")
+      .get();
+    return snapshot.docs.map((doc) => {
+      const data = doc.data();
+      data.id = doc.id;
+      return data as Pick<ITopic, "id" | "title" | "createdAt" | "videoProjectId">;
+    });
   };
 
   archiveUserTopics = async (userId: string, excludeBatchId?: string) => {
-    const allTopics = await this.getAllTopics({ userId });
-    const toArchive = (allTopics || []).filter(
-      (t) =>
-        t.archived !== true &&
-        t.id &&
-        (!excludeBatchId || t.batchId !== excludeBatchId)
+    const snapshot = await this.db
+      .collection(this.collection)
+      .where("createdBy", "==", userId)
+      .where("archived", "==", false)
+      .select("batchId")
+      .get();
+
+    const toArchive = snapshot.docs.filter(
+      (doc) => !excludeBatchId || doc.data().batchId !== excludeBatchId
     );
 
     if (toArchive.length === 0) return;
 
-    const batch = db.batch();
-    const collectionRef = db.collection(this.collection);
-
-    toArchive.forEach((topic) => {
-      batch.update(collectionRef.doc(topic.id), {
-        archived: true,
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    // Firestore caps a batch at 500 ops — chunk so large batches never throw.
+    const CHUNK_SIZE = 450;
+    for (let i = 0; i < toArchive.length; i += CHUNK_SIZE) {
+      const batch = db.batch();
+      toArchive.slice(i, i + CHUNK_SIZE).forEach((doc) => {
+        batch.update(doc.ref, {
+          archived: true,
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        });
       });
-    });
-
-    await batch.commit();
+      await batch.commit();
+    }
   };
 
   updateTopic = async (topicId: string, data: Record<string, unknown>) => {

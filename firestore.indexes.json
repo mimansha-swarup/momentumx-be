@@ -21,7 +21,9 @@
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "createdBy", "order": "ASCENDING" },
-        { "fieldPath": "createdAt", "order": "DESCENDING" }
+        { "fieldPath": "archived", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" },
+        { "fieldPath": "__name__", "order": "DESCENDING" }
       ]
     },
     {
@@ -29,8 +31,10 @@
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "createdBy", "order": "ASCENDING" },
+        { "fieldPath": "archived", "order": "ASCENDING" },
         { "fieldPath": "isScriptGenerated", "order": "ASCENDING" },
-        { "fieldPath": "createdAt", "order": "DESCENDING" }
+        { "fieldPath": "createdAt", "order": "DESCENDING" },
+        { "fieldPath": "__name__", "order": "DESCENDING" }
       ]
     },
     {
@@ -38,6 +42,16 @@
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "createdBy", "order": "ASCENDING" },
+        { "fieldPath": "archived", "order": "ASCENDING" },
+        { "fieldPath": "title", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "topics",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "createdBy", "order": "ASCENDING" },
+        { "fieldPath": "archived", "order": "ASCENDING" },
         { "fieldPath": "isScriptGenerated", "order": "ASCENDING" },
         { "fieldPath": "title", "order": "ASCENDING" }
       ]

@@ -129,9 +129,8 @@ export async function formatUserData(data, extractService) {
     return record;
 }
 export async function getClusteredTitles(userId, repo) {
-    const titleRecord = await repo.getAllTopics({ userId });
-    const activeTitles = (titleRecord || []).filter((doc) => !doc.archived);
-    const capped = activeTitles.slice(0, 200);
+    // Bounded, projected read: active topics only, title + embedding, capped at 200.
+    const capped = (await repo.getTopicsForClustering(userId)) || [];
     const k = Math.min(8, Math.ceil(capped.length / 20));
     const titles = capped.map((doc) => doc.title) || [];
     const embeddings = capped.map((doc) => doc.embedding) || [];

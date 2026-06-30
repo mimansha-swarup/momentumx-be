@@ -17,6 +17,15 @@ function formatCompetitorUrls(competitors) {
 class ContentService {
     constructor(repo, userRepo, videoProjectService) {
         this.videoProjectService = videoProjectService;
+        // Builds the script user prompt from the creator's profile + a title.
+        // Shared by generateScripts (SSE) and regenerateScript so the placeholder
+        // replacement chain lives in one place.
+        this.buildScriptUserPrompt = (userRecord, title) => SCRIPT_USER_PROMPT.replace("{userName}", userRecord?.brandName ?? "")
+            .replace("{targetAudience}", userRecord?.targetAudience ?? "")
+            .replace("{competitors}", formatCompetitorUrls(userRecord?.competitors))
+            .replace("{niche}", userRecord?.niche ?? "")
+            .replace("{websiteContent}", userRecord?.websiteContent ?? "")
+            .replace("{title}", title);
         this.getPaginatedUsersTopics = async ({ userId, limit, cursor, filters, }) => {
             try {
                 const docs = await this.repo.getTopics({
@@ -138,12 +147,7 @@ class ContentService {
                 // Reuse the existing script id on regenerate — minting a new uuid when
                 // project.scriptId is set would orphan the old script doc.
                 const scriptId = project.scriptId ?? randomUUID();
-                let userPrompt = SCRIPT_USER_PROMPT.replace("{userName}", userRecord?.brandName ?? "")
-                    .replace("{targetAudience}", userRecord?.targetAudience ?? "")
-                    .replace("{competitors}", formatCompetitorUrls(userRecord?.competitors))
-                    .replace("{niche}", userRecord?.niche ?? "")
-                    .replace("{websiteContent}", userRecord?.websiteContent ?? "")
-                    .replace("{title}", topic?.title ?? "");
+                const userPrompt = this.buildScriptUserPrompt(userRecord, topic.title);
                 const result = await generateStreamingContent(SCRIPT_SYSTEM_PROMPT, userPrompt, GENERATION_CONFIG_SCRIPTS);
                 let accumulatedRes = "";
                 try {
@@ -332,12 +336,7 @@ class ContentService {
                 throw Forbidden();
             }
             const userRecord = await this.userRepo.get(userId);
-            const userPrompt = SCRIPT_USER_PROMPT.replace("{userName}", userRecord?.brandName ?? "")
-                .replace("{targetAudience}", userRecord?.targetAudience ?? "")
-                .replace("{competitors}", formatCompetitorUrls(userRecord?.competitors))
-                .replace("{niche}", userRecord?.niche ?? "")
-                .replace("{websiteContent}", userRecord?.websiteContent ?? "")
-                .replace("{title}", scriptDoc.title);
+            const userPrompt = this.buildScriptUserPrompt(userRecord, scriptDoc.title);
             const result = await generateStreamingContent(SCRIPT_SYSTEM_PROMPT, userPrompt, GENERATION_CONFIG_SCRIPTS);
             let accumulatedRes = "";
             for await (const chunk of result.stream) {

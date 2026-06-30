@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { DocumentData } from "firebase-admin/firestore";
 import { Response } from "express";
 import {
   SCRIPT_SYSTEM_PROMPT,
@@ -45,6 +46,20 @@ class ContentService {
     this.repo = repo;
     this.userRepo = userRepo;
   }
+
+  // Builds the script user prompt from the creator's profile + a title.
+  // Shared by generateScripts (SSE) and regenerateScript so the placeholder
+  // replacement chain lives in one place.
+  private buildScriptUserPrompt = (
+    userRecord: DocumentData | undefined,
+    title: string,
+  ): string =>
+    SCRIPT_USER_PROMPT.replace("{userName}", userRecord?.brandName ?? "")
+      .replace("{targetAudience}", userRecord?.targetAudience ?? "")
+      .replace("{competitors}", formatCompetitorUrls(userRecord?.competitors))
+      .replace("{niche}", userRecord?.niche ?? "")
+      .replace("{websiteContent}", userRecord?.websiteContent ?? "")
+      .replace("{title}", title);
 
   getPaginatedUsersTopics = async ({
     userId,
@@ -191,15 +206,7 @@ class ContentService {
       // project.scriptId is set would orphan the old script doc.
       const scriptId = project.scriptId ?? randomUUID();
 
-      let userPrompt = SCRIPT_USER_PROMPT.replace(
-        "{userName}",
-        userRecord?.brandName ?? "",
-      )
-        .replace("{targetAudience}", userRecord?.targetAudience ?? "")
-        .replace("{competitors}", formatCompetitorUrls(userRecord?.competitors))
-        .replace("{niche}", userRecord?.niche ?? "")
-        .replace("{websiteContent}", userRecord?.websiteContent ?? "")
-        .replace("{title}", topic?.title ?? "");
+      const userPrompt = this.buildScriptUserPrompt(userRecord, topic.title);
 
       const result = await generateStreamingContent(
         SCRIPT_SYSTEM_PROMPT,
@@ -416,7 +423,7 @@ class ContentService {
     if (script.createdBy !== userId) {
       throw Forbidden();
     }
-    return { title: script.title as string, text: script.script as string };
+    return { title: script.title, text: script.script };
   };
 
   regenerateScript = async (userId: string, scriptId: string): Promise<{ id: string; title: string; script: string }> => {
@@ -429,15 +436,7 @@ class ContentService {
     }
 
     const userRecord = await this.userRepo.get(userId);
-    const userPrompt = SCRIPT_USER_PROMPT.replace(
-      "{userName}",
-      userRecord?.brandName ?? "",
-    )
-      .replace("{targetAudience}", userRecord?.targetAudience ?? "")
-      .replace("{competitors}", formatCompetitorUrls(userRecord?.competitors))
-      .replace("{niche}", userRecord?.niche ?? "")
-      .replace("{websiteContent}", userRecord?.websiteContent ?? "")
-      .replace("{title}", scriptDoc.title as string);
+    const userPrompt = this.buildScriptUserPrompt(userRecord, scriptDoc.title);
 
     const result = await generateStreamingContent(
       SCRIPT_SYSTEM_PROMPT,
@@ -455,7 +454,7 @@ class ContentService {
 
     if (this.videoProjectService && scriptDoc.videoProjectId) {
       try {
-        const proj = await this.videoProjectService.getById(scriptDoc.videoProjectId as string, userId);
+        const proj = await this.videoProjectService.getById(scriptDoc.videoProjectId, userId);
         if (proj) {
           await this.videoProjectService.markStale(proj.id, "script");
           await this.videoProjectService.markPackagingDocumentStale(proj.id, "script_regenerated");
@@ -465,7 +464,7 @@ class ContentService {
       }
     }
 
-    return { id: scriptId, title: scriptDoc.title as string, script: accumulatedRes };
+    return { id: scriptId, title: scriptDoc.title, script: accumulatedRes };
   };
 
   exportTopics = async (userId: string) => {
