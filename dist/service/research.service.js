@@ -1,15 +1,13 @@
+import { DEFAULT_NICHE } from "../constants/research.js";
+import { BadRequest } from "../utlils/errors.js";
 class ResearchService {
     constructor(repo, userRepo) {
         this.repo = repo;
         this.userRepo = userRepo;
         this.getTrending = async (userId) => {
             const userRecord = await this.userRepo.get(userId);
-            if (!userRecord?.niche) {
-                const err = new Error("User niche not set — complete onboarding first");
-                err.statusCode = 400;
-                throw err;
-            }
-            return this.repo.getTrendingVideos(userRecord.niche);
+            const niche = userRecord?.niche || DEFAULT_NICHE;
+            return this.repo.getTrendingVideos(niche);
         };
         this.getCompetitorInsights = async (userId) => {
             const userRecord = await this.userRepo.get(userId);
@@ -26,9 +24,7 @@ class ResearchService {
         };
         this.getKeywords = async (query) => {
             if (!query || query.trim() === "") {
-                const err = new Error("query is required");
-                err.statusCode = 400;
-                throw err;
+                throw BadRequest("query is required");
             }
             return this.repo.getKeywordSignals(query);
         };

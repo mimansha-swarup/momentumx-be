@@ -54,7 +54,7 @@ Routes → Controllers → Services → Repositories
 /v1/user      — PATCH /onboarding, GET /profile, PATCH /profile
 /v1/topics    — POST /generate, GET /, GET /export, POST /regenerate-all,
                 PATCH /edit/:topicId, POST /:topicId/regenerate, PATCH /:topicId/feedback
-/v1/scripts   — GET /stream/:scriptId (SSE, ?token=), GET /, GET /:scriptId,
+/v1/scripts   — GET /stream/:projectId (SSE, ?token=), GET /, GET /:scriptId,
                 PATCH /edit/:scriptId, POST /:scriptId/regenerate,
                 PATCH /:scriptId/feedback, GET /:scriptId/export
 /v1/hooks     — POST /generate, POST /:hooksId/select, POST /:hooksId/regenerate,

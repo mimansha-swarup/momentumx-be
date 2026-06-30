@@ -141,7 +141,7 @@ it('streams script via SSE', (done) => {
 
   // Script SSE uses ?token= query param — no Authorization header
   request(app)
-    .get('/v1/scripts/stream/:scriptId?token=valid-token')
+    .get('/v1/scripts/stream/:projectId?token=valid-token')
     .buffer(false)
     .parse((res, callback) => {
       res.on('data', (chunk: Buffer) => {

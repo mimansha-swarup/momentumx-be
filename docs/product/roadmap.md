@@ -37,7 +37,7 @@ Onboarding → Research → Script → Hooks → Packaging
 ```
 
 ### Video Projects
-When a creator selects a topic from Research, a **video project** is created for that topic. All subsequent work — script, hooks, packaging — is tied to that project. This gives creators a structured workspace per video rather than a disconnected collection of generated assets.
+When a creator commits a topic from Research — or brings their own idea (`POST /v1/video-projects` accepts either `{ topicId }` or `{ title }`) — a **video project** is created. All subsequent work — script, hooks, packaging — is tied to that project. Script generation is project-scoped (`GET /v1/scripts/stream/:projectId`), and each project owns its own script document, so multiple projects can share a topic. This gives creators a structured workspace per video rather than a disconnected collection of generated assets.
 
 The Video Project entity is now built (Sprint 2). It holds the pipeline state machine (research → script → hooks → packaging), tracks `currentStep` and `overallStatus`, and links resources (`scriptId`, `hooksId`, `packagingId`) to the project. Integration with Research, Script, Hooks, and Packaging endpoints is the next step. See [Video Project Spec](../features/video-project/spec.md) for full schema and decisions.
 
@@ -229,8 +229,8 @@ The thumbnail step generates design instructions, not an actual image. Creators 
 **No content calendar or pipeline view**
 No way to plan ahead, assign topics to dates, or track video status (idea → scripted → packaged → published). Important for creators publishing consistently.
 
-**Packaging disconnected from script/topic** *(Partially resolved — Sprint 2)*
-The Video Project entity now holds `scriptId`, `hooksId`, and `packagingId` references. Once integration with existing endpoints is complete (Sprint 3+), packaging will be reachable through its video project. Direct `packaging → script` foreign key still does not exist — Firestore data model gap remains until Sprint 3 wires this.
+**Packaging disconnected from script/topic** *(Partially resolved — Sprint 2/3)*
+The Video Project entity holds `scriptId`, `hooksId`, and `packagingId` references, and scripts now carry `topicId` + `videoProjectId` foreign keys (the script doc id is its own UUID, decoupled from the topic id). Packaging endpoints now resolve the selected hook server-side from the project rather than the client body. Direct `packaging → script` foreign key still does not exist — that Firestore data model gap remains.
 
 **No hook or asset library**
 Generated hooks, titles, and CTAs are not saved as reusable assets. No personal swipe file or pattern library builds over time.

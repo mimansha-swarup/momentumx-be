@@ -5,7 +5,7 @@ export type OverallStatus = "in_progress" | "completed" | "stale";
 export type StepName = "research" | "script" | "hooks" | "packaging";
 export type ResourceType = "script" | "hooks" | "packaging";
 export type PackagingItemStatus = "not_started" | "completed" | "stale";
-export type StaleReason = "script_regenerated" | "hooks_regenerated" | null;
+export type StaleReason = "research_regenerated" | "script_regenerated" | "hooks_regenerated" | null;
 
 export interface StepState {
   status: StepStatus;
@@ -29,8 +29,8 @@ export interface IVideoProjectPipeline {
 
 export interface IVideoProject {
   id: string;
-  userId: string;
-  workingTitle: string;
+  createdBy: string;
+  title: string;
   topicId: string;
   scriptId: string | null;
   hooksId: string | null;
@@ -43,15 +43,16 @@ export interface IVideoProject {
   isDeleted: boolean;
   deletedAt: Timestamp | null;
   createdAt: Timestamp;
-  lastUpdatedAt: Timestamp;
+  updatedAt: Timestamp;
 }
 
 export interface ICreateVideoProjectBody {
-  topicId: string;
+  topicId?: string;
+  title?: string;
 }
 
 export interface IUpdateVideoProjectBody {
-  workingTitle?: string;
+  title?: string;
 }
 
 export interface ILinkResourceBody {

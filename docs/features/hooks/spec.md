@@ -43,7 +43,7 @@ When Hooks completes:
 
 | Attribute | Value |
 |---|---|
-| Model | `gemini-2.0-flash` |
+| Model | `gemini-3.5-flash` |
 | Prompt | `GENERATE_HOOKS_PROMPT` in `src/constants/prompt.ts` |
 | Generation config | `GENERATION_CONFIG_PACKAGING` (JSON object output) |
 | Output | JSON object with `hooks` array — 5 strings |

@@ -1,7 +1,8 @@
 import { randomUUID } from "crypto";
-import { NextFunction, Request, Response } from "express";
+import { Request, Response } from "express";
 import ContentService from "../service/content.service.js";
 import { formatGeneratedTitle } from "../utlils/content.js";
+import { asyncHandler } from "../middleware/async_handler.js";
 
 class TopicController {
   private service: ContentService;
@@ -10,132 +11,87 @@ class TopicController {
     this.service = service;
   }
 
-  private handleError = (
-    error: unknown,
-    res: Response,
-    next: NextFunction,
-  ): void => {
-    const err = error as Error & { statusCode?: number };
-    if (err.message === "Forbidden") {
-      res.sendError({ message: "Forbidden", statusCode: 403 });
-    } else if (err.message === "Topic not found") {
-      res.sendError({ message: "Topic not found", statusCode: 404 });
-    } else if (err.statusCode) {
-      res.sendError({ message: err.message, statusCode: err.statusCode });
-    } else {
-      next(error);
+  retrieveTopics = asyncHandler(async (req: Request, res: Response) => {
+    const {
+      limit = "9",
+      createdAt = "",
+      docId = "",
+      searchText = "",
+      isScriptGenerated = "",
+    } = req.query;
+    const cursor = {
+      createdAt: createdAt as string,
+      docId: docId as string,
+    };
+    const filters = {
+      searchText: searchText as string,
+      isScriptGenerated: Boolean(isScriptGenerated),
+    };
+
+    const data = await this.service.getPaginatedUsersTopics({
+      userId: req.userId,
+      limit: parseInt(limit as string, 10),
+      cursor,
+      filters,
+    });
+
+    res.sendSuccess({
+      message: "successfully retrieved topics",
+      data,
+    });
+  });
+
+  generateTopics = asyncHandler(async (req: Request, res: Response) => {
+    const data = await this.service.generateTopics(req.userId);
+    const batchId = randomUUID();
+    const modifiedDataResults = await Promise.allSettled(
+      (data || [])?.map(async (record) =>
+        formatGeneratedTitle(record, req.userId, batchId),
+      ),
+    );
+    const modifiedData = modifiedDataResults
+      .filter((result) => result.status === "fulfilled")
+      .map((result) => result.value);
+
+    if (!modifiedData?.length) {
+      throw new Error("Unable to generate at the moment");
     }
-  };
+    const updatedData = await this.service.saveBatchTopics(modifiedData);
+    res.sendSuccess({
+      message: "successfully generated topics",
+      data: updatedData,
+    });
+  });
 
-  retrieveTopics = async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const {
-        limit = "9",
-        createdAt = "",
-        docId = "",
-        searchText = "",
-        isScriptGenerated = "",
-      } = req.query;
-      const cursor = {
-        createdAt: createdAt as string,
-        docId: docId as string,
-      };
-      const filters = {
-        searchText: searchText as string,
-        isScriptGenerated: Boolean(isScriptGenerated),
-      };
+  editTopic = asyncHandler(async (req: Request, res: Response) => {
+    const topicId = req.params.topicId;
+    const data = await this.service.editTopics(topicId, req.userId, req.body);
+    res.sendSuccess({
+      message: "Title updated successfully",
+      data: { ...data, id: topicId },
+    });
+  });
 
-      const data = await this.service.getPaginatedUsersTopics({
-        userId: req.userId,
-        limit: parseInt(limit as string, 10),
-        cursor,
-        filters,
-      });
+  regenerateAll = asyncHandler(async (req: Request, res: Response) => {
+    const data = await this.service.regenerateAll(req.userId);
+    res.sendSuccess({ message: "Topics regenerated successfully", data });
+  });
 
-      res.sendSuccess({
-        message: "successfully retrieved topics",
-        data,
-      });
-    } catch (error) {
-      next(error);
-    }
-  };
+  regenerateOne = asyncHandler(async (req: Request, res: Response) => {
+    const data = await this.service.regenerateOne(req.userId, req.params.topicId);
+    res.sendSuccess({ message: "Topic regenerated successfully", data });
+  });
 
-  generateTopics = async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const data = await this.service.generateTopics(req.userId);
-      const batchId = randomUUID();
-      const modifiedDataResults = await Promise.allSettled(
-        (data || [])?.map(async (record) =>
-          formatGeneratedTitle(record, req.userId, batchId),
-        ),
-      );
-      const modifiedData = modifiedDataResults
-        .filter((result) => result.status === "fulfilled")
-        .map((result) => result.value);
+  updateFeedback = asyncHandler(async (req: Request, res: Response) => {
+    const { feedback } = req.body as { feedback: "like" | "dislike" | null };
+    const data = await this.service.updateFeedback(req.userId, req.params.topicId, feedback);
+    res.sendSuccess({ message: "Feedback updated successfully", data });
+  });
 
-      if (!modifiedData?.length) {
-        throw new Error("Unable to generate at the moment");
-      }
-      const updatedData = await this.service.saveBatchTopics(modifiedData);
-      res.sendSuccess({
-        message: "successfully generated topics",
-        data: updatedData,
-      });
-    } catch (e) {
-      next(e);
-    }
-  };
-
-  editTopic = async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const topicId = req.params.topicId;
-      await this.service.editTopics(topicId, req.userId, req.body);
-      res.sendSuccess({
-        message: "Title updated successfully",
-        data: { ...req.body, id: topicId },
-      });
-    } catch (error) {
-      next(error);
-    }
-  };
-
-  regenerateAll = async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const data = await this.service.regenerateAll(req.userId);
-      res.sendSuccess({ message: "Topics regenerated successfully", data });
-    } catch (error) {
-      this.handleError(error, res, next);
-    }
-  };
-
-  regenerateOne = async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const data = await this.service.regenerateOne(req.userId, req.params.topicId);
-      res.sendSuccess({ message: "Topic regenerated successfully", data });
-    } catch (error) {
-      this.handleError(error, res, next);
-    }
-  };
-
-  updateFeedback = async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const { feedback } = req.body as { feedback: "like" | "dislike" | null };
-      const data = await this.service.updateFeedback(req.userId, req.params.topicId, feedback);
-      res.sendSuccess({ message: "Feedback updated successfully", data });
-    } catch (error) {
-      this.handleError(error, res, next);
-    }
-  };
-
-  exportTopics = async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const data = await this.service.exportTopics(req.userId);
-      res.sendSuccess({ message: "Topics exported successfully", data });
-    } catch (error) {
-      this.handleError(error, res, next);
-    }
-  };
+  exportTopics = asyncHandler(async (req: Request, res: Response) => {
+    const data = await this.service.exportTopics(req.userId);
+    res.sendSuccess({ message: "Topics exported successfully", data });
+  });
 }
 
 export default TopicController;

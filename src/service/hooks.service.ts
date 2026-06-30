@@ -7,6 +7,7 @@ import { generateStreamingContent } from "../utlils/ai.js";
 import HooksRepository from "../repository/hooks.repository.js";
 import VideoProjectService from "./video-project.service.js";
 import { IHooksBatch } from "../types/routes/hooks.js";
+import { BadRequest, Forbidden, NotFound } from "../utlils/errors.js";
 
 class HooksService {
   constructor(
@@ -22,9 +23,7 @@ class HooksService {
     const project = await this.videoProjectService.getById(videoProjectId, userId);
 
     if (project.pipeline.script.status !== "completed") {
-      const err = new Error("Script must be completed before generating hooks") as Error & { statusCode: number };
-      err.statusCode = 400;
-      throw err;
+      throw BadRequest("Script must be completed before generating hooks");
     }
 
     const userPrompt = GENERATE_HOOKS_PROMPT.replace("{script}", script);
@@ -52,7 +51,11 @@ class HooksService {
       hookFeedback: {},
     });
 
-    this.videoProjectService.linkResource(videoProjectId, "hooks", hooksBatch.id, userId).catch(console.error);
+    try {
+      await this.videoProjectService.linkResource(videoProjectId, "hooks", hooksBatch.id, userId);
+    } catch (linkError) {
+      console.error(JSON.stringify({ event: "pipeline_link_failed", step: "hooks", projectId: videoProjectId, hooksId: hooksBatch.id, userId, message: (linkError as Error)?.message }));
+    }
 
     return hooksBatch;
   };
@@ -60,30 +63,32 @@ class HooksService {
   select = async (
     userId: string,
     hooksId: string,
-    hookIndex: number,
-    videoProjectId: string
+    hookIndex: number
   ): Promise<{ id: string; hooksId: string; selectedHookIndex: number }> => {
     const hooksBatch = await this.repo.findById(hooksId);
     if (!hooksBatch) {
-      const err = new Error("Hooks batch not found") as Error & { statusCode: number };
-      err.statusCode = 404;
-      throw err;
+      throw NotFound("Hooks batch not found");
     }
     if (hooksBatch.createdBy !== userId) {
-      const err = new Error("Forbidden") as Error & { statusCode: number };
-      err.statusCode = 403;
-      throw err;
+      throw Forbidden();
     }
     if (hookIndex < 0 || hookIndex >= hooksBatch.hooks.length) {
-      const err = new Error(
-        `hookIndex out of range. Must be 0–${hooksBatch.hooks.length - 1}`
-      ) as Error & { statusCode: number };
-      err.statusCode = 400;
-      throw err;
+      throw BadRequest(`hookIndex out of range. Must be 0–${hooksBatch.hooks.length - 1}`);
+    }
+
+    // Resolve the project from the STORED batch — never trust a client-supplied id
+    // (mirrors regenerate; closes DA5: binding a batch to a non-origin project).
+    const videoProjectId = hooksBatch.videoProjectId;
+    if (!videoProjectId) {
+      throw BadRequest("Hooks batch is not linked to a video project");
     }
 
     const result = await this.videoProjectService.setSelectedHook(videoProjectId, hooksId, hookIndex, userId);
-    this.videoProjectService.completeStep(videoProjectId, "hooks", userId).catch(console.error);
+    try {
+      await this.videoProjectService.completeStep(videoProjectId, "hooks", userId);
+    } catch (stepError) {
+      console.error(JSON.stringify({ event: "pipeline_transition_failed", step: "hooks", projectId: videoProjectId, userId, message: (stepError as Error)?.message }));
+    }
     return result;
   };
 
@@ -94,19 +99,13 @@ class HooksService {
   ): Promise<{ id: string; hooks: string[]; hookFeedback: Record<string, never> }> => {
     const hooksBatch = await this.repo.findById(hooksId);
     if (!hooksBatch) {
-      const err = new Error("Hooks batch not found") as Error & { statusCode: number };
-      err.statusCode = 404;
-      throw err;
+      throw NotFound("Hooks batch not found");
     }
     if (hooksBatch.createdBy !== userId) {
-      const err = new Error("Forbidden") as Error & { statusCode: number };
-      err.statusCode = 403;
-      throw err;
+      throw Forbidden();
     }
     if (!script) {
-      const err = new Error("script is required") as Error & { statusCode: number };
-      err.statusCode = 400;
-      throw err;
+      throw BadRequest("script is required");
     }
 
     const userPrompt = GENERATE_HOOKS_PROMPT.replace("{script}", script);
@@ -124,9 +123,13 @@ class HooksService {
 
     const parsed = JSON.parse(accumulatedRes) as { hooks: string[] };
     await this.repo.update(hooksId, { hooks: parsed.hooks, hookFeedback: {} });
-    await this.videoProjectService.clearSelectedHook(hooksBatch.videoProjectId, userId);
-    await this.videoProjectService.markStale(hooksBatch.videoProjectId, "hooks");
-    this.videoProjectService.markPackagingDocumentStale(hooksBatch.videoProjectId, "hooks_regenerated").catch(console.error);
+    try {
+      await this.videoProjectService.clearSelectedHook(hooksBatch.videoProjectId, userId);
+      await this.videoProjectService.markStale(hooksBatch.videoProjectId, "hooks");
+      await this.videoProjectService.markPackagingDocumentStale(hooksBatch.videoProjectId, "hooks_regenerated");
+    } catch (cascadeError) {
+      console.error(JSON.stringify({ event: "stale_cascade_failed", from: "hooks", projectId: hooksBatch.videoProjectId, userId, message: (cascadeError as Error)?.message }));
+    }
 
     return { id: hooksId, hooks: parsed.hooks, hookFeedback: {} };
   };
@@ -139,27 +142,17 @@ class HooksService {
   ): Promise<{ id: string; hookIndex: number; feedback: "like" | "dislike" | null }> => {
     const hooksBatch = await this.repo.findById(hooksId);
     if (!hooksBatch) {
-      const err = new Error("Hooks batch not found") as Error & { statusCode: number };
-      err.statusCode = 404;
-      throw err;
+      throw NotFound("Hooks batch not found");
     }
     if (hooksBatch.createdBy !== userId) {
-      const err = new Error("Forbidden") as Error & { statusCode: number };
-      err.statusCode = 403;
-      throw err;
+      throw Forbidden();
     }
     if (hookIndex < 0 || hookIndex >= hooksBatch.hooks.length) {
-      const err = new Error(
-        `hookIndex out of range. Must be 0–${hooksBatch.hooks.length - 1}`
-      ) as Error & { statusCode: number };
-      err.statusCode = 400;
-      throw err;
+      throw BadRequest(`hookIndex out of range. Must be 0–${hooksBatch.hooks.length - 1}`);
     }
     const validFeedback = ["like", "dislike", null];
     if (!validFeedback.includes(feedback)) {
-      const err = new Error('feedback must be "like", "dislike", or null') as Error & { statusCode: number };
-      err.statusCode = 400;
-      throw err;
+      throw BadRequest('feedback must be "like", "dislike", or null');
     }
 
     await this.repo.update(hooksId, { [`hookFeedback.${hookIndex}`]: feedback });
@@ -172,14 +165,10 @@ class HooksService {
   ): Promise<{ text: string; count: number }> => {
     const hooksBatch = await this.repo.findById(hooksId);
     if (!hooksBatch) {
-      const err = new Error("Hooks batch not found") as Error & { statusCode: number };
-      err.statusCode = 404;
-      throw err;
+      throw NotFound("Hooks batch not found");
     }
     if (hooksBatch.createdBy !== userId) {
-      const err = new Error("Forbidden") as Error & { statusCode: number };
-      err.statusCode = 403;
-      throw err;
+      throw Forbidden();
     }
 
     const today = new Date().toLocaleDateString("en-US", {

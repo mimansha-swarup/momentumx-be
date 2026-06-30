@@ -23,13 +23,22 @@ jest.mock("../../src/config/firebase", () => ({
 
 import PackagingService from "../../src/service/packaging.service";
 import PackagingRepository from "../../src/repository/packaging.repository";
+import HooksRepository from "../../src/repository/hooks.repository";
 import { generateStreamingContent } from "../../src/utlils/ai";
 
 jest.mock("../../src/repository/packaging.repository");
+jest.mock("../../src/repository/hooks.repository");
 jest.mock("../../src/utlils/ai", () => ({ generateStreamingContent: jest.fn() }));
 
 const MockPackagingRepo = PackagingRepository as jest.MockedClass<typeof PackagingRepository>;
+const MockHooksRepo = HooksRepository as jest.MockedClass<typeof HooksRepository>;
 const mockGenerate = generateStreamingContent as jest.MockedFunction<typeof generateStreamingContent>;
+
+// Hooks are resolved server-side from the video project, so most suites pass a
+// bare hooks repo and no videoProjectService (selectedHook resolves to "").
+function makeHooksRepo() {
+  return new MockHooksRepo() as jest.Mocked<HooksRepository>;
+}
 
 function makeStream(text: string) {
   return {
@@ -52,8 +61,9 @@ describe("PackagingService — regenerateItem", () => {
 
   beforeEach(() => {
     mockRepo = new MockPackagingRepo() as jest.Mocked<PackagingRepository>;
-    service = new PackagingService(mockRepo);
-    mockGenerate.mockResolvedValue(makeStream('{"titles":["New A","New B","New C"]}'));
+    service = new PackagingService(mockRepo, makeHooksRepo());
+    // Real generator shape for titles: { titles: [{ title, characterCount }] }
+    mockGenerate.mockResolvedValue(makeStream('{"titles":[{"title":"New A","characterCount":40},{"title":"New B","characterCount":42},{"title":"New C","characterCount":44}]}'));
   });
 
   it("throws 404 if packaging not found", async () => {
@@ -104,31 +114,184 @@ describe("PackagingService — regenerateItem", () => {
 
     const result = await service.regenerateItem("user-1", "pkg-1", "title", "script text");
 
-    expect(mockRepo.update).toHaveBeenCalledWith("pkg-1", expect.objectContaining({ titles: expect.any(Object) }));
+    // Canonical: the wrapper is unwrapped to the inner titles ARRAY before storing.
+    const canonicalTitles = [
+      { title: "New A", characterCount: 40 },
+      { title: "New B", characterCount: 42 },
+      { title: "New C", characterCount: 44 },
+    ];
+    expect(mockRepo.update).toHaveBeenCalledWith("pkg-1", expect.objectContaining({ titles: canonicalTitles }));
     expect(result.id).toBe("pkg-1");
     expect(result.item).toBe("title");
+    // response data is the canonical shape — identical to what GET/export returns
+    expect(result.data).toEqual(canonicalTitles);
   });
 
-  it("happy path description: updates 'description' field", async () => {
+  it("happy path description: stores the unwrapped string", async () => {
     mockGenerate.mockResolvedValue(makeStream('{"description":"New SEO desc"}'));
     mockRepo.get = jest.fn().mockResolvedValue(mockPkg);
     mockRepo.update = jest.fn().mockResolvedValue(undefined);
 
     const result = await service.regenerateItem("user-1", "pkg-1", "description", "script", "My Title");
 
-    expect(mockRepo.update).toHaveBeenCalledWith("pkg-1", expect.objectContaining({ description: expect.anything() }));
+    expect(mockRepo.update).toHaveBeenCalledWith("pkg-1", expect.objectContaining({ description: "New SEO desc" }));
     expect(result.item).toBe("description");
+    expect(result.data).toBe("New SEO desc");
   });
 
-  it("happy path shorts: updates 'shorts' field when duration provided", async () => {
-    mockGenerate.mockResolvedValue(makeStream('{"shorts":"Shorts text"}'));
+  it("happy path thumbnail: stores the unwrapped descriptions array", async () => {
+    mockGenerate.mockResolvedValue(makeStream('{"descriptions":["Brief one","Brief two","Brief three"]}'));
+    mockRepo.get = jest.fn().mockResolvedValue(mockPkg);
+    mockRepo.update = jest.fn().mockResolvedValue(undefined);
+
+    const result = await service.regenerateItem("user-1", "pkg-1", "thumbnail", "script", "My Title");
+
+    expect(mockRepo.update).toHaveBeenCalledWith("pkg-1", expect.objectContaining({
+      thumbnail: ["Brief one", "Brief two", "Brief three"],
+    }));
+    expect(result.item).toBe("thumbnail");
+    expect(result.data).toEqual(["Brief one", "Brief two", "Brief three"]);
+  });
+
+  it("happy path shorts: stores the { segments, totalDuration } object", async () => {
+    mockGenerate.mockResolvedValue(makeStream('{"segments":[{"startTime":"0:00","endTime":"0:05","content":"Hook","type":"hook"}],"totalDuration":"1:00"}'));
     mockRepo.get = jest.fn().mockResolvedValue(mockPkg);
     mockRepo.update = jest.fn().mockResolvedValue(undefined);
 
     const result = await service.regenerateItem("user-1", "pkg-1", "shorts", "script", undefined, 60);
 
-    expect(mockRepo.update).toHaveBeenCalledWith("pkg-1", expect.objectContaining({ shorts: expect.anything() }));
+    const canonicalShorts = { segments: [{ startTime: "0:00", endTime: "0:05", content: "Hook", type: "hook" }], totalDuration: "1:00" };
+    expect(mockRepo.update).toHaveBeenCalledWith("pkg-1", expect.objectContaining({ shorts: canonicalShorts }));
     expect(result.item).toBe("shorts");
+    expect(result.data).toEqual(canonicalShorts);
+  });
+
+  it("rejects with 400 when the generated content has a malformed shape", async () => {
+    mockGenerate.mockResolvedValue(makeStream('{"wrong":"shape"}'));
+    mockRepo.get = jest.fn().mockResolvedValue(mockPkg);
+    mockRepo.update = jest.fn().mockResolvedValue(undefined);
+
+    const err = await service.regenerateItem("user-1", "pkg-1", "title", "script text").catch((e) => e);
+
+    expect(err.statusCode).toBe(400);
+    // Invariant (independent of HOW the code rejects it): malformed content is
+    // never persisted, and the item is never marked "completed".
+    expect(mockRepo.update).not.toHaveBeenCalledWith("pkg-1", expect.objectContaining({ titles: expect.anything() }));
+    expect(mockRepo.update).not.toHaveBeenCalledWith("pkg-1", expect.objectContaining({ "itemStatuses.title": "completed" }));
+  });
+});
+
+describe("PackagingService — regenerateItem project sync (DA6 stale clear)", () => {
+  let service: PackagingService;
+  let mockRepo: jest.Mocked<PackagingRepository>;
+  let mockVp: { getById: jest.Mock; refreshPackagingStep: jest.Mock; setThumbnailHint: jest.Mock };
+
+  // pkg linked to a project, with only `title` stale and the rest completed.
+  const linkedPkg = (itemStatuses: Record<string, string>) => ({
+    ...mockPkg,
+    videoProjectId: "proj-1",
+    itemStatuses,
+  });
+
+  beforeEach(() => {
+    mockRepo = new MockPackagingRepo() as jest.Mocked<PackagingRepository>;
+    mockVp = {
+      getById: jest.fn().mockResolvedValue({}), // no selected hook -> resolves to ""
+      refreshPackagingStep: jest.fn().mockResolvedValue(undefined),
+      setThumbnailHint: jest.fn().mockResolvedValue(undefined),
+    };
+    service = new PackagingService(mockRepo, makeHooksRepo(), mockVp as any);
+    mockGenerate.mockResolvedValue(makeStream('{"titles":[{"title":"New A","characterCount":40}]}'));
+    mockRepo.update = jest.fn().mockResolvedValue(undefined);
+  });
+
+  it("calls refreshPackagingStep when the LAST stale item is regenerated", async () => {
+    mockRepo.get = jest.fn().mockResolvedValue(
+      linkedPkg({ title: "stale", description: "completed", thumbnail: "completed", shorts: "completed" })
+    );
+
+    await service.regenerateItem("user-1", "pkg-1", "title", "script text");
+
+    expect(mockRepo.update).toHaveBeenCalledWith("pkg-1", expect.objectContaining({ isStale: false }));
+    expect(mockVp.refreshPackagingStep).toHaveBeenCalledWith("proj-1", "user-1");
+  });
+
+  it("does NOT call refreshPackagingStep on a partial regen (another item still stale)", async () => {
+    mockRepo.get = jest.fn().mockResolvedValue(
+      linkedPkg({ title: "stale", description: "stale", thumbnail: "completed", shorts: "completed" })
+    );
+
+    await service.regenerateItem("user-1", "pkg-1", "title", "script text");
+
+    expect(mockRepo.update).not.toHaveBeenCalledWith("pkg-1", expect.objectContaining({ isStale: false }));
+    expect(mockVp.refreshPackagingStep).not.toHaveBeenCalled();
+  });
+
+  it("does NOT call refreshPackagingStep when the packaging has no videoProjectId", async () => {
+    mockRepo.get = jest.fn().mockResolvedValue(
+      { ...mockPkg, itemStatuses: { title: "stale", description: "completed", thumbnail: "completed", shorts: "completed" } }
+    );
+
+    await service.regenerateItem("user-1", "pkg-1", "title", "script text");
+
+    expect(mockVp.refreshPackagingStep).not.toHaveBeenCalled();
+  });
+
+  it("still resolves the regeneration when the project sync fails (best-effort)", async () => {
+    mockRepo.get = jest.fn().mockResolvedValue(
+      linkedPkg({ title: "stale", description: "completed", thumbnail: "completed", shorts: "completed" })
+    );
+    mockVp.refreshPackagingStep.mockRejectedValue(new Error("sync boom"));
+
+    const result = await service.regenerateItem("user-1", "pkg-1", "title", "script text");
+
+    expect(result.id).toBe("pkg-1");
+    expect(mockVp.refreshPackagingStep).toHaveBeenCalled();
+  });
+
+  it("refreshes the project thumbnailHint with the new first brief when the thumbnail is regenerated", async () => {
+    mockGenerate.mockResolvedValue(makeStream('{"descriptions":["Fresh brief one","Fresh brief two"]}'));
+    mockRepo.get = jest.fn().mockResolvedValue(
+      linkedPkg({ title: "completed", description: "completed", thumbnail: "completed", shorts: "completed" })
+    );
+
+    await service.regenerateItem("user-1", "pkg-1", "thumbnail", "script", "My Title");
+
+    expect(mockVp.setThumbnailHint).toHaveBeenCalledWith("proj-1", "Fresh brief one", "user-1");
+  });
+
+  it("does NOT touch thumbnailHint when a non-thumbnail item is regenerated", async () => {
+    mockRepo.get = jest.fn().mockResolvedValue(
+      linkedPkg({ title: "completed", description: "completed", thumbnail: "completed", shorts: "completed" })
+    );
+
+    await service.regenerateItem("user-1", "pkg-1", "title", "script text");
+
+    expect(mockVp.setThumbnailHint).not.toHaveBeenCalled();
+  });
+
+  it("sets thumbnailHint to null when the regenerated thumbnail has no briefs", async () => {
+    mockGenerate.mockResolvedValue(makeStream('{"descriptions":[]}'));
+    mockRepo.get = jest.fn().mockResolvedValue(
+      linkedPkg({ title: "completed", description: "completed", thumbnail: "completed", shorts: "completed" })
+    );
+
+    await service.regenerateItem("user-1", "pkg-1", "thumbnail", "script", "My Title");
+
+    expect(mockVp.setThumbnailHint).toHaveBeenCalledWith("proj-1", null, "user-1");
+  });
+
+  it("still resolves the regeneration when the thumbnailHint refresh fails (best-effort)", async () => {
+    mockGenerate.mockResolvedValue(makeStream('{"descriptions":["Fresh brief one"]}'));
+    mockRepo.get = jest.fn().mockResolvedValue(
+      linkedPkg({ title: "completed", description: "completed", thumbnail: "completed", shorts: "completed" })
+    );
+    mockVp.setThumbnailHint.mockRejectedValue(new Error("hint boom"));
+
+    const result = await service.regenerateItem("user-1", "pkg-1", "thumbnail", "script", "My Title");
+
+    expect(result.id).toBe("pkg-1");
+    expect(mockVp.setThumbnailHint).toHaveBeenCalled();
   });
 });
 
@@ -138,7 +301,7 @@ describe("PackagingService — updateFeedback", () => {
 
   beforeEach(() => {
     mockRepo = new MockPackagingRepo() as jest.Mocked<PackagingRepository>;
-    service = new PackagingService(mockRepo);
+    service = new PackagingService(mockRepo, makeHooksRepo());
   });
 
   it("throws 404 if not found", async () => {
@@ -190,8 +353,10 @@ describe("PackagingService — savePackaging with videoProjectId", () => {
 
   beforeEach(() => {
     mockRepo = new MockPackagingRepo() as jest.Mocked<PackagingRepository>;
-    service = new PackagingService(mockRepo);
+    service = new PackagingService(mockRepo, makeHooksRepo());
     mockRepo.save = jest.fn().mockResolvedValue({ id: "pkg-new" });
+    // savePackaging upserts by project: no existing doc -> save path
+    mockRepo.findByVideoProject = jest.fn().mockResolvedValue(null);
   });
 
   it("saves videoProjectId on the document when provided", async () => {
@@ -205,29 +370,92 @@ describe("PackagingService — savePackaging with videoProjectId", () => {
     const packagingData = (mockRepo.save as jest.Mock).mock.calls[0][0];
     expect(packagingData).not.toHaveProperty("videoProjectId");
   });
+
+  it("coerces wrapper-shaped item fields to the canonical stored shape", async () => {
+    await service.savePackaging("user-1", {
+      titles: { titles: [{ title: "A", characterCount: 30 }] },
+      description: { description: "Desc text" },
+      thumbnail: { descriptions: ["Brief one", "Brief two"] },
+      shorts: { segments: [{ startTime: "0:00", endTime: "0:05", content: "Hook", type: "hook" }], totalDuration: "1:00" },
+    });
+    const packagingData = (mockRepo.save as jest.Mock).mock.calls[0][0];
+    expect(packagingData.titles).toEqual([{ title: "A", characterCount: 30 }]);
+    expect(packagingData.description).toBe("Desc text");
+    expect(packagingData.thumbnail).toEqual(["Brief one", "Brief two"]);
+    expect(packagingData.shorts).toEqual({ segments: [{ startTime: "0:00", endTime: "0:05", content: "Hook", type: "hook" }], totalDuration: "1:00" });
+    expect(packagingData.itemStatuses).toEqual({ title: "completed", description: "completed", thumbnail: "completed", shorts: "completed" });
+  });
+
+  it("accepts already-canonical (bare) item fields unchanged", async () => {
+    await service.savePackaging("user-1", {
+      titles: [{ title: "A", characterCount: 30 }],
+      thumbnail: ["Brief one"],
+    });
+    const packagingData = (mockRepo.save as jest.Mock).mock.calls[0][0];
+    expect(packagingData.titles).toEqual([{ title: "A", characterCount: 30 }]);
+    expect(packagingData.thumbnail).toEqual(["Brief one"]);
+  });
+
+  it("rejects with 400 when a content field has a malformed shape", async () => {
+    const err = await service.savePackaging("user-1", { titles: 42 }).catch((e) => e);
+    expect(err.statusCode).toBe(400);
+    expect(mockRepo.save).not.toHaveBeenCalled();
+  });
+
+  it("sets stale flags fresh on create (no existing doc)", async () => {
+    mockRepo.findByVideoProject = jest.fn().mockResolvedValue(null);
+    await service.savePackaging("user-1", { title: "t" }, "proj-1");
+    const saved = (mockRepo.save as jest.Mock).mock.calls[0][0];
+    expect(saved).toMatchObject({ isStale: false, staleReason: null, staleSince: null });
+  });
+
+  it("does NOT touch stale flags on update (re-save must not un-stale)", async () => {
+    mockRepo.findByVideoProject = jest.fn().mockResolvedValue({ id: "pkg-1" });
+    mockRepo.update = jest.fn().mockResolvedValue({ id: "pkg-1" });
+    await service.savePackaging("user-1", { title: "t" }, "proj-1");
+    expect(mockRepo.save).not.toHaveBeenCalled();
+    const updatePayload = (mockRepo.update as jest.Mock).mock.calls[0][1];
+    expect(updatePayload).not.toHaveProperty("isStale");
+    expect(updatePayload).not.toHaveProperty("staleReason");
+    expect(updatePayload).not.toHaveProperty("staleSince");
+  });
 });
 
-describe("PackagingService — generateTitle with selectedHook", () => {
+describe("PackagingService — generateTitle with server-side hook resolution", () => {
   let service: PackagingService;
   let mockRepo: jest.Mocked<PackagingRepository>;
+  let mockHooksRepo: jest.Mocked<HooksRepository>;
+  let mockVp: { getById: jest.Mock };
 
   beforeEach(() => {
     mockRepo = new MockPackagingRepo() as jest.Mocked<PackagingRepository>;
-    service = new PackagingService(mockRepo);
+    mockHooksRepo = makeHooksRepo();
+    mockVp = { getById: jest.fn() };
+    service = new PackagingService(mockRepo, mockHooksRepo, mockVp as any);
   });
 
-  it("calls generateStreamingContent and returns parsed result", async () => {
+  it("resolves the selected hook server-side from the project and injects it into the prompt", async () => {
     const fakeTitles = [{ title: "Title A", characterCount: 55 }];
     mockGenerate.mockResolvedValue(makeStream(JSON.stringify({ titles: fakeTitles })));
-    const result = await service.generateTitle("script text", "my hook opener");
-    expect(mockGenerate).toHaveBeenCalled();
+    // Project points to a hooks batch + selected index; service resolves the hook itself.
+    mockVp.getById.mockResolvedValue({ id: "proj-1", hooksId: "hooks-1", selectedHookIndex: 1 });
+    mockHooksRepo.findById = jest.fn().mockResolvedValue({ id: "hooks-1", hooks: ["hook zero", "my hook opener"] });
+
+    const result = await service.generateTitle("user-1", "script text", "proj-1");
+
+    expect(mockVp.getById).toHaveBeenCalledWith("proj-1", "user-1");
+    expect(mockHooksRepo.findById).toHaveBeenCalledWith("hooks-1");
+    // Resolved hook must reach the generation prompt (client never sends it).
+    const userPromptArg = mockGenerate.mock.calls[0][1] as string;
+    expect(userPromptArg).toContain("my hook opener");
     expect(result).toEqual({ titles: fakeTitles });
   });
 
-  it("works without selectedHook", async () => {
+  it("works without a videoProjectId (hook resolves to empty, no project lookup)", async () => {
     const fakeTitles = [{ title: "Title B", characterCount: 50 }];
     mockGenerate.mockResolvedValue(makeStream(JSON.stringify({ titles: fakeTitles })));
-    const result = await service.generateTitle("script text");
+    const result = await service.generateTitle("user-1", "script text");
+    expect(mockVp.getById).not.toHaveBeenCalled();
     expect(mockGenerate).toHaveBeenCalled();
     expect(result).toEqual({ titles: fakeTitles });
   });
@@ -239,7 +467,7 @@ describe("PackagingService — exportPackaging", () => {
 
   beforeEach(() => {
     mockRepo = new MockPackagingRepo() as jest.Mocked<PackagingRepository>;
-    service = new PackagingService(mockRepo);
+    service = new PackagingService(mockRepo, makeHooksRepo());
   });
 
   it("throws 404 if not found", async () => {
@@ -254,15 +482,40 @@ describe("PackagingService — exportPackaging", () => {
     expect(err.statusCode).toBe(403);
   });
 
-  it("returns { text } containing all packaging sections", async () => {
+  it("renders legacy/string-shaped fields readably (backward tolerance)", async () => {
+    // mockPkg uses the pre-canonical shapes (titles as plain strings, thumbnail/shorts as strings).
+    // Export must still render them as readable content, not drop them.
     mockRepo.get = jest.fn().mockResolvedValue(mockPkg);
 
     const result = await service.exportPackaging("user-1", "pkg-1");
 
     expect(result.text).toContain("TITLES");
-    expect(result.text).toContain("DESCRIPTION");
-    expect(result.text).toContain("THUMBNAIL BRIEF");
-    expect(result.text).toContain("SHORTS SCRIPT");
+    expect(result.text).toContain("1. Title A"); // string titles -> numbered list
     expect(result.text).toContain("SEO description.");
+    expect(result.text).toContain("Bold text on bright background."); // string thumbnail rendered
+    expect(result.text).toContain("Hook: Did you know?"); // string shorts rendered
+  });
+
+  it("renders canonical shapes as readable text, never JSON blobs", async () => {
+    mockRepo.get = jest.fn().mockResolvedValue({
+      ...mockPkg,
+      titles: [{ title: "My Great Title", characterCount: 14 }],
+      description: "Plain description text.",
+      thumbnail: ["Bold red PRODUCTIVITY text on left", "Minimalist 10X center"],
+      shorts: { segments: [{ startTime: "0:00", endTime: "0:05", content: "Stop. This changes everything.", type: "hook" }], totalDuration: "1:00" },
+    });
+
+    const result = await service.exportPackaging("user-1", "pkg-1");
+
+    // titles render as plain text (the .title field), not the {title,characterCount} object
+    expect(result.text).toContain("1. My Great Title");
+    expect(result.text).not.toContain('{"title"');
+    // thumbnail briefs render as a numbered list
+    expect(result.text).toContain("1. Bold red PRODUCTIVITY text on left");
+    expect(result.text).toContain("2. Minimalist 10X center");
+    // shorts render readably (segment content + total), not a JSON blob
+    expect(result.text).toContain("Stop. This changes everything.");
+    expect(result.text).toContain("Total: 1:00");
+    expect(result.text).not.toContain('{"segments"');
   });
 });

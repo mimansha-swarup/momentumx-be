@@ -1,5 +1,7 @@
-import { NextFunction, Request, Response } from "express";
+import { Request, Response } from "express";
 import UserService from "../service/user.service.js";
+import { asyncHandler } from "../middleware/async_handler.js";
+import { BadRequest } from "../utlils/errors.js";
 
 class UserController {
   private service: UserService;
@@ -8,63 +10,48 @@ class UserController {
     this.service = service;
   }
 
-  saveOnboarding = async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const { brandName, niche, targetAudience, userName } = req.body;
+  saveOnboarding = asyncHandler(async (req: Request, res: Response) => {
+    const { brandName, niche, targetAudience, userName } = req.body;
 
-      const missing: string[] = [];
-      if (!brandName) missing.push("brandName");
-      if (!niche) missing.push("niche");
-      if (!targetAudience) missing.push("targetAudience");
-      if (!userName) missing.push("userName");
+    const missing: string[] = [];
+    if (!brandName) missing.push("brandName");
+    if (!niche) missing.push("niche");
+    if (!targetAudience) missing.push("targetAudience");
+    if (!userName) missing.push("userName");
 
-      if (missing.length) {
-        return res.sendError({
-          message: `Missing required fields: ${missing.join(", ")}`,
-          statusCode: 400,
-        });
-      }
-
-      const payload = await this.service.createOnboardingData(
-        req.userId,
-        req.body
-      );
-      const isWebsiteParsed = !!payload?.websiteContent;
-      res.sendSuccess({
-        warning: !isWebsiteParsed ? "Website content is not parsed" : "",
-        message: "Onboarded successfully",
-        data: { payload },
-      });
-    } catch (e) {
-      next(e);
+    if (missing.length) {
+      throw BadRequest(`Missing required fields: ${missing.join(", ")}`);
     }
-  };
 
-  getProfile = async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const payload = await this.service.getProfile(req.userId);
+    const payload = await this.service.createOnboardingData(
+      req.userId,
+      req.body
+    );
+    const isWebsiteParsed = !!payload?.websiteContent;
+    res.sendSuccess({
+      warning: !isWebsiteParsed ? "Website content is not parsed" : "",
+      message: "Onboarded successfully",
+      data: { payload },
+    });
+  });
 
-      res.sendSuccess({
-        message: "Fetched onboarding data successfully",
-        data: { ...(payload ?? {}) },
-      });
-    } catch (e) {
-      next(e);
-    }
-  };
+  getProfile = asyncHandler(async (req: Request, res: Response) => {
+    const payload = await this.service.getProfile(req.userId);
 
-  updateProfile = async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const payload = await this.service.updateProfile(req.userId, req.body);
+    res.sendSuccess({
+      message: "Fetched onboarding data successfully",
+      data: { ...(payload ?? {}) },
+    });
+  });
 
-      res.sendSuccess({
-        message: "Profile updated successfully",
-        data: { payload },
-      });
-    } catch (e) {
-      next(e);
-    }
-  };
+  updateProfile = asyncHandler(async (req: Request, res: Response) => {
+    const payload = await this.service.updateProfile(req.userId, req.body);
+
+    res.sendSuccess({
+      message: "Profile updated successfully",
+      data: { payload },
+    });
+  });
 }
 
 export default UserController;

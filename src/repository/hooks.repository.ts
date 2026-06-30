@@ -30,7 +30,7 @@ class HooksRepository {
   };
 
   update = async (hooksId: string, data: Record<string, unknown>): Promise<void> => {
-    await this.db.collection(this.collection).doc(hooksId).set(data, { merge: true });
+    await this.db.collection(this.collection).doc(hooksId).update(data);
   };
 }
 

@@ -24,17 +24,22 @@ This is the foundational data model for Phase 0. Research, Script, Hooks, and Pa
 
 ## Key Design Decisions
 
-### A. Creation Trigger — Automatic on Topic Selection
+### A. Creation Trigger — On Topic Selection or Own Idea
 
-A Video Project is created the moment the creator selects a topic from Research results. There is no explicit "Create Project" button.
+A Video Project is created either when the creator commits an AI-generated topic candidate, or when the creator brings their own idea. `POST /v1/video-projects` accepts **exactly one** of:
 
-**Reasoning:** Selecting a topic already expresses intent. Creating the project at that moment captures intent immediately, keeps the UI simple, and ensures no orphaned topics exist without project context.
+- `{ topicId }` — commit an existing AI candidate topic.
+- `{ title }` — "add your own idea": the server creates the topic (with embedding) via `createFromTitle`, then creates the project from it.
 
-**Implication:** When a topic is selected, the frontend calls `POST /v1/video-projects` with `{ topicId }`. The backend creates the project and returns `projectId`. All subsequent calls (Script, Hooks, Packaging) include `projectId`.
+Providing both or neither returns 400.
+
+**Reasoning:** Committing a topic (whether AI-suggested or the creator's own) expresses intent. Creating the project at that moment captures intent immediately and ensures no orphaned topics exist without project context.
+
+**Implication:** The frontend calls `POST /v1/video-projects` with `{ topicId }` or `{ title }`. The backend creates the project and returns its `id`. All subsequent calls (Script, Hooks, Packaging) pass that value as the `:projectId` path param.
 
 ### B. No Blank Project State
 
-Topic selection is always Step 1. A project cannot exist without a topic. The project's `workingTitle` is set from the selected topic's title at creation.
+Topic selection is always Step 1. A project cannot exist without a topic. The project's `title` is set from the selected topic's title at creation.
 
 **Conflict with pipeline-spec flag:** `pipeline-spec.md` describes Research as a step with `not_started` status, implying Research could happen inside a project created before topic selection. This spec overrides that. The project is created only after a topic is selected. Research-inside-a-project (to replace the topic) is a future feature, not Phase 0.
 
@@ -43,7 +48,7 @@ Topic selection is always Step 1. A project cannot exist without a topic. The pr
 The list endpoint returns 7 fields per project: enough to identify and navigate, not the full pipeline state.
 
 ```
-projectId, workingTitle, currentStep, overallStatus, lastUpdatedAt, createdAt, thumbnailHint
+id, title, currentStep, overallStatus, updatedAt, createdAt, thumbnailHint
 ```
 
 `thumbnailHint` is `null` until packaging is reached. Full pipeline detail is only on the single-project GET.
@@ -56,17 +61,20 @@ The creator can jump to any step at any time, including completed steps. Viewing
 
 `isDeleted: true` + `deletedAt`. Linked topic, script, hooks, and packaging documents are NOT deleted. Dashboard list filters `isDeleted == false`. Recoverable.
 
-### F. Script Step Completion — Explicit "Use This Script" Action
+### F. Step Completion Mechanics
 
-The Script step (and Hooks, Packaging) are completed by an explicit user action. Moving to the next step does NOT auto-complete the previous step.
+Each step completes by its own mechanic:
 
-**Research exception:** Research is auto-completed at project creation — it's already done when you pick a topic.
+- **Research:** auto-completed at project creation — already done when you pick a topic.
+- **Script:** auto-completed server-side as soon as the generated script is saved (no explicit "approve" action). The creator can still edit the saved script afterward.
+- **Hooks:** completed when the creator selects a hook (`POST /v1/hooks/:hooksId/select`).
+- **Packaging:** items complete as they are saved/regenerated on the packaging document.
 
-**API mechanic:** `PATCH /v1/video-projects/:projectId/step/script/complete`
+The generic `PATCH /v1/video-projects/:projectId/step/:stepName/complete` endpoint remains available (idempotent), but for the Script step completion is fired automatically by the backend after save.
 
-### G. Multiple Projects Per Topic — Allowed
+### G. Multiple Projects Per Topic — Supported
 
-A creator can start multiple Video Projects using the same topic. No lock on topics. Topics are references only — not consumed or modified by project creation.
+A creator can start multiple Video Projects on the same topic. No lock on topics — they are references only, not consumed by project creation. Each project owns its **own** script document (the script's id is a per-project `randomUUID`, not the topic id), so projects on the same topic never collide on their script. When the topic is regenerated, the stale cascade fans out to **all** projects backed by it (see Stale Cascade Rules).
 
 ---
 
@@ -76,24 +84,26 @@ A creator can start multiple Video Projects using the same topic. No lock on top
 
 ```
 1. Creator opens MomentumX dashboard.
-2. System fetches all video projects (isDeleted == false), ordered by lastUpdatedAt desc.
+2. System fetches all video projects (isDeleted == false), ordered by updatedAt desc.
 3. Creator sees project cards: working title, current step, status, last updated.
 4. Creator clicks a card to open the project.
 5. Creator is taken to the current active step.
 ```
 
-### Creating a New Project (Topic Selection)
+### Creating a New Project (Topic Selection or Own Idea)
 
 ```
-1. Creator runs Research (POST /v1/topics/generate) — existing flow.
-2. Creator selects a topic.
-3. Frontend calls POST /v1/video-projects with { topicId }.
-4. Backend creates the project:
-   - workingTitle = topic.title
+1a. Creator runs Research (POST /v1/topics/generate), then selects a topic — existing flow.
+    Frontend calls POST /v1/video-projects with { topicId }.
+1b. OR the creator brings their own idea.
+    Frontend calls POST /v1/video-projects with { title }.
+    Backend creates the topic (with embedding) via createFromTitle, then the project.
+2. Backend creates the project:
+   - title = topic.title
    - pipeline.research.status = "completed"
    - all other steps = "not_started"
-5. Backend returns { projectId, workingTitle, pipeline }.
-6. Frontend navigates creator to the Script step.
+3. Backend returns { id, title, pipeline }.
+4. Frontend navigates creator to the Script step.
 ```
 
 ### Script Step
@@ -101,12 +111,10 @@ A creator can start multiple Video Projects using the same topic. No lock on top
 ```
 1. Creator opens Script step.
 2. Frontend calls PATCH /video-projects/:projectId/step/script/start → status = "in_progress".
-3. Creator generates script (existing SSE endpoint, now includes projectId).
-4. Script saves → backend sets project.scriptId.
-5. Creator edits, iterates.
-6. Creator clicks "Use This Script".
-7. Frontend calls PATCH /video-projects/:projectId/step/script/complete.
-8. Script step = "completed". Frontend shows "Next: Hooks".
+3. Creator generates script via GET /v1/scripts/stream/:projectId (project-scoped; topic derived from project.topicId).
+4. Script saves under its own UUID → backend sets project.scriptId AND auto-completes the Script step.
+5. Script step = "completed". Frontend shows "Next: Hooks".
+6. Creator may still edit the saved script (PATCH /scripts/edit/:scriptId) without changing step status.
 ```
 
 ### Hooks Step
@@ -142,12 +150,19 @@ A creator can start multiple Video Projects using the same topic. No lock on top
 5. Backend applies cascade:
    - pipeline.hooks.status = "stale"
    - pipeline.packaging.status = "stale"
-   - overallStatus = "in_progress"
+   - overallStatus = "stale"
 6. Creator sees stale warning on Hooks and Packaging.
 7. Creator re-does Hooks and Packaging.
 ```
 
 > There is no client-callable stale endpoint. Stale cascade is triggered automatically server-side by regeneration services.
+
+### Stale Recovery (Clearing a Stale Step)
+
+Stale clears only by regenerating the affected step — there is no "dismiss" action. Re-completing a step recomputes `overallStatus` (it stays `"stale"` while any step is still stale, becomes `"completed"` when all steps are completed, else `"in_progress"`):
+
+- **Packaging:** when the last stale packaging item is regenerated, `PackagingService.regenerateItem` clears the packaging document's stale flags and calls `VideoProjectService.refreshPackagingStep`, which flips `pipeline.packaging.status` `stale → completed` and recomputes `overallStatus`. Best-effort: a sync failure is logged and never fails the regeneration.
+- **Script / Hooks:** re-completing these steps through their normal flow (script save, hook re-selection) clears their stale status the same way.
 
 ---
 
@@ -159,9 +174,9 @@ Document ID: Firestore auto-generated.
 
 ```typescript
 interface VideoProject {
-  projectId: string;              // same as Firestore doc ID, stored for queries
-  userId: string;                 // from req.userId
-  workingTitle: string;           // from topic.title at creation; can be renamed
+  id: string;                     // Firestore auto-generated doc ID
+  createdBy: string;              // from req.userId
+  title: string;           // from topic.title at creation; can be renamed
 
   topicId: string;                // always set — required for creation
   scriptId: string | null;        // set when script is saved
@@ -183,7 +198,7 @@ interface VideoProject {
   deletedAt: Timestamp | null;
 
   createdAt: Timestamp;
-  lastUpdatedAt: Timestamp;
+  updatedAt: Timestamp;
 }
 
 interface StepState {
@@ -196,9 +211,9 @@ interface StepState {
 ### Fields Set at Creation
 
 ```
-projectId         auto-id
-userId            req.userId
-workingTitle      from topic.title
+id                auto-id
+createdBy         req.userId
+title      from topic.title
 topicId           from request body
 scriptId             null
 hooksId              null
@@ -209,7 +224,7 @@ currentStep       "research"
 isDeleted         false
 deletedAt         null
 createdAt         serverTimestamp()
-lastUpdatedAt     serverTimestamp()
+updatedAt     serverTimestamp()
 pipeline.research   { status: "completed", startedAt: null, completedAt: serverTimestamp() }
 pipeline.script     { status: "not_started", startedAt: null, completedAt: null }
 pipeline.hooks      { status: "not_started", startedAt: null, completedAt: null }
@@ -219,10 +234,10 @@ pipeline.packaging  { status: "not_started", startedAt: null, completedAt: null 
 ### Indexes Required
 
 ```
-Composite index 1: userId ASC, isDeleted ASC, lastUpdatedAt DESC
+Composite index 1: isDeleted ASC, createdBy ASC, updatedAt DESC, __name__ DESC
   → powers dashboard list query
 
-Composite index 2: userId ASC, isDeleted ASC, overallStatus ASC
+Composite index 2: isDeleted ASC, createdBy ASC, overallStatus ASC, updatedAt DESC, __name__ DESC
   → powers filtered list (e.g., "show only in_progress")
 ```
 
@@ -230,9 +245,9 @@ Composite index 2: userId ASC, isDeleted ASC, overallStatus ASC
 
 **`topics`** — no change. Project holds `topicId` as a reference. Topics remain reusable across projects.
 
-**`scripts`** — add `projectId: string | null`. Set when script is saved for a project. `null` on documents created before video projects existed. Do not backfill.
+**`scripts`** — the script document id is its own `randomUUID` (no longer the topic id). It stores `topicId` and `videoProjectId` foreign keys, both set when the script is saved for a project. Older documents may use the legacy `id == topicId` scheme and lack these FKs; do not backfill.
 
-**`packaging`** — add `projectId: string | null`. Resolves the long-standing data model gap (packaging disconnected from topics/scripts). `null` on pre-existing documents. Do not backfill.
+**`packaging`** — add `videoProjectId: string | null`. Resolves the long-standing data model gap (packaging disconnected from topics/scripts). `null` on pre-existing documents. Do not backfill.
 
 ---
 
@@ -242,12 +257,14 @@ Applied server-side. Frontend reads stale state from the project's pipeline obje
 
 | Step regenerated | Steps that become stale |
 |---|---|
-| Research (topic changed) | script, hooks, packaging |
+| Research (topic changed, Regenerate All) | script, hooks, packaging — on **every** project backed by the topic |
 | Script | hooks, packaging |
 | Hooks | packaging |
 | Packaging | none (leaf node) |
 
 Only update steps that are NOT `not_started` — stale is meaningless on unvisited steps.
+
+For Research (Regenerate All), the cascade fans out to all projects on each archived topic: `ContentService.regenerateAll` → `getProjectsByTopic(topic.id)` → `findByTopicId`, then `markStale` + `markPackagingDocumentStale` per project. A topic can back multiple projects, so keying off a single `topic.videoProjectId` would miss the others.
 
 ---
 

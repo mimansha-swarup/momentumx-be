@@ -1,173 +1,112 @@
+import { asyncHandler } from "../middleware/async_handler.js";
+import { BadRequest, NotFound } from "../utlils/errors.js";
 class PackagingController {
     constructor(service) {
-        this.generateTitle = async (req, res, next) => {
-            try {
-                const { script, selectedHook } = req.body;
-                if (!script) {
-                    return res.sendError({ message: "Script is required", statusCode: 400 });
-                }
-                const data = await this.service.generateTitle(script, selectedHook);
-                res.sendSuccess({
-                    message: "Title generated successfully",
-                    data,
-                });
+        this.generateTitle = asyncHandler(async (req, res) => {
+            const { script, videoProjectId } = req.body;
+            if (!script) {
+                throw BadRequest("Script is required");
             }
-            catch (error) {
-                next(error);
+            const data = await this.service.generateTitle(req.userId, script, videoProjectId);
+            res.sendSuccess({
+                message: "Title generated successfully",
+                data,
+            });
+        });
+        this.generateDescription = asyncHandler(async (req, res) => {
+            const { script, title, videoProjectId } = req.body;
+            if (!script) {
+                throw BadRequest("Script is required");
             }
-        };
-        this.generateDescription = async (req, res, next) => {
-            try {
-                const { script, title, selectedHook } = req.body;
-                if (!script) {
-                    return res.sendError({ message: "Script is required", statusCode: 400 });
-                }
-                if (!title) {
-                    return res.sendError({ message: "Title is required", statusCode: 400 });
-                }
-                const data = await this.service.generateDescription(script, title, selectedHook);
-                res.sendSuccess({
-                    message: "Description generated successfully",
-                    data,
-                });
+            if (!title) {
+                throw BadRequest("Title is required");
             }
-            catch (error) {
-                next(error);
+            const data = await this.service.generateDescription(req.userId, script, title, videoProjectId);
+            res.sendSuccess({
+                message: "Description generated successfully",
+                data,
+            });
+        });
+        this.generateThumbnail = asyncHandler(async (req, res) => {
+            const { script, title, videoProjectId } = req.body;
+            if (!script) {
+                throw BadRequest("Script is required");
             }
-        };
-        this.generateThumbnail = async (req, res, next) => {
-            try {
-                const { script, title, selectedHook } = req.body;
-                if (!script) {
-                    return res.sendError({ message: "Script is required", statusCode: 400 });
-                }
-                if (!title) {
-                    return res.sendError({ message: "Title is required", statusCode: 400 });
-                }
-                const data = await this.service.generateThumbnail(script, title, selectedHook);
-                res.sendSuccess({
-                    message: "Thumbnail instructions generated successfully",
-                    data,
-                });
+            if (!title) {
+                throw BadRequest("Title is required");
             }
-            catch (error) {
-                next(error);
+            const data = await this.service.generateThumbnail(req.userId, script, title, videoProjectId);
+            res.sendSuccess({
+                message: "Thumbnail instructions generated successfully",
+                data,
+            });
+        });
+        this.generateShorts = asyncHandler(async (req, res) => {
+            const { script, duration } = req.body;
+            if (!script) {
+                throw BadRequest("Script is required");
             }
-        };
-        this.generateShorts = async (req, res, next) => {
-            try {
-                const { script, duration } = req.body;
-                if (!script) {
-                    return res.sendError({ message: "Script is required", statusCode: 400 });
-                }
-                if (!duration) {
-                    return res.sendError({ message: "Duration is required", statusCode: 400 });
-                }
-                const data = await this.service.generateShorts(script, duration);
-                res.sendSuccess({
-                    message: "Shorts script generated successfully",
-                    data,
-                });
+            if (!duration) {
+                throw BadRequest("Duration is required");
             }
-            catch (error) {
-                next(error);
+            const data = await this.service.generateShorts(script, duration);
+            res.sendSuccess({
+                message: "Shorts script generated successfully",
+                data,
+            });
+        });
+        this.save = asyncHandler(async (req, res) => {
+            const { videoProjectId, ...rest } = req.body;
+            const data = await this.service.savePackaging(req.userId, rest, videoProjectId);
+            res.sendSuccess({
+                message: "Packaging saved successfully",
+                data,
+            });
+        });
+        this.getPackaging = asyncHandler(async (req, res) => {
+            const { packagingId } = req.params;
+            const data = await this.service.getPackaging(packagingId, req.userId);
+            if (!data) {
+                throw NotFound("Packaging not found");
             }
-        };
-        this.save = async (req, res, next) => {
-            try {
-                const { videoProjectId, ...rest } = req.body;
-                const data = await this.service.savePackaging(req.userId, rest, videoProjectId);
-                res.sendSuccess({
-                    message: "Packaging saved successfully",
-                    data,
-                });
+            res.sendSuccess({
+                message: "Packaging retrieved successfully",
+                data,
+            });
+        });
+        this.getPackagingByUser = asyncHandler(async (req, res) => {
+            const data = await this.service.getPackagingByUser(req.userId);
+            res.sendSuccess({
+                message: "Packaging list retrieved successfully",
+                data,
+            });
+        });
+        this.regenerateItem = asyncHandler(async (req, res) => {
+            const { packagingId, item } = req.params;
+            const { script, title, duration } = req.body;
+            if (!script) {
+                throw BadRequest("script is required");
             }
-            catch (error) {
-                this.handleError(error, res, next);
+            const data = await this.service.regenerateItem(req.userId, packagingId, item, script, title, duration);
+            res.sendSuccess({ message: "Packaging item regenerated successfully", data });
+        });
+        this.updateFeedback = asyncHandler(async (req, res) => {
+            const { packagingId } = req.params;
+            const { item, feedback } = req.body;
+            if (!item) {
+                throw BadRequest("item is required");
             }
-        };
-        this.getPackaging = async (req, res, next) => {
-            try {
-                const { packagingId } = req.params;
-                const data = await this.service.getPackaging(packagingId, req.userId);
-                if (!data) {
-                    return res.sendError({ message: "Packaging not found", statusCode: 404 });
-                }
-                res.sendSuccess({
-                    message: "Packaging retrieved successfully",
-                    data,
-                });
+            if (feedback === undefined) {
+                throw BadRequest("feedback is required");
             }
-            catch (error) {
-                const err = error;
-                if (err.message === "Unauthorized") {
-                    return res.sendError({ message: "Unauthorized", statusCode: 403 });
-                }
-                next(error);
-            }
-        };
-        this.getPackagingByUser = async (req, res, next) => {
-            try {
-                const data = await this.service.getPackagingByUser(req.userId);
-                res.sendSuccess({
-                    message: "Packaging list retrieved successfully",
-                    data,
-                });
-            }
-            catch (error) {
-                next(error);
-            }
-        };
-        this.handleError = (error, res, next) => {
-            const err = error;
-            if (err.statusCode) {
-                res.sendError({ message: err.message, statusCode: err.statusCode });
-            }
-            else {
-                next(error);
-            }
-        };
-        this.regenerateItem = async (req, res, next) => {
-            try {
-                const { packagingId, item } = req.params;
-                const { script, title, duration, selectedHook } = req.body;
-                if (!script) {
-                    return res.sendError({ message: "script is required", statusCode: 400 });
-                }
-                const data = await this.service.regenerateItem(req.userId, packagingId, item, script, title, duration, selectedHook);
-                res.sendSuccess({ message: "Packaging item regenerated successfully", data });
-            }
-            catch (error) {
-                this.handleError(error, res, next);
-            }
-        };
-        this.updateFeedback = async (req, res, next) => {
-            try {
-                const { packagingId } = req.params;
-                const { item, feedback } = req.body;
-                if (!item) {
-                    return res.sendError({ message: "item is required", statusCode: 400 });
-                }
-                if (feedback === undefined) {
-                    return res.sendError({ message: "feedback is required", statusCode: 400 });
-                }
-                const data = await this.service.updateFeedback(req.userId, packagingId, item, feedback);
-                res.sendSuccess({ message: "Feedback updated successfully", data });
-            }
-            catch (error) {
-                this.handleError(error, res, next);
-            }
-        };
-        this.exportPackaging = async (req, res, next) => {
-            try {
-                const { packagingId } = req.params;
-                const data = await this.service.exportPackaging(req.userId, packagingId);
-                res.sendSuccess({ message: "Packaging exported successfully", data });
-            }
-            catch (error) {
-                this.handleError(error, res, next);
-            }
-        };
+            const data = await this.service.updateFeedback(req.userId, packagingId, item, feedback);
+            res.sendSuccess({ message: "Feedback updated successfully", data });
+        });
+        this.exportPackaging = asyncHandler(async (req, res) => {
+            const { packagingId } = req.params;
+            const data = await this.service.exportPackaging(req.userId, packagingId);
+            res.sendSuccess({ message: "Packaging exported successfully", data });
+        });
         this.service = service;
     }
 }

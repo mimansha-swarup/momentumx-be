@@ -41,7 +41,7 @@ Generate 3 alternative title variations. Titles are 50–70 characters, search-o
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `script` | `string` | Yes | Full script text |
-| `selectedHook` | `string` | No | If provided, AI uses this hook as context when generating titles |
+| `videoProjectId` | `string` | No | If provided, the server resolves the project's selected hook (`hooksId` + `selectedHookIndex`) and injects it as context. The hook is never sent by the client. |
 
 ### Response — `200`
 ```json
@@ -71,7 +71,7 @@ Generate an SEO-optimized YouTube description. Hook before "Show More", keywords
 |---|---|---|---|
 | `script` | `string` | Yes | Full script text |
 | `title` | `string` | Yes | Video title |
-| `selectedHook` | `string` | No | If provided, AI uses this hook as context |
+| `videoProjectId` | `string` | No | If provided, the server resolves the project's selected hook and injects it as context. The hook is never sent by the client. |
 
 ### Response — `200`
 ```json
@@ -97,7 +97,7 @@ Generate 3 thumbnail design concepts. Each is a design brief (not a rendered ima
 |---|---|---|---|
 | `script` | `string` | Yes | Full script text |
 | `title` | `string` | Yes | Video title |
-| `selectedHook` | `string` | No | If provided, AI uses this hook as context |
+| `videoProjectId` | `string` | No | If provided, the server resolves the project's selected hook and injects it as context. The hook is never sent by the client. |
 
 ### Response — `200`
 ```json
@@ -186,7 +186,13 @@ If `videoProjectId` is provided, the server verifies ownership of the video proj
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `videoProjectId` | `string` | No | If provided, links this packaging to the video project (upserts if already linked) |
-| *(any packaging fields)* | `unknown` | No | All other fields are passed through and persisted as-is |
+| `titles` | `Array<{title, characterCount}>` \| `{titles:[...]}` | No | Title variations. The generate-title response (`{titles:[...]}`) may be sent as-is; the server unwraps it. |
+| `description` | `string` \| `{description}` | No | SEO description. The generate-description response may be sent as-is. |
+| `thumbnail` | `string[]` \| `{descriptions:[...]}` | No | Thumbnail design briefs. **Send the generate-thumbnail response (`{descriptions:[...]}`) under the `thumbnail` key** — the server unwraps `descriptions` into the stored `thumbnail` array. |
+| `shorts` | `{segments, totalDuration}` | No | Shorts script — the generate-shorts response, sent as-is. |
+| *(other fields)* | `unknown` | No | Passed through and persisted as-is |
+
+> **Canonical stored shape.** The four content fields are normalized server-side to one canonical shape before persisting: `titles: [{title, characterCount}]`, `description: string`, `thumbnail: string[]`, `shorts: {segments, totalDuration}`. You may send either the raw generate-endpoint response (wrapper) or the already-unwrapped value under each field key — the server coerces both. Malformed shapes are rejected with `400`. The same normalization applies on `regenerate/:item`, so saved and regenerated content always have identical shapes.
 
 ### Server-Set Fields
 
@@ -297,7 +303,8 @@ Regenerates a single packaging item and overwrites it on the existing document. 
 | `script` | `string` | Yes | Full script text |
 | `title` | `string` | No | Required when `item` is `description` or `thumbnail` |
 | `duration` | `number` | No | Required when `item` is `shorts` |
-| `selectedHook` | `string` | No | Passed as context for `title`, `description`, `thumbnail` |
+
+> **No `videoProjectId` in the body.** On regenerate the server reads the `videoProjectId` already stored on the packaging document and resolves the project's selected hook from it. The client never sends `videoProjectId` (or the hook) here — sending one is ignored. (First-time generation via `/generate-title|description|thumbnail` still accepts `videoProjectId` in the body, because no packaging document exists yet.)
 
 ### Response — `200`
 
@@ -312,6 +319,8 @@ Regenerates a single packaging item and overwrites it on the existing document. 
   }
 }
 ```
+
+> **`data` is the canonical persisted shape** — identical to what a subsequent `GET /packaging/:id` returns for that field (e.g. `titles: [{title, characterCount}]`, `description: string`, `thumbnail: string[]`, `shorts: {segments, totalDuration}`). It is **not** the raw generator wrapper, so the FE can treat a regenerate response the same as reading the stored item.
 
 ### Error Cases
 

@@ -25,7 +25,7 @@ Given a completed script and title, Packaging generates the assets needed to pub
 | Requires | Script + title + selectedHook as context |
 | Completion mechanic | Creator explicitly marks each item done |
 
-Generation endpoints accept `script`, `title`, and optional `selectedHook` directly from the request body. `videoProjectId` can be passed to `POST /save` to link the packaging document to a video project.
+Generation endpoints accept `script` / `title` from the request body and a `videoProjectId`. The selected hook is **no longer passed in the request body** — the server resolves it from the project's stored hook selection (`resolveSelectedHook`: reads `project.hooksId` + `project.selectedHookIndex`, then looks up the hook string). `videoProjectId` can also be passed to `POST /save` to link the packaging document to a video project. `generate-shorts` takes only `script` + `duration` and ignores hooks entirely.
 
 ---
 
@@ -35,7 +35,7 @@ Generation endpoints accept `script`, `title`, and optional `selectedHook` direc
 
 `POST /v1/packaging/generate-title` — generates 3 alternative title variations.
 
-**Prompt:** `GENERATE_TITLE_PROMPT` — injects `{script}` and optional `{selectedHook}`. Returns:
+**Prompt:** `GENERATE_TITLE_PROMPT` — injects `{script}` and `{selectedHook}` (resolved server-side from `videoProjectId`). Returns:
 ```json
 { "titles": [{ "title": "...", "characterCount": 62 }, ...] }
 ```
@@ -47,7 +47,7 @@ Titles target 50–70 characters, different emotional angles, search-optimized.
 
 `POST /v1/packaging/generate-description` — generates an SEO-optimized YouTube description.
 
-**Prompt:** `GENERATE_DESCRIPTION_PROMPT` — injects `{script}`, `{title}`, and optional `{selectedHook}`. Returns:
+**Prompt:** `GENERATE_DESCRIPTION_PROMPT` — injects `{script}`, `{title}`, and `{selectedHook}` (resolved server-side from `videoProjectId`). Returns:
 ```json
 { "description": "full description text" }
 ```
@@ -59,7 +59,7 @@ Hook visible before "Show More", keywords woven naturally, timestamp placeholder
 
 `POST /v1/packaging/generate-thumbnail` — generates 3 thumbnail design concepts.
 
-**Prompt:** `GENERATE_THUMBNAIL_PROMPT` — injects `{script}`, `{title}`, and optional `{selectedHook}`. Returns:
+**Prompt:** `GENERATE_THUMBNAIL_PROMPT` — injects `{script}`, `{title}`, and `{selectedHook}` (resolved server-side from `videoProjectId`). Returns:
 ```json
 { "descriptions": ["plain string visual brief 1", "brief 2", "brief 3"] }
 ```
@@ -187,7 +187,7 @@ After any `regenerateItem` completes, the service checks all `itemStatuses`. If 
 | Feature | Status |
 |---|---|
 | Generate title, description, thumbnail, shorts | ✅ Built |
-| `selectedHook` injected into title/description/thumbnail prompts | ✅ Built |
+| Selected hook resolved server-side (from `videoProjectId`) and injected into title/description/thumbnail prompts | ✅ Built |
 | Input validation (400 on missing `script`/`title`) | ✅ Built |
 | Save packaging to Firestore | ✅ Built |
 | `videoProjectId` linkage on save | ✅ Built |

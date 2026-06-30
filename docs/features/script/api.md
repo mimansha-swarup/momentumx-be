@@ -11,7 +11,7 @@ tags: ["api", "script"]
 
 Base path: `/v1/scripts`
 
-All endpoints require `Authorization: Bearer <token>` except `GET /stream/scripts/:scriptId` which uses `?token=` query param.
+All endpoints require `Authorization: Bearer <token>` except `GET /scripts/stream/:projectId` which uses `?token=` query param.
 
 ---
 
@@ -19,7 +19,7 @@ All endpoints require `Authorization: Bearer <token>` except `GET /stream/script
 
 | Method | URL | Purpose | Status |
 |---|---|---|---|
-| `GET` | `/v1/scripts/stream/:scriptId` | Stream script generation via SSE | ✅ Built |
+| `GET` | `/v1/scripts/stream/:projectId` | Stream script generation via SSE (project-scoped) | ✅ Built |
 | `GET` | `/v1/scripts` | List all user scripts | ✅ Built |
 | `GET` | `/v1/scripts/:scriptId` | Get single script | ✅ Built |
 | `PATCH` | `/v1/scripts/edit/:scriptId` | Edit script text | ✅ Built |
@@ -29,19 +29,19 @@ All endpoints require `Authorization: Bearer <token>` except `GET /stream/script
 
 ---
 
-## GET `/v1/scripts/stream/:scriptId`
+## GET `/v1/scripts/stream/:projectId`
 
-Streams a full YouTube video script for the given topic via SSE.
+Streams a full YouTube video script for the given video project via SSE. The script is generated for the topic referenced by `project.topicId`.
 
-**Auth:** `?token=<firebase_jwt>` query param. Bearer headers not supported — browser `EventSource` API cannot send custom headers. Token verified manually in controller via Firebase Admin SDK.
+**Auth:** `?token=<firebase_jwt>` query param, verified by `sseAuthMiddleware`. Bearer headers not supported — browser `EventSource` API cannot send custom headers.
 
-**Note on `:scriptId`:** This is actually a **topicId**. The script document is saved to Firestore with this same ID. The naming reflects the client-side route.
+**Note on `:projectId`:** This is the **video project ID**. The script document is saved under its own `randomUUID` id (reused across regenerations via `project.scriptId`), not the topic's id, and stores `topicId` + `videoProjectId` FKs.
 
 ### Path Parameters
 
 | Param | Type | Description |
 |---|---|---|
-| `scriptId` | `string` | The topicId to generate a script for |
+| `projectId` | `string` | The video project to generate a script for (topic derived from `project.topicId`) |
 
 ### Query Parameters
 
@@ -65,25 +65,28 @@ data: "chunk text here"\n\n
 
 Stream end signal:
 ```
-event: done\n
-data: [done]\n\n
+data: [DONE]\n\n
 ```
 
 ### Side Effects on Completion
-- Script document saved to `scripts` collection with ID = `topicId`
+- Script document saved to `scripts` collection under its own `randomUUID` id (reused via `project.scriptId` on regenerate), with `topicId` + `videoProjectId` FKs
 - Topic document updated: `isScriptGenerated: true`
+- Script linked to the project (`linkResource`) and the Script step completed (`completeStep`)
 
 ### Error Cases
 
+These fire **before** the stream starts (headers not yet flushed), so they return a JSON error via `sendError`:
+
 | Status | Condition |
 |---|---|
-| 400 (via `sendError`) | `token` param missing |
-| 403 (via `sendError`) | Token invalid or expired |
-| 500 | Gemini generation failed or Firestore write failed |
+| 401 | `token` query param missing |
+| 403 | Token invalid/expired, or project not owned by requesting user |
+| 404 | Video project not found, or its `topicId` topic not found |
+| 500 | Gemini generation failed or Firestore write failed (before stream start) |
 
 ### Notes
-- If stream has already started (`res.headersSent`) when an error occurs, the error cannot be sent as a JSON response. The stream will end abruptly.
-- No ownership check on the topic — any valid token holder who knows a `topicId` can generate a script for it.
+- The project is loaded and ownership-checked before `flushHeaders()`, so 401/403/404 are returned as clean JSON responses.
+- If the stream has already started (`res.headersSent`) when an error occurs, the error cannot be sent as a JSON response — the stream ends abruptly.
 
 ---
 
@@ -106,7 +109,9 @@ Returns all scripts owned by the authenticated user, ordered by `createdAt` desc
       "title": "string",
       "createdBy": "string",
       "createdAt": "ISO timestamp",
-      "script": "string"
+      "script": "string",
+      "topicId": "string",
+      "videoProjectId": "string"
     }
   ]
 }
@@ -133,7 +138,7 @@ Ownership enforced — `createdBy` must match the requesting user.
 
 | Param | Type | Description |
 |---|---|---|
-| `scriptId` | `string` | Script document ID (equals the source `topicId`) |
+| `scriptId` | `string` | Script document ID (its own `randomUUID`, not the topicId) |
 
 ### Response — `200`
 
@@ -146,7 +151,9 @@ Ownership enforced — `createdBy` must match the requesting user.
     "title": "string",
     "createdBy": "string",
     "createdAt": "ISO timestamp",
-    "script": "string"
+    "script": "string",
+    "topicId": "string",
+    "videoProjectId": "string"
   }
 }
 ```
@@ -208,15 +215,17 @@ Any subset of script fields to update. The update uses `{ merge: true }` — onl
 
 ## Script Document Schema
 
-Stored in the `scripts` Firestore collection. Document ID = source `topicId`.
+Stored in the `scripts` Firestore collection. Document ID is the script's own `randomUUID`; `topicId` and `videoProjectId` link back to the source topic and owning project.
 
 | Field | Type | Description |
 |---|---|---|
-| `id` | `string` | Document ID, same as source `topicId` |
+| `id` | `string` | Document ID — own `randomUUID`, NOT the topicId |
 | `title` | `string` | Title of the topic this script was generated for |
 | `createdBy` | `string` | `userId` of the owner |
 | `createdAt` | `Timestamp` | Server-side Firestore timestamp |
 | `script` | `string` | Full script text |
+| `topicId` | `string` | FK → source topic |
+| `videoProjectId` | `string` | FK → owning video project |
 
 ---
 
@@ -231,7 +240,7 @@ Regenerates the script for a topic without SSE. Returns the full script in the r
 
 | Param | Type | Description |
 |---|---|---|
-| `scriptId` | `string` | Script document ID (equals the source `topicId`) |
+| `scriptId` | `string` | Script document ID (its own `randomUUID`, not the topicId) |
 
 ### Response — `200`
 

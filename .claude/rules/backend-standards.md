@@ -72,7 +72,7 @@ interface GenerateTopicsBody {
 
 // ✅ Typed repository return
 async getUser(userId: string): Promise<User | null> {
-  const doc = await db.collection(Collection.USERS).doc(userId).get();
+  const doc = await db.collection(COLLECTIONS.USERS).doc(userId).get();
   if (!doc.exists) return null;
   return doc.data() as User;
 }

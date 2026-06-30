@@ -213,7 +213,7 @@ Any Firestore-compatible field can be passed. The update uses `{ merge: true }` 
 
 ## POST `/v1/topics/regenerate-all` ✅ Built
 
-Archives all active (non-archived) topics for the user and generates a fresh batch of 10. Triggers a stale cascade on any video project linked to an active topic.
+Archives all active (non-archived) topics for the user and generates a fresh batch of 10. Triggers a stale cascade that fans out to **all** video projects backed by each archived topic.
 
 ### Auth
 `Authorization: Bearer <token>` — required.
@@ -241,7 +241,7 @@ None.
 ### Notes
 - Old topics are set to `archived: true` — they are not deleted, just hidden.
 - A new `batchId` is generated for the fresh batch.
-- If any active topic has `videoProjectId` set, `pipeline.script`, `.hooks`, and `.packaging` on that project are marked `stale`.
+- For each archived topic, every video project backed by it (via `getProjectsByTopic` → `findByTopicId`) has its `pipeline.script`, `.hooks`, and `.packaging` marked `stale`, and any linked packaging document is marked stale. The cascade reaches all projects on a topic, not just one.
 
 ---
 

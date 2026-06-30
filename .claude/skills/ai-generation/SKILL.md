@@ -14,7 +14,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 const genAI = new GoogleGenerativeAI(process.env.API_KEY!);
 
 // Text generation — all content
-export const genAIModel = () => genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+export const genAIModel = () => genAI.getGenerativeModel({ model: 'gemini-3.5-flash' });
 
 // Embeddings — topics only
 export const embeddingModel = genAI.getGenerativeModel({ model: 'gemini-embedding-001' });

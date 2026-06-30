@@ -95,7 +95,7 @@ What's happening inside an individual step. State machine per step — see schem
 | Action | Transition |
 |---|---|
 | Creator initiates script generation | `not_started` → `in_progress` |
-| Creator marks script done | `in_progress` → `completed` |
+| Generated script is saved (stream completes) | `in_progress` → `completed` (automatic, server-side) |
 | Creator regenerates | any → `in_progress` |
 
 **Stale:** If script is regenerated while Hooks or Packaging exist downstream, those steps have `status` set to `"stale"`.
@@ -163,7 +163,7 @@ The packaging pipeline step uses `StepState` like all other steps. Per-item stat
 | `staleReason: "script_regenerated" \| "hooks_regenerated" \| null` | What caused the stale cascade |
 | `staleSince: Timestamp \| null` | When the cascade happened |
 
-When the last stale item is regenerated, `isStale`, `staleReason`, and `staleSince` are all cleared.
+When the last stale item is regenerated, `isStale`, `staleReason`, and `staleSince` are all cleared on the packaging document. The same regeneration also clears the **project's** stale packaging step: `pipeline.packaging.status` flips `stale → completed` and `overallStatus` is recomputed (it stays `"stale"` if Script or Hooks are still stale), so the dashboard "needs update" badge clears. This project sync is best-effort — a failure is logged and never fails the already-saved regeneration.
 
 ---
 
@@ -205,7 +205,7 @@ Replaces the entire current batch of generated items. Old batch is **archived** 
 - Triggers: `any status` → `generating`
 - Old items: `archived: true` on all documents in the old batch
 - New batch gets a new `batchId`
-- Stale cascade fires on downstream steps
+- Stale cascade fires on downstream steps of **every** project backed by each archived topic (looked up via `getProjectsByTopic` → `findByTopicId`), not just a single linked project
 
 ### Regenerate One
 
@@ -232,7 +232,9 @@ Rationale:
 
 ## Concurrent Video Projects
 
-A creator can have multiple video projects active simultaneously. Each video project is independent — status transitions on one do not affect any other. There is no cross-project KMeans context — clustering is already per-user globally.
+A creator can have multiple video projects active simultaneously, **including multiple projects on the same topic** — each project owns its own script document (via the script's decoupled UUID id), so they never collide. Each video project is independent — status transitions on one do not affect any other. There is no cross-project KMeans context — clustering is already per-user globally.
+
+When the source topic is regenerated (Regenerate All), the stale cascade fans out to **all** projects backed by that topic, not just one.
 
 ---
 
@@ -242,7 +244,7 @@ A creator can have multiple video projects active simultaneously. Each video pro
 
 ```
 videoProjects/{videoProjectId}
-  projectId: string           // same as Firestore doc ID, stored for queries
+  id: string                  // Firestore auto-generated doc ID
   userId: string              // owner — always filter by this first
   title: string               // working title (from selected topic)
   topicId: string             // ref to topics collection
@@ -295,11 +297,20 @@ Add to existing topic documents:
 
 ### Updated: `scripts`
 
-Add to existing script documents:
+A script document now has its **own** `randomUUID` document ID — it is no longer the source topic's ID. The script links back to its topic and project via foreign-key fields:
+
 ```
-  videoProjectId: string | null
-  stale: boolean
+scripts/{scriptId}
+  id: string                 // own randomUUID — NOT the topicId
+  title: string              // title of the source topic
+  createdBy: string          // userId of the owner
+  createdAt: Timestamp       // server-side
+  script: string             // full script text
+  topicId: string            // FK → topics collection (source topic)
+  videoProjectId: string     // FK → videoProjects collection (owning project)
 ```
+
+Because each project mints its own script doc, multiple projects can share one topic while each owns an independent script.
 
 ### Updated: `packaging`
 

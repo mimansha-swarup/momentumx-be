@@ -7,16 +7,34 @@ import {
 } from "../constants/prompt.js";
 import { GENERATION_CONFIG_PACKAGING } from "../constants/firebase.js";
 import PackagingRepository from "../repository/packaging.repository.js";
+import HooksRepository from "../repository/hooks.repository.js";
 import VideoProjectService from "./video-project.service.js";
 import { generateStreamingContent } from "../utlils/ai.js";
 import { firebase } from "../config/firebase.js";
+import { BadRequest, Forbidden, NotFound } from "../utlils/errors.js";
 
 class PackagingService {
   private repo: PackagingRepository;
 
-  constructor(repo: PackagingRepository, private videoProjectService?: VideoProjectService) {
+  constructor(
+    repo: PackagingRepository,
+    private hooksRepo: HooksRepository,
+    private videoProjectService?: VideoProjectService
+  ) {
     this.repo = repo;
   }
+
+  private resolveSelectedHook = async (
+    videoProjectId: string | undefined,
+    userId: string
+  ): Promise<string> => {
+    if (!videoProjectId || !this.videoProjectService) return "";
+    const project = await this.videoProjectService.getById(videoProjectId, userId);
+    if (!project.hooksId || project.selectedHookIndex == null) return "";
+    const hooksBatch = await this.hooksRepo.findById(project.hooksId);
+    if (!hooksBatch) return "";
+    return hooksBatch.hooks?.[project.selectedHookIndex] ?? "";
+  };
 
   private generateContent = async (userPrompt: string) => {
     const result = await generateStreamingContent(
@@ -36,11 +54,12 @@ class PackagingService {
     return JSON.parse(accumulatedRes);
   };
 
-  generateTitle = async (script: string, selectedHook?: string) => {
+  generateTitle = async (userId: string, script: string, videoProjectId?: string) => {
     try {
+      const selectedHook = await this.resolveSelectedHook(videoProjectId, userId);
       const userPrompt = GENERATE_TITLE_PROMPT
         .replace("{script}", script)
-        .replace("{selectedHook}", selectedHook ?? "");
+        .replace("{selectedHook}", selectedHook);
       const result = await this.generateContent(userPrompt);
       return result;
     } catch (error) {
@@ -49,12 +68,13 @@ class PackagingService {
     }
   };
 
-  generateDescription = async (script: string, title: string, selectedHook?: string) => {
+  generateDescription = async (userId: string, script: string, title: string, videoProjectId?: string) => {
     try {
+      const selectedHook = await this.resolveSelectedHook(videoProjectId, userId);
       const userPrompt = GENERATE_DESCRIPTION_PROMPT
         .replace("{script}", script)
         .replace("{title}", title)
-        .replace("{selectedHook}", selectedHook ?? "");
+        .replace("{selectedHook}", selectedHook);
       const result = await this.generateContent(userPrompt);
       return result;
     } catch (error) {
@@ -63,12 +83,13 @@ class PackagingService {
     }
   };
 
-  generateThumbnail = async (script: string, title: string, selectedHook?: string) => {
+  generateThumbnail = async (userId: string, script: string, title: string, videoProjectId?: string) => {
     try {
+      const selectedHook = await this.resolveSelectedHook(videoProjectId, userId);
       const userPrompt = GENERATE_THUMBNAIL_PROMPT
         .replace("{script}", script)
         .replace("{title}", title)
-        .replace("{selectedHook}", selectedHook ?? "");
+        .replace("{selectedHook}", selectedHook);
       const result = await this.generateContent(userPrompt);
       return result;
     } catch (error) {
@@ -87,6 +108,46 @@ class PackagingService {
     } catch (error) {
 
       throw error;
+    }
+  };
+
+  // The four packaging content fields, in their canonical stored shapes:
+  //   titles      -> Array<{ title, characterCount }>
+  //   description -> string
+  //   thumbnail   -> string[]   (the generator's `descriptions` briefs)
+  //   shorts      -> { segments, totalDuration }
+  // Generators return these wrapped (e.g. { titles: [...] }, { descriptions: [...] }),
+  // and the FE save path is not solidified, so we coerce wrapper-or-bare input to the
+  // canonical value at every write. Malformed input throws (never persist junk/undefined).
+  private static readonly ITEM_FIELDS = ["titles", "description", "thumbnail", "shorts"] as const;
+
+  private normalizeField = (field: string, raw: unknown): unknown => {
+    const wrapper = (raw ?? {}) as Record<string, unknown>;
+    switch (field) {
+      case "titles": {
+        const v = Array.isArray(raw) ? raw : wrapper.titles;
+        if (!Array.isArray(v)) throw BadRequest("titles must be an array");
+        return v;
+      }
+      case "description": {
+        const v = typeof raw === "string" ? raw : wrapper.description;
+        if (typeof v !== "string") throw BadRequest("description must be a string");
+        return v;
+      }
+      case "thumbnail": {
+        const v = Array.isArray(raw) ? raw : wrapper.descriptions;
+        if (!Array.isArray(v)) throw BadRequest("thumbnail must be an array of briefs");
+        return v;
+      }
+      case "shorts": {
+        const v = Array.isArray(wrapper.segments) ? raw : wrapper.shorts;
+        if (!v || !Array.isArray((v as Record<string, unknown>).segments)) {
+          throw BadRequest("shorts must include a segments array");
+        }
+        return v;
+      }
+      default:
+        return raw;
     }
   };
 
@@ -113,17 +174,30 @@ class PackagingService {
         await this.videoProjectService.getById(videoProjectId, userId);
       }
 
-      const itemStatuses = this.buildItemStatuses(data);
+      // Coerce any present content field to its canonical stored shape so the
+      // persisted doc matches what regenerateItem and the readers expect.
+      const normalized: Record<string, unknown> = { ...data };
+      for (const field of PackagingService.ITEM_FIELDS) {
+        if (field in data && data[field] != null) {
+          normalized[field] = this.normalizeField(field, data[field]);
+        }
+      }
+
+      const itemStatuses = this.buildItemStatuses(normalized);
 
       const packagingData = {
-        ...data,
+        ...normalized,
         createdBy: userId,
         itemStatuses,
-        isStale: false,
-        staleReason: null,
-        staleSince: null,
         ...(videoProjectId ? { videoProjectId } : {}),
       };
+
+      // Stale flags are set fresh ONLY when the document is first created — a
+      // brand-new package is never stale. On update (re-save) we must NOT touch
+      // them: a plain re-save would otherwise silently un-stale a package that
+      // an upstream regenerate had marked stale. Genuine un-staling happens via
+      // regenerateItem → refreshPackagingStep.
+      const freshStaleFlags = { isStale: false, staleReason: null, staleSince: null };
 
       let result: Record<string, unknown>;
 
@@ -138,21 +212,25 @@ class PackagingService {
         } else {
           result = await this.repo.save({
             ...packagingData,
+            ...freshStaleFlags,
             createdAt: firebase.firestore.FieldValue.serverTimestamp(),
           });
         }
       } else {
         result = await this.repo.save({
           ...packagingData,
+          ...freshStaleFlags,
           createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         });
       }
 
       if (videoProjectId && this.videoProjectService) {
-        this.videoProjectService
-          .linkResource(videoProjectId, "packaging", result.id as string, userId)
-          .then(() => this.videoProjectService!.completeStep(videoProjectId, "packaging", userId))
-          .catch(console.error);
+        try {
+          await this.videoProjectService.linkResource(videoProjectId, "packaging", result.id as string, userId);
+          await this.videoProjectService.completeStep(videoProjectId, "packaging", userId);
+        } catch (pipelineError) {
+          console.error(JSON.stringify({ event: "pipeline_transition_failed", step: "packaging", projectId: videoProjectId, packagingId: result.id, userId, message: (pipelineError as Error)?.message }));
+        }
       }
       return result;
     } catch (error) {
@@ -165,7 +243,7 @@ class PackagingService {
     try {
       const result = await this.repo.get(packagingId);
       if (!result) return null;
-      if (result.createdBy !== userId) throw new Error("Unauthorized");
+      if (result.createdBy !== userId) throw Forbidden();
       return result;
     } catch (error) {
 
@@ -189,40 +267,30 @@ class PackagingService {
     item: string,
     script: string,
     title?: string,
-    duration?: number,
-    selectedHook?: string
+    duration?: number
   ) => {
     const pkg = await this.repo.get(packagingId);
     if (!pkg) {
-      const err = new Error("Packaging not found") as Error & { statusCode: number };
-      err.statusCode = 404;
-      throw err;
+      throw NotFound("Packaging not found");
     }
     if (pkg.createdBy !== userId) {
-      const err = new Error("Forbidden") as Error & { statusCode: number };
-      err.statusCode = 403;
-      throw err;
+      throw Forbidden();
     }
+    // Resolve the selected hook from the STORED project on this packaging doc —
+    // never from a client-supplied id (that would re-open the trust gap on regenerate).
+    const videoProjectId = (pkg as Record<string, unknown>).videoProjectId as string | undefined;
     const validItems = ["title", "description", "thumbnail", "shorts"];
     if (!validItems.includes(item)) {
-      const err = new Error(`item must be one of: ${validItems.join(", ")}`) as Error & { statusCode: number };
-      err.statusCode = 400;
-      throw err;
+      throw BadRequest(`item must be one of: ${validItems.join(", ")}`);
     }
     if (!script) {
-      const err = new Error("script is required") as Error & { statusCode: number };
-      err.statusCode = 400;
-      throw err;
+      throw BadRequest("script is required");
     }
     if ((item === "description" || item === "thumbnail") && !title) {
-      const err = new Error("title is required for description and thumbnail regeneration") as Error & { statusCode: number };
-      err.statusCode = 400;
-      throw err;
+      throw BadRequest("title is required for description and thumbnail regeneration");
     }
     if (item === "shorts" && !duration) {
-      const err = new Error("duration is required for shorts regeneration") as Error & { statusCode: number };
-      err.statusCode = 400;
-      throw err;
+      throw BadRequest("duration is required for shorts regeneration");
     }
 
     // Save previous item status for rollback on failure
@@ -235,13 +303,13 @@ class PackagingService {
 
     try {
       if (item === "title") {
-        result = await this.generateTitle(script, selectedHook);
+        result = await this.generateTitle(userId, script, videoProjectId);
         fieldKey = "titles";
       } else if (item === "description") {
-        result = await this.generateDescription(script, title!, selectedHook);
+        result = await this.generateDescription(userId, script, title!, videoProjectId);
         fieldKey = "description";
       } else if (item === "thumbnail") {
-        result = await this.generateThumbnail(script, title!, selectedHook);
+        result = await this.generateThumbnail(userId, script, title!, videoProjectId);
         fieldKey = "thumbnail";
       } else {
         result = await this.generateShorts(script, duration!);
@@ -255,9 +323,11 @@ class PackagingService {
       throw genError;
     }
 
-    // Atomic write: content + status update
+    // Normalize once: store AND return the canonical shape, so the regenerate
+    // response matches what a subsequent GET / export returns (no wrapper-vs-stored split).
+    const canonical = this.normalizeField(fieldKey, result);
     const updateData: Record<string, unknown> = {
-      [fieldKey]: result,
+      [fieldKey]: canonical,
       [`itemStatuses.${statusKey}`]: "completed",
     };
 
@@ -274,7 +344,30 @@ class PackagingService {
     }
 
     await this.repo.update(packagingId, updateData);
-    return { id: packagingId, item, data: result };
+
+    // Packaging is fresh again — clear the project's stale packaging step so the
+    // dashboard "needs update" badge actually clears. Best-effort: a sync failure
+    // must not fail the already-saved regeneration.
+    if (!anyStillStale && videoProjectId && this.videoProjectService) {
+      try {
+        await this.videoProjectService.refreshPackagingStep(videoProjectId, userId);
+      } catch (syncError) {
+        console.error(JSON.stringify({ event: "stale_cascade_clear_failed", projectId: videoProjectId, packagingId, userId, message: (syncError as Error)?.message }));
+      }
+    }
+
+    // The thumbnail content changed -> refresh the project's dashboard thumbnailHint
+    // (best-effort; otherwise it stays the brief captured at save time).
+    if (item === "thumbnail" && videoProjectId && this.videoProjectService) {
+      try {
+        const briefs = updateData.thumbnail as string[] | undefined;
+        await this.videoProjectService.setThumbnailHint(videoProjectId, briefs?.[0] ?? null, userId);
+      } catch (hintError) {
+        console.error(JSON.stringify({ event: "thumbnail_hint_refresh_failed", projectId: videoProjectId, packagingId, userId, message: (hintError as Error)?.message }));
+      }
+    }
+
+    return { id: packagingId, item, data: canonical };
   };
 
   updateFeedback = async (
@@ -285,26 +378,18 @@ class PackagingService {
   ) => {
     const pkg = await this.repo.get(packagingId);
     if (!pkg) {
-      const err = new Error("Packaging not found") as Error & { statusCode: number };
-      err.statusCode = 404;
-      throw err;
+      throw NotFound("Packaging not found");
     }
     if (pkg.createdBy !== userId) {
-      const err = new Error("Forbidden") as Error & { statusCode: number };
-      err.statusCode = 403;
-      throw err;
+      throw Forbidden();
     }
     const validItems = ["title", "description", "thumbnail", "shorts"];
     if (!validItems.includes(item)) {
-      const err = new Error(`item must be one of: ${validItems.join(", ")}`) as Error & { statusCode: number };
-      err.statusCode = 400;
-      throw err;
+      throw BadRequest(`item must be one of: ${validItems.join(", ")}`);
     }
     const validFeedback = ["like", "dislike", null];
     if (!validFeedback.includes(feedback)) {
-      const err = new Error('feedback must be "like", "dislike", or null') as Error & { statusCode: number };
-      err.statusCode = 400;
-      throw err;
+      throw BadRequest('feedback must be "like", "dislike", or null');
     }
 
     await this.repo.update(packagingId, { [`feedback.${item}`]: feedback });
@@ -314,14 +399,10 @@ class PackagingService {
   exportPackaging = async (userId: string, packagingId: string) => {
     const pkg = await this.repo.get(packagingId);
     if (!pkg) {
-      const err = new Error("Packaging not found") as Error & { statusCode: number };
-      err.statusCode = 404;
-      throw err;
+      throw NotFound("Packaging not found");
     }
     if (pkg.createdBy !== userId) {
-      const err = new Error("Forbidden") as Error & { statusCode: number };
-      err.statusCode = 403;
-      throw err;
+      throw Forbidden();
     }
 
     const today = new Date().toLocaleDateString("en-US", {
@@ -338,8 +419,23 @@ class PackagingService {
 
     const titles = pkg.titles;
     const titlesText = Array.isArray(titles)
-      ? titles.map((t: unknown, i: number) => `${i + 1}. ${typeof t === "string" ? t : JSON.stringify(t)}`).join("\n")
+      ? titles
+          .map((t: unknown, i: number) => `${i + 1}. ${typeof t === "string" ? t : ((t as { title?: string })?.title ?? JSON.stringify(t))}`)
+          .join("\n")
       : formatValue(titles);
+
+    const thumbnail = pkg.thumbnail;
+    const thumbnailText = Array.isArray(thumbnail)
+      ? thumbnail.map((d: unknown, i: number) => `${i + 1}. ${typeof d === "string" ? d : JSON.stringify(d)}`).join("\n")
+      : formatValue(thumbnail);
+
+    const shorts = pkg.shorts as { segments?: Array<{ startTime?: string; endTime?: string; type?: string; content?: string }>; totalDuration?: string } | undefined;
+    const shortsText = shorts && Array.isArray(shorts.segments)
+      ? [
+          ...shorts.segments.map((s) => `[${s.startTime ?? ""}–${s.endTime ?? ""}] (${s.type ?? ""}) ${s.content ?? ""}`),
+          shorts.totalDuration ? `Total: ${shorts.totalDuration}` : "",
+        ].filter(Boolean).join("\n")
+      : formatValue(pkg.shorts);
 
     const lines = [
       `Video Package — ${today}`,
@@ -355,11 +451,11 @@ class PackagingService {
       "",
       "THUMBNAIL BRIEF",
       "───────────────",
-      formatValue(pkg.thumbnail),
+      thumbnailText,
       "",
       "SHORTS SCRIPT",
       "─────────────",
-      formatValue(pkg.shorts),
+      shortsText,
     ];
 
     return { text: lines.join("\n") };

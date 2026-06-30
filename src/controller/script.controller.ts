@@ -1,6 +1,7 @@
-import { NextFunction, Request, Response } from "express";
+import { Request, Response } from "express";
 import ContentService from "../service/content.service.js";
-import { firebase } from "../config/firebase.js";
+import { asyncHandler } from "../middleware/async_handler.js";
+import { BadRequest } from "../utlils/errors.js";
 
 class ScriptController {
   private service: ContentService;
@@ -9,109 +10,71 @@ class ScriptController {
     this.service = service;
   }
 
-  private handleError = (
-    error: unknown,
-    res: Response,
-    next: NextFunction,
-  ): void => {
-    const err = error as Error & { statusCode?: number };
-    if (err.message === "Forbidden") {
-      res.sendError({ message: "Forbidden", statusCode: 403 });
-    } else if (err.message === "Script not found") {
-      res.sendError({ message: "Script not found", statusCode: 404 });
-    } else if (err.statusCode) {
-      res.sendError({ message: err.message, statusCode: err.statusCode });
-    } else {
-      next(error);
-    }
-  };
-
-  generateScript = async (req: Request, res: Response, next: NextFunction) => {
+  // SSE: NOT wrapped in asyncHandler — keeps its own headersSent-aware try/catch
+  // so it never writes a JSON error after the stream has started. Auth is handled
+  // by sseAuthMiddleware (?token= -> req.userId) before this runs.
+  generateScript = async (req: Request, res: Response) => {
     try {
-      const token = req.query.token || "";
-      const scriptId = req.params.scriptId;
-      if (!token) {
-        return res.sendError({ message: "Unauthorized" });
+      const projectId = req.params.projectId;
+      await this.service.generateScripts(req.userId, projectId, res);
+    } catch (error) {
+      // If the stream hasn't started (e.g. ownership failure before flushHeaders),
+      // return a clean error. Once headers are flushed, only [DONE] can be sent, so just end.
+      if (!res.headersSent) {
+        const err = error as Error & { statusCode?: number };
+        res.sendError({ message: err.message || "Failed to generate script", statusCode: err.statusCode || 500 });
+      } else {
+        res.end();
       }
-
-      const decodedToken = await firebase.auth().verifyIdToken(token as string);
-      const uid = decodedToken.uid;
-      await this.service.generateScripts(uid, scriptId, res);
-    } catch (error) {
-      next(error);
     }
   };
 
-  retrieveScripts = async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const data = await this.service.getUsersScript(req.userId);
-      res.sendSuccess({
-        message: "successfully retrieved scripts",
-        data,
-      });
-    } catch (error) {
-      next(error);
-    }
-  };
+  retrieveScripts = asyncHandler(async (req: Request, res: Response) => {
+    const data = await this.service.getUsersScript(req.userId);
+    res.sendSuccess({
+      message: "successfully retrieved scripts",
+      data,
+    });
+  });
 
-  retrieveScriptById = async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const data = await this.service.getScriptById(req.params.scriptId, req.userId);
-      res.sendSuccess({
-        message: "successfully retrieved script",
-        data,
-      });
-    } catch (error) {
-      next(error);
-    }
-  };
+  retrieveScriptById = asyncHandler(async (req: Request, res: Response) => {
+    const data = await this.service.getScriptById(req.params.scriptId, req.userId);
+    res.sendSuccess({
+      message: "successfully retrieved script",
+      data,
+    });
+  });
 
-  editScript = async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const scriptId = req.params.scriptId;
-      await this.service.editScript(scriptId, req.userId, req.body);
-      res.sendSuccess({
-        message: "Script updated successfully",
-        data: { ...req.body, scriptId },
-      });
-    } catch (error) {
-      next(error);
-    }
-  };
+  editScript = asyncHandler(async (req: Request, res: Response) => {
+    const scriptId = req.params.scriptId;
+    const data = await this.service.editScript(scriptId, req.userId, req.body);
+    res.sendSuccess({
+      message: "Script updated successfully",
+      data: { ...data, scriptId },
+    });
+  });
 
-  regenerateScript = async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const { scriptId } = req.params;
-      const data = await this.service.regenerateScript(req.userId, scriptId);
-      res.sendSuccess({ message: "Script regenerated successfully", data });
-    } catch (error) {
-      this.handleError(error, res, next);
-    }
-  };
+  regenerateScript = asyncHandler(async (req: Request, res: Response) => {
+    const { scriptId } = req.params;
+    const data = await this.service.regenerateScript(req.userId, scriptId);
+    res.sendSuccess({ message: "Script regenerated successfully", data });
+  });
 
-  updateScriptFeedback = async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const { scriptId } = req.params;
-      const { feedback } = req.body as { feedback: "like" | "dislike" | null };
-      if (feedback === undefined) {
-        return res.sendError({ message: "feedback is required", statusCode: 400 });
-      }
-      const data = await this.service.updateScriptFeedback(req.userId, scriptId, feedback);
-      res.sendSuccess({ message: "Script feedback updated", data });
-    } catch (error) {
-      this.handleError(error, res, next);
+  updateScriptFeedback = asyncHandler(async (req: Request, res: Response) => {
+    const { scriptId } = req.params;
+    const { feedback } = req.body as { feedback: "like" | "dislike" | null };
+    if (feedback === undefined) {
+      throw BadRequest("feedback is required");
     }
-  };
+    const data = await this.service.updateScriptFeedback(req.userId, scriptId, feedback);
+    res.sendSuccess({ message: "Script feedback updated", data });
+  });
 
-  exportScript = async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const { scriptId } = req.params;
-      const data = await this.service.exportScript(req.userId, scriptId);
-      res.sendSuccess({ message: "Script exported successfully", data });
-    } catch (error) {
-      this.handleError(error, res, next);
-    }
-  };
+  exportScript = asyncHandler(async (req: Request, res: Response) => {
+    const { scriptId } = req.params;
+    const data = await this.service.exportScript(req.userId, scriptId);
+    res.sendSuccess({ message: "Script exported successfully", data });
+  });
 }
 
 export default ScriptController;

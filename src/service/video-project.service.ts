@@ -4,11 +4,14 @@ import PackagingRepository from "../repository/packaging.repository.js";
 import VideoProjectRepository from "../repository/video-project.repository.js";
 import {
   IVideoProject,
+  IVideoProjectPipeline,
   OverallStatus,
   StaleReason,
   StepName,
   StepState,
 } from "../types/routes/video-project.js";
+import { BadRequest, Forbidden, NotFound } from "../utlils/errors.js";
+import { formatGeneratedTitle } from "../utlils/content.js";
 
 const STEP_ORDER: StepName[] = ["research", "script", "hooks", "packaging"];
 const NEXT_STEP: Record<string, StepName> = {
@@ -23,6 +26,17 @@ const STALE_CASCADE: Record<string, StepName[]> = {
 };
 const VALID_MUTABLE_STEPS = ["script", "hooks", "packaging"];
 
+// Single source of the overall-status arithmetic, shared by reconcileView (read path)
+// and refreshPackagingStep (write path) so the two can never drift.
+const computeOverallStatus = (pipeline: IVideoProjectPipeline): OverallStatus => {
+  const statuses = STEP_ORDER.map((st) => pipeline[st].status);
+  return statuses.includes("stale")
+    ? "stale"
+    : statuses.every((x) => x === "completed")
+      ? "completed"
+      : "in_progress";
+};
+
 class VideoProjectService {
   constructor(
     private repo: VideoProjectRepository,
@@ -33,20 +47,16 @@ class VideoProjectService {
   create = async (userId: string, topicId: string): Promise<IVideoProject> => {
     const topic = await this.contentRepo.getTopic(topicId);
     if (!topic) {
-      const err = new Error("Topic not found") as Error & { statusCode: number };
-      err.statusCode = 404;
-      throw err;
+      throw NotFound("Topic not found");
     }
     if (topic.createdBy !== userId) {
-      const err = new Error("Forbidden") as Error & { statusCode: number };
-      err.statusCode = 403;
-      throw err;
+      throw Forbidden();
     }
 
     const now = firebase.firestore.FieldValue.serverTimestamp();
     const projectData = {
-      userId,
-      workingTitle: topic.title as string,
+      createdBy: userId,
+      title: topic.title,
       topicId,
       scriptId: null,
       hooksId: null,
@@ -68,12 +78,25 @@ class VideoProjectService {
       isDeleted: false,
       deletedAt: null,
       createdAt: now,
-      lastUpdatedAt: now,
+      updatedAt: now,
     };
 
     const project = await this.repo.create(projectData);
     await this.contentRepo.updateTopic(topicId, { videoProjectId: project.id });
     return project;
+  };
+
+  createFromTitle = async (userId: string, title: string): Promise<IVideoProject> => {
+    if (!title || !title.trim()) {
+      throw BadRequest("title is required");
+    }
+    const formatted = await formatGeneratedTitle(title.trim(), userId);
+    const [saved] = await this.contentRepo.batchSaveTopics([formatted]);
+    return this.create(userId, saved.id);
+  };
+
+  getProjectsByTopic = async (topicId: string, userId: string): Promise<IVideoProject[]> => {
+    return this.repo.findByTopicId(topicId, userId);
   };
 
   list = async (
@@ -82,9 +105,7 @@ class VideoProjectService {
   ) => {
     const validStatuses: OverallStatus[] = ["in_progress", "completed", "stale"];
     if (status && !validStatuses.includes(status)) {
-      const err = new Error("Invalid status value") as Error & { statusCode: number };
-      err.statusCode = 400;
-      throw err;
+      throw BadRequest("Invalid status value");
     }
 
     const { projects, hasMore, nextCursor } = await this.repo.list(userId, {
@@ -95,10 +116,10 @@ class VideoProjectService {
 
     const mapped = projects.map((p) => ({
       id: p.id,
-      workingTitle: p.workingTitle,
+      title: p.title,
       currentStep: p.currentStep,
       overallStatus: p.overallStatus,
-      lastUpdatedAt: p.lastUpdatedAt,
+      updatedAt: p.updatedAt,
       createdAt: p.createdAt,
       thumbnailHint: p.thumbnailHint,
     }));
@@ -109,46 +130,92 @@ class VideoProjectService {
   getById = async (projectId: string, userId: string): Promise<IVideoProject> => {
     const project = await this.repo.findById(projectId);
     if (!project || project.isDeleted) {
-      const err = new Error("Not found") as Error & { statusCode: number };
-      err.statusCode = 404;
-      throw err;
+      throw NotFound();
     }
-    if (project.userId !== userId) {
-      const err = new Error("Forbidden") as Error & { statusCode: number };
-      err.statusCode = 403;
-      throw err;
+    if (project.createdBy !== userId) {
+      throw Forbidden();
     }
     return project;
+  };
+
+  /**
+   * Read-time safety net (computed, NOT persisted): if a step's linking resource
+   * exists but the step is still not_started/in_progress, present it as completed.
+   * Never touches `stale` or already-`completed` steps. Used only on the client read path,
+   * so the shared getById (used by mutators) keeps returning the raw stored doc.
+   */
+  private reconcileView = (project: IVideoProject): IVideoProject => {
+    const linked: Record<string, boolean> = {
+      script: project.scriptId != null,
+      hooks: project.selectedHookIndex != null,
+      packaging: project.packagingId != null,
+    };
+    const pipeline = { ...project.pipeline };
+    (["script", "hooks", "packaging"] as StepName[]).forEach((step) => {
+      const s = pipeline[step];
+      if (linked[step] && (s.status === "not_started" || s.status === "in_progress")) {
+        pipeline[step] = { ...s, status: "completed" };
+      }
+    });
+    return { ...project, pipeline, overallStatus: computeOverallStatus(pipeline) };
+  };
+
+  getReconciledById = async (projectId: string, userId: string): Promise<IVideoProject> => {
+    const project = await this.getById(projectId, userId);
+    return this.reconcileView(project);
+  };
+
+  /**
+   * Clear the project's stale packaging step after the last stale packaging item is
+   * regenerated, then recompute overallStatus. Only ever flips `stale -> completed`
+   * (so it can't throw like completeStep on a not_started step) and is a no-op when
+   * the step isn't stale. overallStatus stays "stale" if script/hooks are still stale.
+   * Caller must gate on "no packaging item remains stale".
+   */
+  refreshPackagingStep = async (projectId: string, userId: string): Promise<void> => {
+    const project = await this.getById(projectId, userId);
+    if (project.pipeline.packaging.status !== "stale") return;
+
+    const updatedPipeline: IVideoProjectPipeline = {
+      ...project.pipeline,
+      packaging: { ...project.pipeline.packaging, status: "completed" },
+    };
+
+    await this.repo.update(projectId, {
+      "pipeline.packaging.status": "completed",
+      overallStatus: computeOverallStatus(updatedPipeline),
+    });
+  };
+
+  // Keep the dashboard thumbnailHint in sync when the thumbnail is regenerated
+  // (it is otherwise only set at save-time via linkResource, so a regen would leave it stale).
+  setThumbnailHint = async (projectId: string, hint: string | null, userId: string): Promise<void> => {
+    await this.getById(projectId, userId);
+    await this.repo.update(projectId, { thumbnailHint: hint });
   };
 
   update = async (
     projectId: string,
     userId: string,
-    data: { workingTitle?: string }
+    data: { title?: string }
   ) => {
     await this.getById(projectId, userId);
 
-    if (!data.workingTitle || typeof data.workingTitle !== "string" || data.workingTitle.trim() === "") {
-      const err = new Error("workingTitle is required") as Error & { statusCode: number };
-      err.statusCode = 400;
-      throw err;
+    if (!data.title || typeof data.title !== "string" || data.title.trim() === "") {
+      throw BadRequest("title is required");
     }
 
-    await this.repo.update(projectId, { workingTitle: data.workingTitle });
-    return { workingTitle: data.workingTitle };
+    await this.repo.update(projectId, { title: data.title });
+    return { title: data.title };
   };
 
   delete = async (projectId: string, userId: string) => {
     const project = await this.repo.findById(projectId);
     if (!project) {
-      const err = new Error("Not found") as Error & { statusCode: number };
-      err.statusCode = 404;
-      throw err;
+      throw NotFound();
     }
-    if (project.userId !== userId) {
-      const err = new Error("Forbidden") as Error & { statusCode: number };
-      err.statusCode = 403;
-      throw err;
+    if (project.createdBy !== userId) {
+      throw Forbidden();
     }
     if (project.isDeleted) {
       return project;
@@ -162,11 +229,9 @@ class VideoProjectService {
 
   startStep = async (projectId: string, stepName: string, userId: string) => {
     if (!VALID_MUTABLE_STEPS.includes(stepName)) {
-      const err = new Error(
+      throw BadRequest(
         `Invalid step. Must be one of: ${VALID_MUTABLE_STEPS.join(", ")}`
-      ) as Error & { statusCode: number };
-      err.statusCode = 400;
-      throw err;
+      );
     }
 
     const project = await this.getById(projectId, userId);
@@ -195,11 +260,9 @@ class VideoProjectService {
 
   completeStep = async (projectId: string, stepName: string, userId: string) => {
     if (!VALID_MUTABLE_STEPS.includes(stepName)) {
-      const err = new Error(
+      throw BadRequest(
         `Invalid step. Must be one of: ${VALID_MUTABLE_STEPS.join(", ")}`
-      ) as Error & { statusCode: number };
-      err.statusCode = 400;
-      throw err;
+      );
     }
 
     const project = await this.getById(projectId, userId);
@@ -207,11 +270,7 @@ class VideoProjectService {
     const currentStatus = project.pipeline[step].status;
 
     if (currentStatus === "not_started") {
-      const err = new Error("Cannot complete a step that has not been started") as Error & {
-        statusCode: number;
-      };
-      err.statusCode = 400;
-      throw err;
+      throw BadRequest("Cannot complete a step that has not been started");
     }
 
     if (currentStatus === "completed") {
@@ -254,17 +313,13 @@ class VideoProjectService {
   ) => {
     const validTypes = ["script", "hooks", "packaging"];
     if (!validTypes.includes(resourceType)) {
-      const err = new Error(
+      throw BadRequest(
         `Invalid resourceType. Must be one of: ${validTypes.join(", ")}`
-      ) as Error & { statusCode: number };
-      err.statusCode = 400;
-      throw err;
+      );
     }
 
     if (!resourceId || resourceId.trim() === "") {
-      const err = new Error("resourceId is required") as Error & { statusCode: number };
-      err.statusCode = 400;
-      throw err;
+      throw BadRequest("resourceId is required");
     }
 
     await this.getById(projectId, userId);
@@ -282,10 +337,11 @@ class VideoProjectService {
     if (resourceType === "packaging") {
       const packagingDoc = await this.packagingRepo.get(resourceId);
       if (packagingDoc) {
-        const thumbnails = (packagingDoc as Record<string, unknown>).thumbnails as
-          | Array<{ textOverlay?: string }>
+        // Canonical `thumbnail` is a string[] of design briefs; the hint is the first one.
+        const thumbnail = (packagingDoc as Record<string, unknown>).thumbnail as
+          | string[]
           | undefined;
-        updates["thumbnailHint"] = thumbnails?.[0]?.textOverlay ?? null;
+        updates["thumbnailHint"] = thumbnail?.[0] ?? null;
       }
     }
 
@@ -307,7 +363,16 @@ class VideoProjectService {
 
   clearSelectedHook = async (projectId: string, userId: string): Promise<void> => {
     await this.getById(projectId, userId);
-    await this.repo.update(projectId, { selectedHookIndex: null, hooksId: null });
+    // Regenerating hooks invalidates the prior selection but NOT the batch
+    // itself — the batch doc is updated in place, so hooksId still points at a
+    // valid (newer) batch and must be kept. Clear only the selection and move
+    // the step back to in_progress so it reads as "needs re-selection" instead
+    // of staying "completed" with nothing selected.
+    await this.repo.update(projectId, {
+      selectedHookIndex: null,
+      "pipeline.hooks.status": "in_progress",
+      "pipeline.hooks.completedAt": null,
+    });
   };
 
   getByScriptId = async (scriptId: string, userId: string): Promise<IVideoProject | null> => {
@@ -329,9 +394,8 @@ class VideoProjectService {
 
     if (Object.keys(updates).length === 0) return;
 
-    if (project.overallStatus === "completed") {
-      updates["overallStatus"] = "in_progress";
-    }
+    // A stale downstream step makes the whole project stale until it's re-completed.
+    updates["overallStatus"] = "stale";
 
     await this.repo.update(projectId, updates);
   };
