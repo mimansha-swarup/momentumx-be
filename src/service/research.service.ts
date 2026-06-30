@@ -3,6 +3,7 @@ import ResearchRepository, {
   TrendingVideo,
 } from "../repository/research.repository.js";
 import UserRepository from "../repository/user.repository.js";
+import { DEFAULT_NICHE } from "../constants/research.js";
 import { BadRequest } from "../utlils/errors.js";
 
 export type { TrendingVideo, KeywordSignal };
@@ -20,11 +21,9 @@ class ResearchService {
 
   getTrending = async (userId: string): Promise<TrendingVideo[]> => {
     const userRecord = await this.userRepo.get(userId);
-    if (!userRecord?.niche) {
-      throw BadRequest("User niche not set — complete onboarding first");
-    }
+    const niche = userRecord?.niche || DEFAULT_NICHE;
 
-    return this.repo.getTrendingVideos(userRecord.niche);
+    return this.repo.getTrendingVideos(niche);
   };
 
   getCompetitorInsights = async (userId: string): Promise<CompetitorInsight[]> => {

@@ -1,3 +1,4 @@
+import { DEFAULT_NICHE } from "../constants/research.js";
 import { BadRequest } from "../utlils/errors.js";
 class ResearchService {
     constructor(repo, userRepo) {
@@ -5,10 +6,8 @@ class ResearchService {
         this.userRepo = userRepo;
         this.getTrending = async (userId) => {
             const userRecord = await this.userRepo.get(userId);
-            if (!userRecord?.niche) {
-                throw BadRequest("User niche not set — complete onboarding first");
-            }
-            return this.repo.getTrendingVideos(userRecord.niche);
+            const niche = userRecord?.niche || DEFAULT_NICHE;
+            return this.repo.getTrendingVideos(niche);
         };
         this.getCompetitorInsights = async (userId) => {
             const userRecord = await this.userRepo.get(userId);
