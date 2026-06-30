@@ -36,6 +36,7 @@ import VideoProjectRepository from "../../src/repository/video-project.repositor
 import ContentRepository from "../../src/repository/content.repository";
 import PackagingRepository from "../../src/repository/packaging.repository";
 import { IVideoProject } from "../../src/types/routes/video-project";
+import { ITopic } from "../../src/types/routes/content";
 import { formatGeneratedTitle } from "../../src/utlils/content";
 
 // ---------------------------------------------------------------------------
@@ -69,6 +70,22 @@ function makeProject(overrides: Partial<IVideoProject> = {}): IVideoProject {
     },
     createdAt: null as any,
     updatedAt: null as any,
+    ...overrides,
+  };
+}
+
+function makeTopic(overrides: Partial<ITopic> = {}): ITopic {
+  return {
+    id: "topic-1",
+    title: "My Topic",
+    createdBy: "user-1",
+    createdAt: null as any,
+    isScriptGenerated: false,
+    embedding: [],
+    batchId: null,
+    archived: false,
+    videoProjectId: null,
+    userFeedback: null,
     ...overrides,
   };
 }
@@ -114,7 +131,7 @@ describe("VideoProjectService", () => {
 
   describe("create(userId, topicId)", () => {
     it("returns project when topic exists and belongs to the user", async () => {
-      contentRepo.getTopic.mockResolvedValue({ title: "My Topic", createdBy: "user-1" });
+      contentRepo.getTopic.mockResolvedValue(makeTopic({ title: "My Topic", createdBy: "user-1" }));
       repo.create.mockResolvedValue(makeProject());
 
       const result = await service.create("user-1", "topic-1");
@@ -143,7 +160,7 @@ describe("VideoProjectService", () => {
     });
 
     it("throws 403 when topic belongs to a different user", async () => {
-      contentRepo.getTopic.mockResolvedValue({ title: "Their Topic", createdBy: "other-user" });
+      contentRepo.getTopic.mockResolvedValue(makeTopic({ title: "Their Topic", createdBy: "other-user" }));
 
       await expect(service.create("user-1", "topic-1")).rejects.toMatchObject({
         message: "Forbidden",
@@ -153,7 +170,7 @@ describe("VideoProjectService", () => {
     });
 
     it("passes correct initial pipeline state to repo.create", async () => {
-      contentRepo.getTopic.mockResolvedValue({ title: "My Topic", createdBy: "user-1" });
+      contentRepo.getTopic.mockResolvedValue(makeTopic({ title: "My Topic", createdBy: "user-1" }));
       repo.create.mockResolvedValue(makeProject());
 
       await service.create("user-1", "topic-1");
@@ -166,7 +183,7 @@ describe("VideoProjectService", () => {
     });
 
     it("sets overallStatus 'in_progress' and currentStep 'research' at creation", async () => {
-      contentRepo.getTopic.mockResolvedValue({ title: "My Topic", createdBy: "user-1" });
+      contentRepo.getTopic.mockResolvedValue(makeTopic({ title: "My Topic", createdBy: "user-1" }));
       repo.create.mockResolvedValue(makeProject());
 
       await service.create("user-1", "topic-1");
@@ -185,7 +202,7 @@ describe("VideoProjectService", () => {
     it("creates a topic from the title, then a project from the saved topic id", async () => {
       (formatGeneratedTitle as jest.Mock).mockResolvedValue({ title: "My Idea", createdBy: "user-1" });
       contentRepo.batchSaveTopics.mockResolvedValue([{ id: "topic-x", title: "My Idea", createdBy: "user-1" }] as any);
-      contentRepo.getTopic.mockResolvedValue({ title: "My Idea", createdBy: "user-1" });
+      contentRepo.getTopic.mockResolvedValue(makeTopic({ title: "My Idea", createdBy: "user-1" }));
       repo.create.mockResolvedValue(makeProject({ topicId: "topic-x" }));
 
       const result = await service.createFromTitle("user-1", "My Idea");
@@ -423,6 +440,36 @@ describe("VideoProjectService", () => {
     it("throws (caller catches) when the project is not owned by the user", async () => {
       repo.findById.mockResolvedValue(staleProject({}));
       await expect(service.refreshPackagingStep("proj-1", "other-user")).rejects.toMatchObject({ statusCode: 403 });
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // setThumbnailHint (keep dashboard hint fresh after a thumbnail regenerate)
+  // --------------------------------------------------------------------------
+
+  describe("setThumbnailHint(projectId, hint, userId)", () => {
+    it("writes the hint after an ownership check", async () => {
+      repo.findById.mockResolvedValue(makeProject());
+      repo.update.mockResolvedValue(undefined);
+
+      await service.setThumbnailHint("proj-1", "New first brief", "user-1");
+
+      expect(repo.update).toHaveBeenCalledWith("proj-1", { thumbnailHint: "New first brief" });
+    });
+
+    it("accepts null (clears the hint)", async () => {
+      repo.findById.mockResolvedValue(makeProject());
+      repo.update.mockResolvedValue(undefined);
+
+      await service.setThumbnailHint("proj-1", null, "user-1");
+
+      expect(repo.update).toHaveBeenCalledWith("proj-1", { thumbnailHint: null });
+    });
+
+    it("throws 403 when the project is not owned by the user", async () => {
+      repo.findById.mockResolvedValue(makeProject({ createdBy: "other-user" }));
+      await expect(service.setThumbnailHint("proj-1", "x", "user-1")).rejects.toMatchObject({ statusCode: 403 });
       expect(repo.update).not.toHaveBeenCalled();
     });
   });
@@ -747,11 +794,11 @@ describe("VideoProjectService", () => {
       expect(repo.update).toHaveBeenCalledWith("proj-1", expect.objectContaining({ hooksId: "hooks-abc" }));
     });
 
-    it("sets packagingId AND extracts thumbnailHint for resourceType 'packaging'", async () => {
+    it("sets packagingId AND extracts thumbnailHint (first canonical thumbnail brief)", async () => {
       repo.findById.mockResolvedValue(makeProject());
       repo.update.mockResolvedValue(undefined);
       packagingRepo.get.mockResolvedValue({
-        thumbnails: [{ textOverlay: "Bold text here" }, { textOverlay: "Second option" }],
+        thumbnail: ["Bold text here", "Second option", "Third option"],
       } as any);
 
       await service.linkResource("proj-1", "packaging", "pkg-abc", "user-1");
@@ -762,7 +809,7 @@ describe("VideoProjectService", () => {
       );
     });
 
-    it("sets thumbnailHint to null when packaging doc has no thumbnails", async () => {
+    it("sets thumbnailHint to null when packaging doc has no thumbnail", async () => {
       repo.findById.mockResolvedValue(makeProject());
       repo.update.mockResolvedValue(undefined);
       packagingRepo.get.mockResolvedValue({} as any);
@@ -877,6 +924,35 @@ describe("VideoProjectService", () => {
 
       await expect(service.markStale("proj-1", "script")).resolves.toBeUndefined();
       expect(repo.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("clearSelectedHook(projectId, userId)", () => {
+    it("clears only the selection, keeps hooksId, and reverts hooks step to in_progress", async () => {
+      repo.findById.mockResolvedValue(
+        makeProject({
+          hooksId: "hooks-1",
+          selectedHookIndex: 2,
+          pipeline: {
+            research: { status: "completed", startedAt: null, completedAt: null },
+            script: { status: "completed", startedAt: null, completedAt: null },
+            hooks: { status: "completed", startedAt: null, completedAt: null },
+            packaging: { status: "not_started", startedAt: null, completedAt: null },
+          },
+        })
+      );
+      repo.update.mockResolvedValue(undefined);
+
+      await service.clearSelectedHook("proj-1", "user-1");
+
+      const payload = repo.update.mock.calls[0][1] as Record<string, unknown>;
+      expect(payload).toMatchObject({
+        selectedHookIndex: null,
+        "pipeline.hooks.status": "in_progress",
+        "pipeline.hooks.completedAt": null,
+      });
+      // the regenerated batch is still valid — its link must NOT be severed
+      expect(payload).not.toHaveProperty("hooksId");
     });
   });
 });

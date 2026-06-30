@@ -3,7 +3,7 @@ jest.mock("firebase-admin", () => ({
   initializeApp: jest.fn(),
   credential: { cert: jest.fn() },
   firestore: Object.assign(jest.fn().mockReturnValue({}), {
-    FieldValue: { serverTimestamp: jest.fn() },
+    FieldValue: { serverTimestamp: jest.fn(), increment: jest.fn((n: number) => ({ _increment: n })) },
     FieldPath: { documentId: jest.fn() },
     Timestamp: { now: jest.fn() },
   }),
@@ -15,7 +15,7 @@ jest.mock("../../src/config/firebase", () => ({
   auth: {},
   firebase: {
     firestore: {
-      FieldValue: { serverTimestamp: jest.fn() },
+      FieldValue: { serverTimestamp: jest.fn(), increment: jest.fn((n: number) => ({ _increment: n })) },
       FieldPath: { documentId: jest.fn() },
     },
   },
@@ -142,11 +142,11 @@ describe("ContentService — regenerateScript", () => {
     expect(result).toEqual({ id: "script-1", title: "My Title", script: "Generated script text." });
   });
 
-  it("fires stale cascade when linked project found", async () => {
+  it("fires the FULL stale cascade (project step + packaging doc) when linked project found", async () => {
     await service.regenerateScript("user-1", "script-1");
-    // fire-and-forget — flush microtask queue
-    await new Promise(r => setTimeout(r, 0));
+    // cascade is awaited inline before return; the project AND the packaging doc must both be marked stale.
     expect(mockVpService.markStale).toHaveBeenCalledWith("proj-1", "script");
+    expect(mockVpService.markPackagingDocumentStale).toHaveBeenCalledWith("proj-1", "script_regenerated");
   });
 
   it("does not throw if no linked project", async () => {
@@ -296,7 +296,8 @@ describe("ContentService — generateScripts project-scoped script id & FKs", ()
 
   it("saves a script whose id !== topicId and carries topicId + videoProjectId FKs (first generation)", async () => {
     mockVp.getById.mockResolvedValue({ id: "proj-1", topicId: "topic-1", scriptId: null });
-    await service.generateScripts("user-1", "proj-1", makeRes() as any);
+    const res = makeRes();
+    await service.generateScripts("user-1", "proj-1", res as any);
 
     expect(mockContentRepo.saveScript).toHaveBeenCalledTimes(1);
     const [savedId, savedDoc] = mockContentRepo.saveScript.mock.calls[0] as [string, Record<string, unknown>];
@@ -308,6 +309,21 @@ describe("ContentService — generateScripts project-scoped script id & FKs", ()
     expect(savedDoc.id).toBe(savedId);
     // pipeline linked the same id
     expect(mockVp.linkResource).toHaveBeenCalledWith("proj-1", "script", savedId, "user-1");
+  });
+
+  it("streams the body, always terminates the SSE with [DONE]+end, and completes the script step", async () => {
+    mockVp.getById.mockResolvedValue({ id: "proj-1", topicId: "topic-1", scriptId: null });
+    const res = makeRes();
+
+    await service.generateScripts("user-1", "proj-1", res as any);
+
+    // the generated body reached the client
+    expect(res.write).toHaveBeenCalledWith(expect.stringContaining("Streamed script body."));
+    // SSE termination contract — non-negotiable: [DONE] then end()
+    expect(res.write).toHaveBeenCalledWith("data: [DONE]\n\n");
+    expect(res.end).toHaveBeenCalled();
+    // pipeline advances: script step completed after the save
+    expect(mockVp.completeStep).toHaveBeenCalledWith("proj-1", "script", "user-1");
   });
 
   it("reuses project.scriptId on regenerate (no new id minted)", async () => {
