@@ -56,7 +56,7 @@ class VideoProjectService {
     const now = firebase.firestore.FieldValue.serverTimestamp();
     const projectData = {
       createdBy: userId,
-      title: topic.title as string,
+      title: topic.title,
       topicId,
       scriptId: null,
       hooksId: null,
@@ -185,6 +185,13 @@ class VideoProjectService {
       "pipeline.packaging.status": "completed",
       overallStatus: computeOverallStatus(updatedPipeline),
     });
+  };
+
+  // Keep the dashboard thumbnailHint in sync when the thumbnail is regenerated
+  // (it is otherwise only set at save-time via linkResource, so a regen would leave it stale).
+  setThumbnailHint = async (projectId: string, hint: string | null, userId: string): Promise<void> => {
+    await this.getById(projectId, userId);
+    await this.repo.update(projectId, { thumbnailHint: hint });
   };
 
   update = async (
@@ -330,10 +337,11 @@ class VideoProjectService {
     if (resourceType === "packaging") {
       const packagingDoc = await this.packagingRepo.get(resourceId);
       if (packagingDoc) {
-        const thumbnails = (packagingDoc as Record<string, unknown>).thumbnails as
-          | Array<{ textOverlay?: string }>
+        // Canonical `thumbnail` is a string[] of design briefs; the hint is the first one.
+        const thumbnail = (packagingDoc as Record<string, unknown>).thumbnail as
+          | string[]
           | undefined;
-        updates["thumbnailHint"] = thumbnails?.[0]?.textOverlay ?? null;
+        updates["thumbnailHint"] = thumbnail?.[0] ?? null;
       }
     }
 
@@ -355,7 +363,16 @@ class VideoProjectService {
 
   clearSelectedHook = async (projectId: string, userId: string): Promise<void> => {
     await this.getById(projectId, userId);
-    await this.repo.update(projectId, { selectedHookIndex: null, hooksId: null });
+    // Regenerating hooks invalidates the prior selection but NOT the batch
+    // itself — the batch doc is updated in place, so hooksId still points at a
+    // valid (newer) batch and must be kept. Clear only the selection and move
+    // the step back to in_progress so it reads as "needs re-selection" instead
+    // of staying "completed" with nothing selected.
+    await this.repo.update(projectId, {
+      selectedHookIndex: null,
+      "pipeline.hooks.status": "in_progress",
+      "pipeline.hooks.completedAt": null,
+    });
   };
 
   getByScriptId = async (scriptId: string, userId: string): Promise<IVideoProject | null> => {

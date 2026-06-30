@@ -111,6 +111,46 @@ class PackagingService {
     }
   };
 
+  // The four packaging content fields, in their canonical stored shapes:
+  //   titles      -> Array<{ title, characterCount }>
+  //   description -> string
+  //   thumbnail   -> string[]   (the generator's `descriptions` briefs)
+  //   shorts      -> { segments, totalDuration }
+  // Generators return these wrapped (e.g. { titles: [...] }, { descriptions: [...] }),
+  // and the FE save path is not solidified, so we coerce wrapper-or-bare input to the
+  // canonical value at every write. Malformed input throws (never persist junk/undefined).
+  private static readonly ITEM_FIELDS = ["titles", "description", "thumbnail", "shorts"] as const;
+
+  private normalizeField = (field: string, raw: unknown): unknown => {
+    const wrapper = (raw ?? {}) as Record<string, unknown>;
+    switch (field) {
+      case "titles": {
+        const v = Array.isArray(raw) ? raw : wrapper.titles;
+        if (!Array.isArray(v)) throw BadRequest("titles must be an array");
+        return v;
+      }
+      case "description": {
+        const v = typeof raw === "string" ? raw : wrapper.description;
+        if (typeof v !== "string") throw BadRequest("description must be a string");
+        return v;
+      }
+      case "thumbnail": {
+        const v = Array.isArray(raw) ? raw : wrapper.descriptions;
+        if (!Array.isArray(v)) throw BadRequest("thumbnail must be an array of briefs");
+        return v;
+      }
+      case "shorts": {
+        const v = Array.isArray(wrapper.segments) ? raw : wrapper.shorts;
+        if (!v || !Array.isArray((v as Record<string, unknown>).segments)) {
+          throw BadRequest("shorts must include a segments array");
+        }
+        return v;
+      }
+      default:
+        return raw;
+    }
+  };
+
   private buildItemStatuses = (data: Record<string, unknown>) => {
     const hasContent = (key: string) => {
       const val = data[key];
@@ -134,17 +174,30 @@ class PackagingService {
         await this.videoProjectService.getById(videoProjectId, userId);
       }
 
-      const itemStatuses = this.buildItemStatuses(data);
+      // Coerce any present content field to its canonical stored shape so the
+      // persisted doc matches what regenerateItem and the readers expect.
+      const normalized: Record<string, unknown> = { ...data };
+      for (const field of PackagingService.ITEM_FIELDS) {
+        if (field in data && data[field] != null) {
+          normalized[field] = this.normalizeField(field, data[field]);
+        }
+      }
+
+      const itemStatuses = this.buildItemStatuses(normalized);
 
       const packagingData = {
-        ...data,
+        ...normalized,
         createdBy: userId,
         itemStatuses,
-        isStale: false,
-        staleReason: null,
-        staleSince: null,
         ...(videoProjectId ? { videoProjectId } : {}),
       };
+
+      // Stale flags are set fresh ONLY when the document is first created — a
+      // brand-new package is never stale. On update (re-save) we must NOT touch
+      // them: a plain re-save would otherwise silently un-stale a package that
+      // an upstream regenerate had marked stale. Genuine un-staling happens via
+      // regenerateItem → refreshPackagingStep.
+      const freshStaleFlags = { isStale: false, staleReason: null, staleSince: null };
 
       let result: Record<string, unknown>;
 
@@ -159,12 +212,14 @@ class PackagingService {
         } else {
           result = await this.repo.save({
             ...packagingData,
+            ...freshStaleFlags,
             createdAt: firebase.firestore.FieldValue.serverTimestamp(),
           });
         }
       } else {
         result = await this.repo.save({
           ...packagingData,
+          ...freshStaleFlags,
           createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         });
       }
@@ -268,9 +323,11 @@ class PackagingService {
       throw genError;
     }
 
-    // Atomic write: content + status update
+    // Normalize once: store AND return the canonical shape, so the regenerate
+    // response matches what a subsequent GET / export returns (no wrapper-vs-stored split).
+    const canonical = this.normalizeField(fieldKey, result);
     const updateData: Record<string, unknown> = {
-      [fieldKey]: result,
+      [fieldKey]: canonical,
       [`itemStatuses.${statusKey}`]: "completed",
     };
 
@@ -299,7 +356,18 @@ class PackagingService {
       }
     }
 
-    return { id: packagingId, item, data: result };
+    // The thumbnail content changed -> refresh the project's dashboard thumbnailHint
+    // (best-effort; otherwise it stays the brief captured at save time).
+    if (item === "thumbnail" && videoProjectId && this.videoProjectService) {
+      try {
+        const briefs = updateData.thumbnail as string[] | undefined;
+        await this.videoProjectService.setThumbnailHint(videoProjectId, briefs?.[0] ?? null, userId);
+      } catch (hintError) {
+        console.error(JSON.stringify({ event: "thumbnail_hint_refresh_failed", projectId: videoProjectId, packagingId, userId, message: (hintError as Error)?.message }));
+      }
+    }
+
+    return { id: packagingId, item, data: canonical };
   };
 
   updateFeedback = async (
@@ -351,8 +419,23 @@ class PackagingService {
 
     const titles = pkg.titles;
     const titlesText = Array.isArray(titles)
-      ? titles.map((t: unknown, i: number) => `${i + 1}. ${typeof t === "string" ? t : JSON.stringify(t)}`).join("\n")
+      ? titles
+          .map((t: unknown, i: number) => `${i + 1}. ${typeof t === "string" ? t : ((t as { title?: string })?.title ?? JSON.stringify(t))}`)
+          .join("\n")
       : formatValue(titles);
+
+    const thumbnail = pkg.thumbnail;
+    const thumbnailText = Array.isArray(thumbnail)
+      ? thumbnail.map((d: unknown, i: number) => `${i + 1}. ${typeof d === "string" ? d : JSON.stringify(d)}`).join("\n")
+      : formatValue(thumbnail);
+
+    const shorts = pkg.shorts as { segments?: Array<{ startTime?: string; endTime?: string; type?: string; content?: string }>; totalDuration?: string } | undefined;
+    const shortsText = shorts && Array.isArray(shorts.segments)
+      ? [
+          ...shorts.segments.map((s) => `[${s.startTime ?? ""}–${s.endTime ?? ""}] (${s.type ?? ""}) ${s.content ?? ""}`),
+          shorts.totalDuration ? `Total: ${shorts.totalDuration}` : "",
+        ].filter(Boolean).join("\n")
+      : formatValue(pkg.shorts);
 
     const lines = [
       `Video Package — ${today}`,
@@ -368,11 +451,11 @@ class PackagingService {
       "",
       "THUMBNAIL BRIEF",
       "───────────────",
-      formatValue(pkg.thumbnail),
+      thumbnailText,
       "",
       "SHORTS SCRIPT",
       "─────────────",
-      formatValue(pkg.shorts),
+      shortsText,
     ];
 
     return { text: lines.join("\n") };

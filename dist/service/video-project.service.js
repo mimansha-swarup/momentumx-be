@@ -154,6 +154,12 @@ class VideoProjectService {
                 overallStatus: computeOverallStatus(updatedPipeline),
             });
         };
+        // Keep the dashboard thumbnailHint in sync when the thumbnail is regenerated
+        // (it is otherwise only set at save-time via linkResource, so a regen would leave it stale).
+        this.setThumbnailHint = async (projectId, hint, userId) => {
+            await this.getById(projectId, userId);
+            await this.repo.update(projectId, { thumbnailHint: hint });
+        };
         this.update = async (projectId, userId, data) => {
             await this.getById(projectId, userId);
             if (!data.title || typeof data.title !== "string" || data.title.trim() === "") {
@@ -255,8 +261,9 @@ class VideoProjectService {
             if (resourceType === "packaging") {
                 const packagingDoc = await this.packagingRepo.get(resourceId);
                 if (packagingDoc) {
-                    const thumbnails = packagingDoc.thumbnails;
-                    updates["thumbnailHint"] = thumbnails?.[0]?.textOverlay ?? null;
+                    // Canonical `thumbnail` is a string[] of design briefs; the hint is the first one.
+                    const thumbnail = packagingDoc.thumbnail;
+                    updates["thumbnailHint"] = thumbnail?.[0] ?? null;
                 }
             }
             await this.repo.update(projectId, updates);
@@ -269,7 +276,16 @@ class VideoProjectService {
         };
         this.clearSelectedHook = async (projectId, userId) => {
             await this.getById(projectId, userId);
-            await this.repo.update(projectId, { selectedHookIndex: null, hooksId: null });
+            // Regenerating hooks invalidates the prior selection but NOT the batch
+            // itself — the batch doc is updated in place, so hooksId still points at a
+            // valid (newer) batch and must be kept. Clear only the selection and move
+            // the step back to in_progress so it reads as "needs re-selection" instead
+            // of staying "completed" with nothing selected.
+            await this.repo.update(projectId, {
+                selectedHookIndex: null,
+                "pipeline.hooks.status": "in_progress",
+                "pipeline.hooks.completedAt": null,
+            });
         };
         this.getByScriptId = async (scriptId, userId) => {
             return this.repo.findByScriptId(scriptId, userId);
