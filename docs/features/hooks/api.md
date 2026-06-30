@@ -92,7 +92,8 @@ Marks a specific hook index as selected. Stores `hooksId` and `selectedHookIndex
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `hookIndex` | `number` | Yes | Zero-based index (0–4) of the selected hook within the `hooks` array |
-| `videoProjectId` | `string` | Yes | ID of the video project to update |
+
+> **No `videoProjectId` in the body.** The server resolves the target project from the stored hooks batch (`hooksBatch.videoProjectId`) — it is never taken from the client. This prevents binding a batch to a project it wasn't generated for. (First-time `POST /generate` still takes `videoProjectId`, because the batch doesn't exist yet.)
 
 ### Response — `200`
 
@@ -114,7 +115,7 @@ Marks a specific hook index as selected. Stores `hooksId` and `selectedHookIndex
 
 | Status | Condition |
 |---|---|
-| 400 | `hookIndex` or `videoProjectId` missing, or `hookIndex` out of range (0–4) |
+| 400 | `hookIndex` missing or out of range (0–4), or the stored batch has no linked video project |
 | 403 | Hooks batch not owned by user |
 | 404 | Hooks batch not found |
 

@@ -71,11 +71,14 @@ res.setHeader('Cache-Control', 'no-cache');
 res.setHeader('Connection', 'keep-alive');
 res.flushHeaders();
 
-// 2. Stream chunks with error recovery
+// 2. Stream chunks with error recovery.
+//    JSON.stringify each chunk so embedded newlines can't break SSE framing
+//    (a raw multi-line chunk would be split into multiple SSE events).
+//    The client must JSON.parse each `data:` line (except the [DONE] sentinel).
 try {
   for await (const chunk of result.stream) {
     const text = chunk.text();
-    if (text) res.write('data: ' + text + '\n\n');
+    if (text) res.write('data: ' + JSON.stringify(text) + '\n\n');
   }
 } catch (streamError) {
   console.error("SSE stream error", streamError);
@@ -98,7 +101,7 @@ Non-negotiable:
 - `res.write('data: [DONE]\n\n')` and `res.end()` must be in a `finally` block
 - Stream errors must NOT leave the client hanging — `finally` guarantees termination
 - Post-stream saves (Firestore writes) must be in a separate try/catch — a save failure must not affect the already-completed stream
-- Every text chunk sent as `data: <text>\n\n`
+- Every text chunk is **JSON-encoded**: `data: ${JSON.stringify(text)}\n\n` (NOT raw `data: <text>`). This keeps multi-line content (scripts) from corrupting the SSE frame. The `[DONE]` terminator is the one exception — sent raw. Clients `JSON.parse` each `data:` line and stop on the literal `[DONE]`.
 
 ---
 

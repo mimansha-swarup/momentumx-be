@@ -175,7 +175,7 @@ Document ID: Firestore auto-generated.
 ```typescript
 interface VideoProject {
   id: string;                     // Firestore auto-generated doc ID
-  userId: string;                 // from req.userId
+  createdBy: string;              // from req.userId
   title: string;           // from topic.title at creation; can be renamed
 
   topicId: string;                // always set — required for creation
@@ -212,7 +212,7 @@ interface StepState {
 
 ```
 id                auto-id
-userId            req.userId
+createdBy         req.userId
 title      from topic.title
 topicId           from request body
 scriptId             null
@@ -234,10 +234,10 @@ pipeline.packaging  { status: "not_started", startedAt: null, completedAt: null 
 ### Indexes Required
 
 ```
-Composite index 1: userId ASC, isDeleted ASC, updatedAt DESC
+Composite index 1: isDeleted ASC, createdBy ASC, updatedAt DESC, __name__ DESC
   → powers dashboard list query
 
-Composite index 2: userId ASC, isDeleted ASC, overallStatus ASC
+Composite index 2: isDeleted ASC, createdBy ASC, overallStatus ASC, updatedAt DESC, __name__ DESC
   → powers filtered list (e.g., "show only in_progress")
 ```
 
@@ -247,7 +247,7 @@ Composite index 2: userId ASC, isDeleted ASC, overallStatus ASC
 
 **`scripts`** — the script document id is its own `randomUUID` (no longer the topic id). It stores `topicId` and `videoProjectId` foreign keys, both set when the script is saved for a project. Older documents may use the legacy `id == topicId` scheme and lack these FKs; do not backfill.
 
-**`packaging`** — add `projectId: string | null`. Resolves the long-standing data model gap (packaging disconnected from topics/scripts). `null` on pre-existing documents. Do not backfill.
+**`packaging`** — add `videoProjectId: string | null`. Resolves the long-standing data model gap (packaging disconnected from topics/scripts). `null` on pre-existing documents. Do not backfill.
 
 ---
 

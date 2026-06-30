@@ -186,7 +186,13 @@ If `videoProjectId` is provided, the server verifies ownership of the video proj
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `videoProjectId` | `string` | No | If provided, links this packaging to the video project (upserts if already linked) |
-| *(any packaging fields)* | `unknown` | No | All other fields are passed through and persisted as-is |
+| `titles` | `Array<{title, characterCount}>` \| `{titles:[...]}` | No | Title variations. The generate-title response (`{titles:[...]}`) may be sent as-is; the server unwraps it. |
+| `description` | `string` \| `{description}` | No | SEO description. The generate-description response may be sent as-is. |
+| `thumbnail` | `string[]` \| `{descriptions:[...]}` | No | Thumbnail design briefs. **Send the generate-thumbnail response (`{descriptions:[...]}`) under the `thumbnail` key** — the server unwraps `descriptions` into the stored `thumbnail` array. |
+| `shorts` | `{segments, totalDuration}` | No | Shorts script — the generate-shorts response, sent as-is. |
+| *(other fields)* | `unknown` | No | Passed through and persisted as-is |
+
+> **Canonical stored shape.** The four content fields are normalized server-side to one canonical shape before persisting: `titles: [{title, characterCount}]`, `description: string`, `thumbnail: string[]`, `shorts: {segments, totalDuration}`. You may send either the raw generate-endpoint response (wrapper) or the already-unwrapped value under each field key — the server coerces both. Malformed shapes are rejected with `400`. The same normalization applies on `regenerate/:item`, so saved and regenerated content always have identical shapes.
 
 ### Server-Set Fields
 
@@ -313,6 +319,8 @@ Regenerates a single packaging item and overwrites it on the existing document. 
   }
 }
 ```
+
+> **`data` is the canonical persisted shape** — identical to what a subsequent `GET /packaging/:id` returns for that field (e.g. `titles: [{title, characterCount}]`, `description: string`, `thumbnail: string[]`, `shorts: {segments, totalDuration}`). It is **not** the raw generator wrapper, so the FE can treat a regenerate response the same as reading the stored item.
 
 ### Error Cases
 

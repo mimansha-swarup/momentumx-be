@@ -77,10 +77,14 @@ res.sendError({ message, statusCode?, detail? })
 
 ## SSE Response Format — Always
 
+Each content chunk is a **JSON-encoded** string; the terminator is sent raw. The client `JSON.parse`s every `data:` line and stops on the literal `[DONE]`.
+
 ```
-data: <text chunk>\n\n
-data: [DONE]\n\n         ← always end with this
+data: "<JSON-encoded text chunk>"\n\n     ← e.g. data: "Hello, "  then  data: "world"
+data: [DONE]\n\n                          ← always end with this (raw, not JSON)
 ```
+
+JSON-encoding the chunk keeps embedded newlines in multi-line content (scripts) from being interpreted as SSE event boundaries.
 
 ---
 
@@ -110,11 +114,28 @@ const userId = req.query.userId as string;
 
 ---
 
+## Owning IDs — Derive From the Stored Doc, Not the Body
+
+For an operation on an **existing** document, resolve its owning/related resource IDs from the stored document — never from the request body. Accepting such IDs from the client lets a caller bind one resource to the wrong related resource.
+
+```typescript
+// ✅ Operation on an existing hooks batch: resolve the project from the stored doc
+const batch = await repo.findById(hooksId);
+const videoProjectId = batch.videoProjectId;        // stored, server-trusted
+
+// ❌ Trusting a client-supplied owning id on an existing doc
+const { videoProjectId } = req.body;                // can point at the wrong project
+```
+
+Only accept these IDs in the body for **create/generate** operations, where the document does not yet exist (e.g. `POST /v1/hooks/generate`, `POST /v1/packaging/generate-*`). For `select`/`regenerate`/edit on an existing doc, derive them. (Same spirit as the `userId` rule above, extended to relational ownership.)
+
+---
+
 ## Collection Names — Never Hardcode Strings
 
 ```typescript
 // ✅ Always use enum
-db.collection(Collection.TOPICS)
+db.collection(COLLECTIONS.TOPICS)
 
 // ❌ Never hardcode
 db.collection('topics')

@@ -17,7 +17,7 @@ Only repositories touch Firestore. No exceptions.
 // ✅ Only repositories touch Firestore
 class ContentRepository {
   async saveTopic(topic: Topic) {
-    await db.collection(Collection.TOPICS).doc(topic.id).set(topic);
+    await db.collection(COLLECTIONS.TOPICS).doc(topic.id).set(topic);
   }
 }
 
@@ -51,7 +51,7 @@ const id = randomUUID();
 // users → Firebase UID (req.userId from authMiddleware)
 
 // packaging → Firestore auto-ID (let Firestore generate)
-const ref = await db.collection(Collection.PACKAGING).add(data);
+const ref = await db.collection(COLLECTIONS.PACKAGING).add(data);
 ```
 
 ---
@@ -60,12 +60,12 @@ const ref = await db.collection(Collection.PACKAGING).add(data);
 
 ```typescript
 // ✅ Always
-Collection.TOPICS
-Collection.SCRIPTS
-Collection.USERS
-Collection.PACKAGING
-Collection.HOOKS
-Collection.VIDEO_PROJECTS
+COLLECTIONS.TOPICS
+COLLECTIONS.SCRIPTS
+COLLECTIONS.USERS
+COLLECTIONS.PACKAGING
+COLLECTIONS.HOOKS
+COLLECTIONS.VIDEO_PROJECTS
 
 // ❌ Never hardcode strings
 'topics'
@@ -82,13 +82,13 @@ All collection names are in `src/constants/collection.ts`. Add new collections t
 // ✅ Batch when saving multiple documents at once (e.g. 10 topics)
 const batch = db.batch();
 topics.forEach(topic => {
-  batch.set(db.collection(Collection.TOPICS).doc(topic.id), topic);
+  batch.set(db.collection(COLLECTIONS.TOPICS).doc(topic.id), topic);
 });
 await batch.commit();
 
 // ❌ Never loop individual writes
 for (const topic of topics) {
-  await db.collection(Collection.TOPICS).doc(topic.id).set(topic); // N writes, no atomicity
+  await db.collection(COLLECTIONS.TOPICS).doc(topic.id).set(topic); // N writes, no atomicity
 }
 ```
 
@@ -98,7 +98,7 @@ for (const topic of topics) {
 
 ```typescript
 // ✅ userId filter always first — security + index efficiency
-db.collection(Collection.TOPICS)
+db.collection(COLLECTIONS.TOPICS)
   .where('createdBy', '==', userId)
   .orderBy('createdAt', 'desc')
   .limit(20)

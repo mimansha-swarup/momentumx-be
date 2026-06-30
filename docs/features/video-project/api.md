@@ -66,11 +66,7 @@ or
       "research": { "status": "completed", "startedAt": null, "completedAt": "<timestamp>" },
       "script":   { "status": "not_started", "startedAt": null, "completedAt": null },
       "hooks":    { "status": "not_started", "startedAt": null, "completedAt": null },
-      "packaging": {
-        "status": "not_started", "startedAt": null, "completedAt": null,
-        "items": { "titles": "not_started", "description": "not_started",
-                   "thumbnail": "not_started", "shorts": "not_started" }
-      }
+      "packaging": { "status": "not_started", "startedAt": null, "completedAt": null }
     },
     "createdAt": "<timestamp>",
     "updatedAt": "<timestamp>"
@@ -154,11 +150,7 @@ Get a single Video Project with full pipeline state.
       "research": { "status": "completed", "startedAt": null, "completedAt": "<timestamp>" },
       "script":   { "status": "in_progress", "startedAt": "<timestamp>", "completedAt": null },
       "hooks":    { "status": "not_started", "startedAt": null, "completedAt": null },
-      "packaging": {
-        "status": "not_started", "startedAt": null, "completedAt": null,
-        "items": { "titles": "not_started", "description": "not_started",
-                   "thumbnail": "not_started", "shorts": "not_started" }
-      }
+      "packaging": { "status": "not_started", "startedAt": null, "completedAt": null }
     },
     "isDeleted": false,
     "createdAt": "<timestamp>",
