@@ -13,11 +13,12 @@ class HooksController {
         });
         this.select = asyncHandler(async (req, res) => {
             const hooksId = req.params.hooksId;
-            const { hookIndex, videoProjectId } = req.body;
-            if (hookIndex === undefined || hookIndex === null || !videoProjectId) {
-                throw BadRequest("hookIndex and videoProjectId are required");
+            const { hookIndex } = req.body;
+            if (hookIndex === undefined || hookIndex === null) {
+                throw BadRequest("hookIndex is required");
             }
-            const data = await this.service.select(req.userId, hooksId, hookIndex, videoProjectId);
+            // videoProjectId is NOT taken from the client — select resolves it from the stored hooks batch.
+            const data = await this.service.select(req.userId, hooksId, hookIndex);
             res.sendSuccess({ message: "Hook selected successfully", data });
         });
         this.regenerate = asyncHandler(async (req, res) => {

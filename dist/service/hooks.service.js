@@ -35,7 +35,7 @@ class HooksService {
             }
             return hooksBatch;
         };
-        this.select = async (userId, hooksId, hookIndex, videoProjectId) => {
+        this.select = async (userId, hooksId, hookIndex) => {
             const hooksBatch = await this.repo.findById(hooksId);
             if (!hooksBatch) {
                 throw NotFound("Hooks batch not found");
@@ -45,6 +45,12 @@ class HooksService {
             }
             if (hookIndex < 0 || hookIndex >= hooksBatch.hooks.length) {
                 throw BadRequest(`hookIndex out of range. Must be 0–${hooksBatch.hooks.length - 1}`);
+            }
+            // Resolve the project from the STORED batch — never trust a client-supplied id
+            // (mirrors regenerate; closes DA5: binding a batch to a non-origin project).
+            const videoProjectId = hooksBatch.videoProjectId;
+            if (!videoProjectId) {
+                throw BadRequest("Hooks batch is not linked to a video project");
             }
             const result = await this.videoProjectService.setSelectedHook(videoProjectId, hooksId, hookIndex, userId);
             try {

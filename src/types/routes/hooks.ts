@@ -16,7 +16,6 @@ export interface IGenerateHooksBody {
 
 export interface ISelectHookBody {
   hookIndex: number;
-  videoProjectId: string;
 }
 
 export interface IRegenerateHooksBody {
