@@ -14,3 +14,18 @@ export const GENERATION_CONFIG_SCRIPTS = {
 export const GENERATION_CONFIG_PACKAGING = {
     responseMimeType: "application/json",
 };
+export const GENERATION_CONFIG_SCORED_TITLES = {
+    responseMimeType: "application/json",
+    responseSchema: {
+        type: SchemaType.ARRAY,
+        items: {
+            type: SchemaType.OBJECT,
+            properties: {
+                title: { type: SchemaType.STRING },
+                score: { type: SchemaType.NUMBER },
+                reason: { type: SchemaType.STRING },
+            },
+            required: ["title", "score", "reason"],
+        },
+    },
+};

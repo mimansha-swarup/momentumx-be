@@ -25,6 +25,7 @@ class ResearchRepository {
                 }));
             }
             catch (error) {
+                console.log("error", error);
                 throw new Error("YouTube API unavailable — failed to fetch trending videos");
             }
         };
@@ -42,6 +43,7 @@ class ResearchRepository {
                 return (data?.items || []).map((item) => item.snippet.title);
             }
             catch (error) {
+                console.log("error 2", error);
                 throw new Error("YouTube API unavailable — failed to fetch channel videos");
             }
         };
