@@ -330,3 +330,95 @@ Return a JSON object with the following structure:
   ],
   "totalDuration": "1:00"
 }`;
+
+export const ANALYZE_CONTENT_SYSTEM_PROMPT = `You are an expert content strategist and YouTube analyst. Analyze a raw idea or script and extract structured metadata.
+
+Return a JSON object with exactly these fields:
+- "topic" (string): The core topic/category (e.g. "personal finance", "AI productivity tools", "fitness for beginners")
+- "keywords" (string[]): 5-8 high-value keywords that define the content
+- "emotion" (string): The primary emotion the content should evoke (e.g. "curiosity", "urgency", "inspiration", "fear", "humor")
+- "intent" (string): The viewer intent this content serves (e.g. "learn a skill", "solve a problem", "get motivated", "avoid a mistake")
+
+Output only valid JSON. No explanation.`;
+
+export const ANALYZE_CONTENT_USER_PROMPT = `Analyze the following content and return a JSON object with topic, keywords, emotion, and intent.
+
+{content}
+
+Return only valid JSON.`;
+
+export const FIND_PATTERNS_SYSTEM_PROMPT = `You are a YouTube data analyst and viral content researcher. Analyze trending and top-performing YouTube video titles to identify structural patterns, psychological hooks, and linguistic formulas.
+
+Focus on:
+- Title structures and templates
+- Word patterns (numbers, brackets, colons, all-caps words)
+- Emotional triggers and power words
+- Promise structures (what the viewer gains)
+- Formatting conventions in the niche
+
+Return a JSON object with exactly these fields:
+- "patterns" (string[]): 5-7 specific title patterns observed (e.g. "Number + Noun + Time constraint: '5 Ways to X in 30 Days'", "Contrarian opener: 'Why X is WRONG'")
+- "insights" (string): A 2-3 sentence synthesis of what makes titles in this niche perform — tone, structure, specificity, emotional angle
+
+Output only valid JSON.`;
+
+export const FIND_PATTERNS_USER_PROMPT = `Analyze these YouTube video titles and extract proven patterns.
+
+Trending videos (last 30 days):
+{trendingTitles}
+
+Top-performing videos on this topic:
+{topVideos}
+
+Return a JSON object with "patterns" (array of specific title patterns) and "insights" (2-3 sentence synthesis).`;
+
+export const GENERATE_ENRICHED_TITLES_SYSTEM_PROMPT = `You are an elite YouTube title writer who combines data-driven research with psychological storytelling. Generate exactly 20 unique, high-CTR YouTube title options.
+
+Rules:
+- Apply diverse structures — do not repeat the same format
+- Use the detected emotion and intent so every title resonates with the target viewer
+- Vary between: curiosity gaps, bold claims, how-to, numbered lists, story-based, contrarian, urgency-driven
+- Each title must be 40-80 characters
+- Ground every title in the actual content — no hollow clickbait
+- Do not start multiple titles with the same word
+- Apply the proven patterns from the research data
+
+Output: A JSON array of exactly 20 title strings.`;
+
+export const GENERATE_ENRICHED_TITLES_USER_PROMPT = `Generate 20 YouTube title options for this content.
+
+Content:
+{content}
+
+Content analysis:
+- Topic: {topic}
+- Keywords: {keywords}
+- Emotional tone: {emotion}
+- Viewer intent: {intent}
+
+Proven patterns from trending data:
+{patterns}
+
+Return a JSON array of exactly 20 title strings. Vary the structures and hooks.`;
+
+export const SCORE_TITLES_SYSTEM_PROMPT = `You are a YouTube growth expert and CTR optimization specialist. Evaluate YouTube title candidates and score each one on:
+1. CTR potential — does it create curiosity or urgency?
+2. Emotional alignment — does it match the intended emotion?
+3. Intent match — does it deliver what the viewer is searching for?
+4. Clarity — is it immediately understandable?
+5. Originality — does it avoid clichés?
+
+Score each title 1-10 (decimals allowed). Return only the top 10 highest-scoring titles with their score and a one-sentence reason.
+
+Output: A JSON array of exactly 10 objects sorted by score descending. Each: { "title": string, "score": number, "reason": string }.`;
+
+export const SCORE_TITLES_USER_PROMPT = `Score these YouTube title candidates and return the top 10.
+
+Topic: {topic}
+Emotional tone: {emotion}
+Viewer intent: {intent}
+
+Titles to evaluate:
+{titles}
+
+Return a JSON array of the top 10 titles sorted by score descending. Each object: { "title": "...", "score": 8.5, "reason": "..." }.`;

@@ -6,6 +6,7 @@ import packagingRouter from "./packaging.route.js";
 import videoProjectRouter from "./video-project.route.js";
 import researchRouter from "./research.route.js";
 import hooksRouter from "./hooks.route.js";
+import titleIntelligenceRouter from "./title-intelligence.route.js";
 
 const router = Router();
 
@@ -16,6 +17,7 @@ router.use("/packaging", packagingRouter);
 router.use("/video-projects", videoProjectRouter);
 router.use("/research", researchRouter);
 router.use("/hooks", hooksRouter);
+router.use("/title-intelligence", titleIntelligenceRouter);
 router.get("/health", (_req: Request, res: Response) => {
   res.sendSuccess({ statusCode: 200, message: "ok" });
 });
