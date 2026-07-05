@@ -1,26 +1,17 @@
 import { GenerationConfig } from "@google/generative-ai";
 import ResearchRepository from "../repository/research.repository.js";
 import { generateStreamingContent } from "../utlils/ai.js";
+import { GENERATION_CONFIG_SMART_TITLES } from "../constants/firebase.js";
 import {
-  GENERATION_CONFIG_PACKAGING,
-  GENERATION_CONFIG_TITLES,
-  GENERATION_CONFIG_SCORED_TITLES,
-} from "../constants/firebase.js";
-import {
-  ANALYZE_CONTENT_SYSTEM_PROMPT,
-  ANALYZE_CONTENT_USER_PROMPT,
-  FIND_PATTERNS_SYSTEM_PROMPT,
-  FIND_PATTERNS_USER_PROMPT,
-  GENERATE_ENRICHED_TITLES_SYSTEM_PROMPT,
-  GENERATE_ENRICHED_TITLES_USER_PROMPT,
-  SCORE_TITLES_SYSTEM_PROMPT,
-  SCORE_TITLES_USER_PROMPT,
+  GENERATE_SCORED_TITLES_SYSTEM_PROMPT,
+  GENERATE_SCORED_TITLES_USER_PROMPT,
 } from "../constants/prompt.js";
+import { performance } from "perf_hooks";
 import {
   ContentAnalysis,
-  PatternAnalysis,
-  ScoredTitle,
+  ScoredTitlesResult,
   SmartTitlesResult,
+  TitleTimings,
 } from "../types/routes/title-intelligence.js";
 
 class TitleIntelligenceService {
@@ -31,22 +22,17 @@ class TitleIntelligenceService {
     userPrompt: string,
     config: GenerationConfig
   ): Promise<T> {
-    console.log("hwew 2")
-    let result;
-    try {
-      result = await generateStreamingContent(systemPrompt, userPrompt, config);
-    } catch (err) {
-      console.error("generateStreamingContent threw:", err);
-      throw err;
-    }
-    console.log("here 3")
+    const result = await generateStreamingContent(systemPrompt, userPrompt, config);
     let accumulated = "";
     for await (const chunk of result.stream) {
       const part = chunk.text();
       if (part) accumulated += part;
     }
-    console.log("accumulated", accumulated)
-    return JSON.parse(accumulated) as T;
+    try {
+      return JSON.parse(accumulated) as T;
+    } catch {
+      throw new Error("LLM returned invalid JSON — check the prompt/generation config");
+    }
   }
 
   private buildContentBlock(idea: string, script: string): string {
@@ -56,92 +42,81 @@ class TitleIntelligenceService {
     return parts.join("\n\n");
   }
 
-  private analyzeInput = async (idea: string, script: string): Promise<ContentAnalysis> => {
-    const userPrompt = ANALYZE_CONTENT_USER_PROMPT
-      .replace("{content}", this.buildContentBlock(idea, script));
-      console.log("user prompt", userPrompt)
-    return this.callLLM<ContentAnalysis>(
-      ANALYZE_CONTENT_SYSTEM_PROMPT,
-      userPrompt,
-      GENERATION_CONFIG_PACKAGING
-    );
-  };
+  // The YouTube search query is derived straight from the raw input — no LLM topic
+  // extraction needed. The idea (or the script's opening) is a more specific, higher-
+  // relevance query than a generic derived topic like "personal finance".
+  private buildSearchQuery(idea: string, script: string): string {
+    const raw = (idea || script).trim();
+    return raw.slice(0, 120);
+  }
 
-  private findPatterns = async (
-    trendingTitles: string,
-    topVideoTitles: string
-  ): Promise<PatternAnalysis> => {
-    const userPrompt = FIND_PATTERNS_USER_PROMPT
-      .replace("{trendingTitles}", trendingTitles)
-      .replace("{topVideos}", topVideoTitles);
-    return this.callLLM<PatternAnalysis>(
-      FIND_PATTERNS_SYSTEM_PROMPT,
-      userPrompt,
-      GENERATION_CONFIG_PACKAGING
-    );
-  };
-
-  private generateTitles = async (
+  // Single LLM call: analyze the content, study the research titles, generate 20
+  // candidates, score them, and return the top 10 — plus the analysis and patterns
+  // it derived so the response keeps its research transparency.
+  private generateScoredTitles = async (
     idea: string,
     script: string,
-    analysis: ContentAnalysis,
-    patternAnalysis: PatternAnalysis
-  ): Promise<string[]> => {
-    const userPrompt = GENERATE_ENRICHED_TITLES_USER_PROMPT
+    trendingTitles: string,
+    topVideoTitles: string
+  ): Promise<ScoredTitlesResult> => {
+    const userPrompt = GENERATE_SCORED_TITLES_USER_PROMPT
       .replace("{content}", this.buildContentBlock(idea, script))
-      .replace("{topic}", analysis.topic)
-      .replace("{keywords}", analysis.keywords.join(", "))
-      .replace("{emotion}", analysis.emotion)
-      .replace("{intent}", analysis.intent)
-      .replace("{patterns}", patternAnalysis.patterns.join("\n"));
-    return this.callLLM<string[]>(
-      GENERATE_ENRICHED_TITLES_SYSTEM_PROMPT,
+      .replace("{trendingTitles}", trendingTitles)
+      .replace("{topVideos}", topVideoTitles);
+    return this.callLLM<ScoredTitlesResult>(
+      GENERATE_SCORED_TITLES_SYSTEM_PROMPT,
       userPrompt,
-      GENERATION_CONFIG_TITLES
+      GENERATION_CONFIG_SMART_TITLES
     );
   };
 
-  private scoreTitles = async (
-    titles: string[],
-    analysis: ContentAnalysis
-  ): Promise<ScoredTitle[]> => {
-    const userPrompt = SCORE_TITLES_USER_PROMPT
-      .replace("{titles}", titles.map((t, i) => `${i + 1}. ${t}`).join("\n"))
-      .replace("{topic}", analysis.topic)
-      .replace("{emotion}", analysis.emotion)
-      .replace("{intent}", analysis.intent);
-    return this.callLLM<ScoredTitle[]>(
-      SCORE_TITLES_SYSTEM_PROMPT,
-      userPrompt,
-      GENERATION_CONFIG_SCORED_TITLES
-    );
-  };
+  generate = async (
+    idea: string,
+    script: string
+  ): Promise<{ result: SmartTitlesResult; timings: TitleTimings }> => {
+    const t0 = performance.now();
 
-  generate = async (idea: string, script: string): Promise<SmartTitlesResult> => {
-    // Step 1: Analyze the input
-    console.log("heree")
-    const analysis = await this.analyzeInput(idea, script);
-    console.log("analysis", analysis)
+    // Step 1: Fetch YouTube data in parallel using a query derived from the raw input
+    const query = this.buildSearchQuery(idea, script);
+    const t1 = performance.now();
 
-    // Step 2: Fetch YouTube data in parallel using the detected topic
     const [trendingVideos, topVideos] = await Promise.all([
-      this.researchRepo.getTrendingVideos(analysis.topic),
-      this.researchRepo.getKeywordSignals(analysis.topic),
+      this.researchRepo.getTrendingVideos(query),
+      this.researchRepo.getKeywordSignals(query),
     ]);
 
     const trendingTitles = trendingVideos.map((v) => v.title).join("\n");
     const topVideoTitles = topVideos.map((v) => v.title).join("\n");
+    const t2 = performance.now();
 
-    // Step 3: Find patterns in the data
-    const patternAnalysis = await this.findPatterns(trendingTitles, topVideoTitles);
+    // Step 2: Single call — analyze, find patterns, generate 20, score, return top 10
+    const { analysis, patterns, insights = "", titles } = await this.generateScoredTitles(
+      idea,
+      script,
+      trendingTitles,
+      topVideoTitles
+    );
+    const t3 = performance.now();
 
-    // Step 4: Generate 20 titles
-    const titles = await this.generateTitles(idea, script, analysis, patternAnalysis);
+    const normalizedAnalysis: ContentAnalysis = {
+      topic: analysis?.topic ?? "",
+      keywords: Array.isArray(analysis?.keywords) ? analysis.keywords : [],
+      emotion: analysis?.emotion ?? "",
+      intent: analysis?.intent ?? "",
+    };
 
-    // Step 5: Score and return top 10
-    const scoredTitles = await this.scoreTitles(titles, analysis);
-
-    return { analysis, patterns: patternAnalysis, titles: scoredTitles };
+    const result: SmartTitlesResult = {
+      analysis: normalizedAnalysis,
+      patterns: { patterns, insights },
+      titles,
+    };
+    const timings: TitleTimings = {
+      analyzeMs: Math.round(t1 - t0),
+      youtubeMs: Math.round(t2 - t1),
+      mergedMs: Math.round(t3 - t2),
+      totalMs: Math.round(t3 - t0),
+    };
+    return { result, timings };
   };
 }
 

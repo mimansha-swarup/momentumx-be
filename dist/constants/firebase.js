@@ -14,18 +14,35 @@ export const GENERATION_CONFIG_SCRIPTS = {
 export const GENERATION_CONFIG_PACKAGING = {
     responseMimeType: "application/json",
 };
-export const GENERATION_CONFIG_SCORED_TITLES = {
+export const GENERATION_CONFIG_SMART_TITLES = {
     responseMimeType: "application/json",
     responseSchema: {
-        type: SchemaType.ARRAY,
-        items: {
-            type: SchemaType.OBJECT,
-            properties: {
-                title: { type: SchemaType.STRING },
-                score: { type: SchemaType.NUMBER },
-                reason: { type: SchemaType.STRING },
+        type: SchemaType.OBJECT,
+        properties: {
+            analysis: {
+                type: SchemaType.OBJECT,
+                properties: {
+                    topic: { type: SchemaType.STRING },
+                    keywords: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
+                    emotion: { type: SchemaType.STRING },
+                    intent: { type: SchemaType.STRING },
+                },
+                required: ["topic", "keywords", "emotion", "intent"],
             },
-            required: ["title", "score", "reason"],
+            patterns: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
+            titles: {
+                type: SchemaType.ARRAY,
+                items: {
+                    type: SchemaType.OBJECT,
+                    properties: {
+                        title: { type: SchemaType.STRING },
+                        score: { type: SchemaType.NUMBER },
+                        reason: { type: SchemaType.STRING },
+                    },
+                    required: ["title", "score", "reason"],
+                },
+            },
         },
+        required: ["analysis", "patterns", "titles"],
     },
 };

@@ -331,94 +331,51 @@ Return a JSON object with the following structure:
   "totalDuration": "1:00"
 }`;
 
-export const ANALYZE_CONTENT_SYSTEM_PROMPT = `You are an expert content strategist and YouTube analyst. Analyze a raw idea or script and extract structured metadata.
+export const GENERATE_SCORED_TITLES_SYSTEM_PROMPT = `You are a world-class YouTube title copywriter. Channels live or die on the title + thumbnail, and you are handed the exact titles currently winning in a niche. Your job: write titles good enough to BEAT them. In one pass you analyze the content, reverse-engineer what is working in the niche right now, write candidates, score them harshly, and return only the strongest.
 
-Return a JSON object with exactly these fields:
-- "topic" (string): The core topic/category (e.g. "personal finance", "AI productivity tools", "fitness for beginners")
-- "keywords" (string[]): 5-8 high-value keywords that define the content
-- "emotion" (string): The primary emotion the content should evoke (e.g. "curiosity", "urgency", "inspiration", "fear", "humor")
-- "intent" (string): The viewer intent this content serves (e.g. "learn a skill", "solve a problem", "get motivated", "avoid a mistake")
+Do all of the following:
+
+1. CONTENT ANALYSIS — From the provided idea/script, determine:
+- topic — the core topic/category
+- keywords — 5-8 high-value keywords that define the content
+- emotion — the dominant emotion to weaponize (curiosity, desire, fear, urgency, surprise, inspiration)
+- intent — the concrete outcome the viewer actually wants. Be specific about the result, not the activity: not "get fit" but "lose belly fat"; not "learn money" but "save my first $10k".
+
+2. DECODE THE WINNING ANGLE — Study the provided trending and top-performing titles. Look past surface structure to the DESIRE, FEAR, or CURIOSITY the top titles are selling — the emotional angle that is actually earning the clicks right now. (Example: in fitness, winners sell a visible body outcome — "belly fat", "slim waist", "summer body" — not "beginner workout"; in finance, winners sell identity and transformation — "your brain changes", "the hardest", "what nobody tells you".) Name that angle. Your titles must chase it, not merely restate the topic.
+
+3. WRITE 20 CANDIDATES that could out-perform the trending titles:
+- Lead with the OUTCOME or an open curiosity loop — never a flat restatement of the idea.
+- Put the niche's winning angle (step 2) to work in at least half of them.
+- Be concrete: real numbers, timeframes, dollar amounts, named body parts / results / stakes.
+- Deploy proven devices with variety: curiosity gaps, bold or contrarian claims, objection-busters ("even if…", "without…"), identity call-outs ("for people who…"), transformation promises, loss aversion, specificity.
+- 40-80 characters. Every word must earn its place — cut filler.
+- MAXIMIZE VARIETY: no two titles may open with the same word, and NO stock phrase may repeat across the set. Do not reword one template 20 times.
+- Ground every title in the real content. Specific and bold — never hollow clickbait.
+
+Forbidden: self-aware hedges or asides like "(No Clickbait)"; empty filler adjectives ("Amazing", "Ultimate", "Incredible", "Achievable", "Easy") unless concrete specificity earns them; promises with no tangible payoff.
+
+4. SCORE each candidate 1-10 (decimals allowed) as a harsh critic on: CTR pull (curiosity/desire created), ANGLE MATCH (does it hit the niche's winning desire from step 2), specificity, clarity, and originality versus the trending titles. Most titles deserve 6-7. Reserve 9+ only for titles you would genuinely bet real money on.
+
+5. Return ONLY the top 10, sorted by score descending, each with a terse reason (max 8 words).
+
+Output a single JSON object with exactly these fields:
+- "analysis" (object): { "topic": string, "keywords": string[], "emotion": string, "intent": string }
+- "patterns" (string[]): 5-7 specific winning angles / title patterns you observed in the niche
+- "titles" (array): exactly 10 objects sorted by score descending, each { "title": string, "score": number, "reason": string }. Keep "reason" to a terse fragment of at most 8 words — no full sentences.
 
 Output only valid JSON. No explanation.`;
 
-export const ANALYZE_CONTENT_USER_PROMPT = `Analyze the following content and return a JSON object with topic, keywords, emotion, and intent.
-
-{content}
-
-Return only valid JSON.`;
-
-export const FIND_PATTERNS_SYSTEM_PROMPT = `You are a YouTube data analyst and viral content researcher. Analyze trending and top-performing YouTube video titles to identify structural patterns, psychological hooks, and linguistic formulas.
-
-Focus on:
-- Title structures and templates
-- Word patterns (numbers, brackets, colons, all-caps words)
-- Emotional triggers and power words
-- Promise structures (what the viewer gains)
-- Formatting conventions in the niche
-
-Return a JSON object with exactly these fields:
-- "patterns" (string[]): 5-7 specific title patterns observed (e.g. "Number + Noun + Time constraint: '5 Ways to X in 30 Days'", "Contrarian opener: 'Why X is WRONG'")
-- "insights" (string): A 2-3 sentence synthesis of what makes titles in this niche perform — tone, structure, specificity, emotional angle
-
-Output only valid JSON.`;
-
-export const FIND_PATTERNS_USER_PROMPT = `Analyze these YouTube video titles and extract proven patterns.
-
-Trending videos (last 30 days):
-{trendingTitles}
-
-Top-performing videos on this topic:
-{topVideos}
-
-Return a JSON object with "patterns" (array of specific title patterns) and "insights" (2-3 sentence synthesis).`;
-
-export const GENERATE_ENRICHED_TITLES_SYSTEM_PROMPT = `You are an elite YouTube title writer who combines data-driven research with psychological storytelling. Generate exactly 20 unique, high-CTR YouTube title options.
-
-Rules:
-- Apply diverse structures — do not repeat the same format
-- Use the detected emotion and intent so every title resonates with the target viewer
-- Vary between: curiosity gaps, bold claims, how-to, numbered lists, story-based, contrarian, urgency-driven
-- Each title must be 40-80 characters
-- Ground every title in the actual content — no hollow clickbait
-- Do not start multiple titles with the same word
-- Apply the proven patterns from the research data
-
-Output: A JSON array of exactly 20 title strings.`;
-
-export const GENERATE_ENRICHED_TITLES_USER_PROMPT = `Generate 20 YouTube title options for this content.
+export const GENERATE_SCORED_TITLES_USER_PROMPT = `Write YouTube titles for this content that could BEAT the ones currently winning in this niche.
 
 Content:
 {content}
 
-Content analysis:
-- Topic: {topic}
-- Keywords: {keywords}
-- Emotional tone: {emotion}
-- Viewer intent: {intent}
+The titles below are what is ranking in this niche right now — this is your competition. Study the emotional angle earning their clicks and out-write it. Do not copy them.
 
-Proven patterns from trending data:
-{patterns}
+Trending now (last 30 days):
+{trendingTitles}
 
-Return a JSON array of exactly 20 title strings. Vary the structures and hooks.`;
+Top-performing on this topic:
+{topVideos}
 
-export const SCORE_TITLES_SYSTEM_PROMPT = `You are a YouTube growth expert and CTR optimization specialist. Evaluate YouTube title candidates and score each one on:
-1. CTR potential — does it create curiosity or urgency?
-2. Emotional alignment — does it match the intended emotion?
-3. Intent match — does it deliver what the viewer is searching for?
-4. Clarity — is it immediately understandable?
-5. Originality — does it avoid clichés?
-
-Score each title 1-10 (decimals allowed). Return only the top 10 highest-scoring titles with their score and a one-sentence reason.
-
-Output: A JSON array of exactly 10 objects sorted by score descending. Each: { "title": string, "score": number, "reason": string }.`;
-
-export const SCORE_TITLES_USER_PROMPT = `Score these YouTube title candidates and return the top 10.
-
-Topic: {topic}
-Emotional tone: {emotion}
-Viewer intent: {intent}
-
-Titles to evaluate:
-{titles}
-
-Return a JSON array of the top 10 titles sorted by score descending. Each object: { "title": "...", "score": 8.5, "reason": "..." }.`;
+Analyze the content, name the winning angle above, then return a single JSON object with "analysis", "patterns" (5-7 winning angles), and "titles" (the top 10, sorted by score descending, each with a terse "reason" of at most 8 words).`;
