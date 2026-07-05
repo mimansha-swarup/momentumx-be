@@ -341,7 +341,7 @@ Do all of the following:
 - emotion — the dominant emotion to weaponize (curiosity, desire, fear, urgency, surprise, inspiration)
 - intent — the concrete outcome the viewer actually wants. Be specific about the result, not the activity: not "get fit" but "lose belly fat"; not "learn money" but "save my first $10k".
 
-2. DECODE THE WINNING ANGLE — Study the provided trending and top-performing titles. Look past surface structure to the DESIRE, FEAR, or CURIOSITY the top titles are selling — the emotional angle that is actually earning the clicks right now. (Example: in fitness, winners sell a visible body outcome — "belly fat", "slim waist", "summer body" — not "beginner workout"; in finance, winners sell identity and transformation — "your brain changes", "the hardest", "what nobody tells you".) Name that angle. Your titles must chase it, not merely restate the topic.
+2. DECODE THE WINNING ANGLE — Study the provided trending and top-performing titles. Each is annotated with its view count: treat views as evidence and weight the angles of high-view titles far more heavily than low-view ones. Look past surface structure to the DESIRE, FEAR, or CURIOSITY the top titles are selling — the emotional angle that is actually earning the clicks right now. (Example: in fitness, winners sell a visible body outcome — "belly fat", "slim waist", "summer body" — not "beginner workout"; in finance, winners sell identity and transformation — "your brain changes", "the hardest", "what nobody tells you".) Name that angle. Your titles must chase it, not merely restate the topic.
 
 3. WRITE 20 CANDIDATES that could out-perform the trending titles:
 - Lead with the OUTCOME or an open curiosity loop — never a flat restatement of the idea.
@@ -370,7 +370,7 @@ export const GENERATE_SCORED_TITLES_USER_PROMPT = `Write YouTube titles for this
 Content:
 {content}
 
-The titles below are what is ranking in this niche right now — this is your competition. Study the emotional angle earning their clicks and out-write it. Do not copy them.
+The titles below are what is ranking in this niche right now — this is your competition, each annotated with its view count. Weight high-view titles as the strongest evidence of what works. Study the emotional angle earning their clicks and out-write it. Do not copy them.
 
 Trending now (last 30 days):
 {trendingTitles}

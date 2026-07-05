@@ -50,6 +50,59 @@ class TitleIntelligenceService {
     return raw.slice(0, 120);
   }
 
+  // The research pool decides what the model imitates — spam in, spam out. Drop
+  // Shorts/livestream junk, collapse duplicates, limit each channel to 2 titles
+  // (kills "EPISODE #11 / #12 / #13" series spam), and cap the list so only clean,
+  // distinct competitor titles reach the prompt. `seen` and `channelCounts` are
+  // shared across lists so the keyword list can't re-introduce trending entries.
+  private cleanVideos<T extends { title: string; channelTitle: string }>(
+    videos: T[],
+    seen: Set<string>,
+    channelCounts: Map<string, number>,
+    cap: number
+  ): T[] {
+    const isJunk = (t: string): boolean =>
+      /#shorts?\b/i.test(t) ||
+      /🔴|\bLIVE\b/.test(t) ||
+      t.trim().length < 15;
+    const normalize = (t: string): string =>
+      t.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+    const out: T[] = [];
+    for (const video of videos) {
+      if (out.length >= cap) break;
+      if (isJunk(video.title)) continue;
+      const key = normalize(video.title);
+      if (!key || seen.has(key)) continue;
+      const channelCount = channelCounts.get(video.channelTitle) ?? 0;
+      if (channelCount >= 2) continue;
+      seen.add(key);
+      channelCounts.set(video.channelTitle, channelCount + 1);
+      out.push(video);
+    }
+    return out;
+  }
+
+  // "1.2M views" tells the model which competitor titles actually earned clicks —
+  // without it, a 2M-view winner and a 3K-view also-ran read as equals.
+  private formatViews(views: number): string {
+    if (views >= 1_000_000) return `${(views / 1_000_000).toFixed(1)}M views`;
+    if (views >= 1_000) return `${Math.round(views / 1_000)}K views`;
+    return `${views} views`;
+  }
+
+  private formatTitleLines(
+    videos: { title: string; videoId: string }[],
+    stats: Record<string, number>
+  ): string {
+    return videos
+      .map((v) => {
+        const views = stats[v.videoId];
+        return views ? `${v.title} — ${this.formatViews(views)}` : v.title;
+      })
+      .join("\n");
+  }
+
   // Single LLM call: analyze the content, study the research titles, generate 20
   // candidates, score them, and return the top 10 — plus the analysis and patterns
   // it derived so the response keeps its research transparency.
@@ -85,8 +138,16 @@ class TitleIntelligenceService {
       this.researchRepo.getKeywordSignals(query),
     ]);
 
-    const trendingTitles = trendingVideos.map((v) => v.title).join("\n");
-    const topVideoTitles = topVideos.map((v) => v.title).join("\n");
+    const seen = new Set<string>();
+    const channelCounts = new Map<string, number>();
+    const cleanTrending = this.cleanVideos(trendingVideos, seen, channelCounts, 12);
+    const cleanTop = this.cleanVideos(topVideos, seen, channelCounts, 12);
+
+    const stats = await this.researchRepo.getVideoStats(
+      [...cleanTrending, ...cleanTop].map((v) => v.videoId)
+    );
+    const trendingTitles = this.formatTitleLines(cleanTrending, stats);
+    const topVideoTitles = this.formatTitleLines(cleanTop, stats);
     const t2 = performance.now();
 
     // Step 2: Single call — analyze, find patterns, generate 20, score, return top 10

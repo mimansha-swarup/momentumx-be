@@ -24,8 +24,13 @@ class TitleIntelligenceService {
                 this.researchRepo.getTrendingVideos(query),
                 this.researchRepo.getKeywordSignals(query),
             ]);
-            const trendingTitles = trendingVideos.map((v) => v.title).join("\n");
-            const topVideoTitles = topVideos.map((v) => v.title).join("\n");
+            const seen = new Set();
+            const channelCounts = new Map();
+            const cleanTrending = this.cleanVideos(trendingVideos, seen, channelCounts, 12);
+            const cleanTop = this.cleanVideos(topVideos, seen, channelCounts, 12);
+            const stats = await this.researchRepo.getVideoStats([...cleanTrending, ...cleanTop].map((v) => v.videoId));
+            const trendingTitles = this.formatTitleLines(cleanTrending, stats);
+            const topVideoTitles = this.formatTitleLines(cleanTop, stats);
             const t2 = performance.now();
             // Step 2: Single call — analyze, find patterns, generate 20, score, return top 10
             const { analysis, patterns, insights = "", titles } = await this.generateScoredTitles(idea, script, trendingTitles, topVideoTitles);
@@ -79,6 +84,51 @@ class TitleIntelligenceService {
     buildSearchQuery(idea, script) {
         const raw = (idea || script).trim();
         return raw.slice(0, 120);
+    }
+    // The research pool decides what the model imitates — spam in, spam out. Drop
+    // Shorts/livestream junk, collapse duplicates, limit each channel to 2 titles
+    // (kills "EPISODE #11 / #12 / #13" series spam), and cap the list so only clean,
+    // distinct competitor titles reach the prompt. `seen` and `channelCounts` are
+    // shared across lists so the keyword list can't re-introduce trending entries.
+    cleanVideos(videos, seen, channelCounts, cap) {
+        const isJunk = (t) => /#shorts?\b/i.test(t) ||
+            /🔴|\bLIVE\b/.test(t) ||
+            t.trim().length < 15;
+        const normalize = (t) => t.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+        const out = [];
+        for (const video of videos) {
+            if (out.length >= cap)
+                break;
+            if (isJunk(video.title))
+                continue;
+            const key = normalize(video.title);
+            if (!key || seen.has(key))
+                continue;
+            const channelCount = channelCounts.get(video.channelTitle) ?? 0;
+            if (channelCount >= 2)
+                continue;
+            seen.add(key);
+            channelCounts.set(video.channelTitle, channelCount + 1);
+            out.push(video);
+        }
+        return out;
+    }
+    // "1.2M views" tells the model which competitor titles actually earned clicks —
+    // without it, a 2M-view winner and a 3K-view also-ran read as equals.
+    formatViews(views) {
+        if (views >= 1000000)
+            return `${(views / 1000000).toFixed(1)}M views`;
+        if (views >= 1000)
+            return `${Math.round(views / 1000)}K views`;
+        return `${views} views`;
+    }
+    formatTitleLines(videos, stats) {
+        return videos
+            .map((v) => {
+            const views = stats[v.videoId];
+            return views ? `${v.title} — ${this.formatViews(views)}` : v.title;
+        })
+            .join("\n");
     }
 }
 export default TitleIntelligenceService;
