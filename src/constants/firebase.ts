@@ -18,6 +18,22 @@ export const GENERATION_CONFIG_PACKAGING: GenerationConfig = {
   responseMimeType: "application/json",
 };
 
+export const GENERATION_CONFIG_SCORED_TITLES: GenerationConfig = {
+  responseMimeType: "application/json",
+  responseSchema: {
+    type: SchemaType.ARRAY,
+    items: {
+      type: SchemaType.OBJECT,
+      properties: {
+        title: { type: SchemaType.STRING },
+        score: { type: SchemaType.NUMBER },
+        reason: { type: SchemaType.STRING },
+      },
+      required: ["title", "score", "reason"],
+    },
+  },
+};
+
 export const GENERATION_CONFIG_SMART_TITLES: GenerationConfig = {
   responseMimeType: "application/json",
   responseSchema: {

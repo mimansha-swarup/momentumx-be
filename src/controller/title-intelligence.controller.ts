@@ -22,6 +22,24 @@ class TitleIntelligenceController {
       res.sendError({ message: "Failed to generate smart titles", detail: error });
     }
   };
+
+  deepGenerate = async (req: Request, res: Response) => {
+    try {
+      const { idea, script } = req.body as GenerateSmartTitlesBody;
+
+      if (!idea && !script) {
+        return res.sendError({
+          message: "At least one of 'idea' or 'script' is required",
+          statusCode: 400,
+        });
+      }
+
+      const result = await this.service.deepGenerate(idea ?? "", script ?? "");
+      res.sendSuccess({ data: result, statusCode: 200 });
+    } catch (error) {
+      res.sendError({ message: "Failed to deep-generate smart titles", detail: error });
+    }
+  };
 }
 
 export default TitleIntelligenceController;

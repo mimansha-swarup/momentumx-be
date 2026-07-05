@@ -11,5 +11,6 @@ const controller = new TitleIntelligenceController(service);
 const router = Router();
 // router.use(authMiddleware);
 router.post("/generate", controller.generate);
+router.post("/deep-generate", controller.deepGenerate);
 
 export default router;
