@@ -2,6 +2,7 @@ import { Firestore } from "firebase-admin/firestore";
 import { COLLECTIONS } from "../constants/collection.js";
 import { db, firebase } from "../config/firebase.js";
 import { IPackagingItemStatuses, PackagingItemStatus, StaleReason } from "../types/routes/video-project.js";
+import { IPackaging } from "../types/routes/packaging.js";
 
 class PackagingRepository {
   private collection: `${COLLECTIONS}`;
@@ -23,7 +24,7 @@ class PackagingRepository {
     }
   };
 
-  get = async (packagingId: string) => {
+  get = async (packagingId: string): Promise<IPackaging | null> => {
     try {
       const doc = await this.db
         .collection(this.collection)
@@ -39,13 +40,13 @@ class PackagingRepository {
         data.createdAt = data.createdAt?.toDate();
       }
 
-      return data;
+      return (data as IPackaging) ?? null;
     } catch (error) {
       throw error;
     }
   };
 
-  getByUserId = async (userId: string) => {
+  getByUserId = async (userId: string): Promise<IPackaging[]> => {
     try {
       const snapshot = await this.db
         .collection(this.collection)
@@ -59,7 +60,7 @@ class PackagingRepository {
           ...data,
           id: doc.id,
           createdAt: data.createdAt?.toDate(),
-        };
+        } as IPackaging;
       });
     } catch (error) {
       throw error;
@@ -78,7 +79,7 @@ class PackagingRepository {
     }
   };
 
-  findByVideoProject = async (videoProjectId: string): Promise<Record<string, unknown> | null> => {
+  findByVideoProject = async (videoProjectId: string): Promise<IPackaging | null> => {
     try {
       const snapshot = await this.db
         .collection(this.collection)
@@ -89,7 +90,7 @@ class PackagingRepository {
       if (snapshot.empty) return null;
 
       const doc = snapshot.docs[0];
-      return { ...doc.data(), id: doc.id };
+      return { ...doc.data(), id: doc.id } as IPackaging;
     } catch (error) {
       throw error;
     }

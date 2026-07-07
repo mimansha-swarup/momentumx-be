@@ -230,7 +230,7 @@ class PackagingService {
             }
             // Resolve the selected hook from the STORED project on this packaging doc —
             // never from a client-supplied id (that would re-open the trust gap on regenerate).
-            const videoProjectId = pkg.videoProjectId;
+            const videoProjectId = pkg.videoProjectId ?? undefined;
             const validItems = ["title", "description", "thumbnail", "shorts"];
             if (!validItems.includes(item)) {
                 throw BadRequest(`item must be one of: ${validItems.join(", ")}`);
@@ -245,7 +245,7 @@ class PackagingService {
                 throw BadRequest("duration is required for shorts regeneration");
             }
             // Save previous item status for rollback on failure
-            const currentStatuses = (pkg.itemStatuses ?? {});
+            const currentStatuses = pkg.itemStatuses ?? {};
             const statusKey = item;
             const previousStatus = currentStatuses[statusKey] ?? "not_started";
             let result;
@@ -364,7 +364,7 @@ class PackagingService {
             const thumbnailText = Array.isArray(thumbnail)
                 ? thumbnail.map((d, i) => `${i + 1}. ${typeof d === "string" ? d : JSON.stringify(d)}`).join("\n")
                 : formatValue(thumbnail);
-            const shorts = pkg.shorts;
+            const shorts = pkg.shorts ?? undefined;
             const shortsText = shorts && Array.isArray(shorts.segments)
                 ? [
                     ...shorts.segments.map((s) => `[${s.startTime ?? ""}–${s.endTime ?? ""}] (${s.type ?? ""}) ${s.content ?? ""}`),

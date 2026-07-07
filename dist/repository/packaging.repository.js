@@ -25,7 +25,7 @@ class PackagingRepository {
                 if (data?.createdAt) {
                     data.createdAt = data.createdAt?.toDate();
                 }
-                return data;
+                return data ?? null;
             }
             catch (error) {
                 throw error;

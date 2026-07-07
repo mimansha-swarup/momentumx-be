@@ -338,10 +338,7 @@ class VideoProjectService {
       const packagingDoc = await this.packagingRepo.get(resourceId);
       if (packagingDoc) {
         // Canonical `thumbnail` is a string[] of design briefs; the hint is the first one.
-        const thumbnail = (packagingDoc as Record<string, unknown>).thumbnail as
-          | string[]
-          | undefined;
-        updates["thumbnailHint"] = thumbnail?.[0] ?? null;
+        updates["thumbnailHint"] = packagingDoc.thumbnail?.[0] ?? null;
       }
     }
 

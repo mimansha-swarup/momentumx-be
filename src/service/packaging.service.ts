@@ -12,6 +12,8 @@ import VideoProjectService from "./video-project.service.js";
 import { generateStreamingContent } from "../utlils/ai.js";
 import { firebase } from "../config/firebase.js";
 import { BadRequest, Forbidden, NotFound } from "../utlils/errors.js";
+import { IPackagingItemStatuses } from "../types/routes/video-project.js";
+import { PackagingItemName } from "../types/routes/packaging.js";
 
 class PackagingService {
   private repo: PackagingRepository;
@@ -278,9 +280,9 @@ class PackagingService {
     }
     // Resolve the selected hook from the STORED project on this packaging doc —
     // never from a client-supplied id (that would re-open the trust gap on regenerate).
-    const videoProjectId = (pkg as Record<string, unknown>).videoProjectId as string | undefined;
-    const validItems = ["title", "description", "thumbnail", "shorts"];
-    if (!validItems.includes(item)) {
+    const videoProjectId = pkg.videoProjectId ?? undefined;
+    const validItems: PackagingItemName[] = ["title", "description", "thumbnail", "shorts"];
+    if (!validItems.includes(item as PackagingItemName)) {
       throw BadRequest(`item must be one of: ${validItems.join(", ")}`);
     }
     if (!script) {
@@ -294,8 +296,8 @@ class PackagingService {
     }
 
     // Save previous item status for rollback on failure
-    const currentStatuses = (pkg.itemStatuses ?? {}) as Record<string, string>;
-    const statusKey = item as string;
+    const currentStatuses: Partial<IPackagingItemStatuses> = pkg.itemStatuses ?? {};
+    const statusKey = item as PackagingItemName;
     const previousStatus = currentStatuses[statusKey] ?? "not_started";
 
     let result: unknown;
@@ -332,7 +334,7 @@ class PackagingService {
     };
 
     // Check if clearing stale flag is needed
-    const allItems = ["title", "description", "thumbnail", "shorts"];
+    const allItems: PackagingItemName[] = ["title", "description", "thumbnail", "shorts"];
     const anyStillStale = allItems.some(
       (k) => k !== statusKey && currentStatuses[k] === "stale"
     );
@@ -429,7 +431,7 @@ class PackagingService {
       ? thumbnail.map((d: unknown, i: number) => `${i + 1}. ${typeof d === "string" ? d : JSON.stringify(d)}`).join("\n")
       : formatValue(thumbnail);
 
-    const shorts = pkg.shorts as { segments?: Array<{ startTime?: string; endTime?: string; type?: string; content?: string }>; totalDuration?: string } | undefined;
+    const shorts = pkg.shorts ?? undefined;
     const shortsText = shorts && Array.isArray(shorts.segments)
       ? [
           ...shorts.segments.map((s) => `[${s.startTime ?? ""}–${s.endTime ?? ""}] (${s.type ?? ""}) ${s.content ?? ""}`),
