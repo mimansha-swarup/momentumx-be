@@ -1,15 +1,23 @@
 import express from "express";
 import cors from "cors";
-// import { authMiddleware } from "./middleware/auth";
+import helmet from "helmet";
 import { responseFormatter } from "./middleware/response_formatter.js";
 import loggerMiddleware from "./middleware/logger_middleware.js";
 import rateLimiter from "./middleware/rate_limit.js";
 import { errorHandler } from "./middleware/error_handler.js";
 import rootRouter from "./routes/index.js";
 const app = express();
-// app.use(authMiddleware);
+// Comma-separated production origins; unset falls back to localhost-only (dev).
+const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+if (allowedOrigins.length === 0) {
+    console.warn("ALLOWED_ORIGINS not set — CORS restricted to localhost dev origins");
+}
+app.use(helmet());
 app.use(cors({
-    origin: true,
+    origin: allowedOrigins.length > 0 ? allowedOrigins : [/^https?:\/\/localhost(:\d+)?$/],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization']

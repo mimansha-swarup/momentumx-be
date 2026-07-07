@@ -17,7 +17,7 @@ export const authMiddleware = (req, res, next) => {
         next();
     })
         .catch(() => {
-        res.sendError({ message: "Unable to authenticate", statusCode: 403 });
+        res.sendError({ message: "Unable to authenticate", statusCode: 401 });
     });
 };
 export const sseAuthMiddleware = (req, res, next) => {
@@ -34,6 +34,6 @@ export const sseAuthMiddleware = (req, res, next) => {
         next();
     })
         .catch(() => {
-        res.sendError({ message: "Unable to authenticate", statusCode: 403 });
+        res.sendError({ message: "Unable to authenticate", statusCode: 401 });
     });
 };
