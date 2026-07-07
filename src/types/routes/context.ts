@@ -5,7 +5,10 @@
  * sessionContext: what exists so far in the video project — every field
  * degrades to null when the upstream step hasn't happened yet.
  */
+export type VideoFormat = "talking_head" | "faceless";
+
 export interface IChannelContext {
+  format: VideoFormat;
   niche: string | null;
   targetAudience: string | null;
   brandName: string | null;

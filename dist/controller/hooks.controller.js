@@ -5,9 +5,10 @@ class HooksController {
         this.service = service;
         this.generate = asyncHandler(async (req, res) => {
             const { videoProjectId, script } = req.body;
-            if (!videoProjectId || !script) {
-                throw BadRequest("videoProjectId and script are required");
+            if (!videoProjectId) {
+                throw BadRequest("videoProjectId is required");
             }
+            // script is optional — resolved server-side from the project when omitted.
             const data = await this.service.generate(req.userId, videoProjectId, script);
             res.sendSuccess({ message: "Hooks generated successfully", data });
         });
@@ -23,10 +24,8 @@ class HooksController {
         });
         this.regenerate = asyncHandler(async (req, res) => {
             const hooksId = req.params.hooksId;
+            // script is optional — resolved server-side from the stored batch's project.
             const { script } = req.body;
-            if (!script) {
-                throw BadRequest("script is required");
-            }
             const data = await this.service.regenerate(req.userId, hooksId, script);
             res.sendSuccess({ message: "Hooks regenerated successfully", data });
         });

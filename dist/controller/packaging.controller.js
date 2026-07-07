@@ -2,10 +2,12 @@ import { asyncHandler } from "../middleware/async_handler.js";
 import { BadRequest, NotFound } from "../utlils/errors.js";
 class PackagingController {
     constructor(service) {
+        // Title is script-native: a script must exist, but it can come from the
+        // body OR be resolved server-side from the project (phases 1D).
         this.generateTitle = asyncHandler(async (req, res) => {
             const { script, videoProjectId } = req.body;
-            if (!script) {
-                throw BadRequest("Script is required");
+            if (!script && !videoProjectId) {
+                throw BadRequest("Provide a script or a videoProjectId with a generated script");
             }
             const data = await this.service.generateTitle(req.userId, script, videoProjectId);
             res.sendSuccess({
@@ -13,11 +15,9 @@ class PackagingController {
                 data,
             });
         });
+        // Description degrades to best-available context — title only is enough.
         this.generateDescription = asyncHandler(async (req, res) => {
             const { script, title, videoProjectId } = req.body;
-            if (!script) {
-                throw BadRequest("Script is required");
-            }
             if (!title) {
                 throw BadRequest("Title is required");
             }
@@ -27,11 +27,9 @@ class PackagingController {
                 data,
             });
         });
+        // Thumbnail is a DOOR: works from title + channel context alone.
         this.generateThumbnail = asyncHandler(async (req, res) => {
             const { script, title, videoProjectId } = req.body;
-            if (!script) {
-                throw BadRequest("Script is required");
-            }
             if (!title) {
                 throw BadRequest("Title is required");
             }
@@ -49,7 +47,7 @@ class PackagingController {
             if (!duration) {
                 throw BadRequest("Duration is required");
             }
-            const data = await this.service.generateShorts(script, duration);
+            const data = await this.service.generateShorts(req.userId, script, duration);
             res.sendSuccess({
                 message: "Shorts script generated successfully",
                 data,
@@ -83,10 +81,9 @@ class PackagingController {
         });
         this.regenerateItem = asyncHandler(async (req, res) => {
             const { packagingId, item } = req.params;
+            // script is optional — the service resolves the stored project script
+            // server-side; per-item requirements are validated in the service.
             const { script, title, duration } = req.body;
-            if (!script) {
-                throw BadRequest("script is required");
-            }
             const data = await this.service.regenerateItem(req.userId, packagingId, item, script, title, duration);
             res.sendSuccess({ message: "Packaging item regenerated successfully", data });
         });

@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { SCRIPT_SYSTEM_PROMPT, SCRIPT_USER_PROMPT, TOPIC_SYSTEM_PROMPT, TOPIC_USER_PROMPT, } from "../constants/prompt.js";
 import { generateContent, generateStreamingContent } from "../utlils/ai.js";
+import { SCRIPT_FORMAT_STYLE, resolveVideoFormat } from "../utlils/prompt-blocks.js";
 import { formatCreatorsData, formatGeneratedScript, formatGeneratedTitle, getClusteredTitles, } from "../utlils/content.js";
 import { GENERATION_CONFIG_SCRIPTS, GENERATION_CONFIG_TITLES, } from "../constants/firebase.js";
 import { firebase } from "../config/firebase.js";
@@ -151,7 +152,8 @@ class ContentService {
                 // project.scriptId is set would orphan the old script doc.
                 const scriptId = project.scriptId ?? randomUUID();
                 const userPrompt = this.buildScriptUserPrompt(userRecord, topic.title);
-                const result = await generateStreamingContent(SCRIPT_SYSTEM_PROMPT, userPrompt, GENERATION_CONFIG_SCRIPTS);
+                const systemPrompt = SCRIPT_SYSTEM_PROMPT.replace("{videoFormatStyle}", SCRIPT_FORMAT_STYLE[resolveVideoFormat(userRecord?.format)]);
+                const result = await generateStreamingContent(systemPrompt, userPrompt, GENERATION_CONFIG_SCRIPTS);
                 let accumulatedRes = "";
                 try {
                     await vps.startStep(projectId, "script", userId);
@@ -340,7 +342,8 @@ class ContentService {
             }
             const userRecord = await this.userRepo.get(userId);
             const userPrompt = this.buildScriptUserPrompt(userRecord, scriptDoc.title);
-            const result = await generateStreamingContent(SCRIPT_SYSTEM_PROMPT, userPrompt, GENERATION_CONFIG_SCRIPTS);
+            const systemPrompt = SCRIPT_SYSTEM_PROMPT.replace("{videoFormatStyle}", SCRIPT_FORMAT_STYLE[resolveVideoFormat(userRecord?.format)]);
+            const result = await generateStreamingContent(systemPrompt, userPrompt, GENERATION_CONFIG_SCRIPTS);
             let accumulatedRes = "";
             for await (const chunk of result.stream) {
                 const part = chunk.text();

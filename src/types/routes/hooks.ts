@@ -11,7 +11,8 @@ export interface IHooksBatch {
 
 export interface IGenerateHooksBody {
   videoProjectId: string;
-  script: string;
+  // Optional since 1D — resolved server-side from the project when omitted.
+  script?: string;
 }
 
 export interface ISelectHookBody {
@@ -19,7 +20,8 @@ export interface ISelectHookBody {
 }
 
 export interface IRegenerateHooksBody {
-  script: string;
+  // Optional since 1D — resolved server-side from the stored batch's project.
+  script?: string;
 }
 
 export interface IHooksFeedbackBody {

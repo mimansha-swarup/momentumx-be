@@ -3,6 +3,7 @@ import ContentRepository from "../repository/content.repository.js";
 import HooksRepository from "../repository/hooks.repository.js";
 import VideoProjectService from "./video-project.service.js";
 import { NotFound } from "../utlils/errors.js";
+import { resolveVideoFormat } from "../utlils/prompt-blocks.js";
 import {
   IAssembledContext,
   IAssembleOptions,
@@ -75,6 +76,7 @@ class ContextService {
       : [];
 
     const base: IChannelContext = {
+      format: resolveVideoFormat(record.format),
       niche: record.niche ?? null,
       targetAudience: record.targetAudience ?? null,
       brandName: record.brandName ?? null,

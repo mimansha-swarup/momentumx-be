@@ -12,6 +12,7 @@ import ContentRepository from "../repository/content.repository.js";
 import UserRepository from "../repository/user.repository.js";
 import VideoProjectService from "./video-project.service.js";
 import { generateContent, generateStreamingContent } from "../utlils/ai.js";
+import { SCRIPT_FORMAT_STYLE, resolveVideoFormat } from "../utlils/prompt-blocks.js";
 import {
   formatCreatorsData,
   formatGeneratedScript,
@@ -210,9 +211,13 @@ class ContentService {
       const scriptId = project.scriptId ?? randomUUID();
 
       const userPrompt = this.buildScriptUserPrompt(userRecord, topic.title);
+      const systemPrompt = SCRIPT_SYSTEM_PROMPT.replace(
+        "{videoFormatStyle}",
+        SCRIPT_FORMAT_STYLE[resolveVideoFormat(userRecord?.format)]
+      );
 
       const result = await generateStreamingContent(
-        SCRIPT_SYSTEM_PROMPT,
+        systemPrompt,
         userPrompt,
         GENERATION_CONFIG_SCRIPTS,
       );
@@ -440,9 +445,13 @@ class ContentService {
 
     const userRecord = await this.userRepo.get(userId);
     const userPrompt = this.buildScriptUserPrompt(userRecord, scriptDoc.title);
+    const systemPrompt = SCRIPT_SYSTEM_PROMPT.replace(
+      "{videoFormatStyle}",
+      SCRIPT_FORMAT_STYLE[resolveVideoFormat(userRecord?.format)]
+    );
 
     const result = await generateStreamingContent(
-      SCRIPT_SYSTEM_PROMPT,
+      systemPrompt,
       userPrompt,
       GENERATION_CONFIG_SCRIPTS,
     );

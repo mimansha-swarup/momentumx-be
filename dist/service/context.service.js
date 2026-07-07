@@ -1,4 +1,5 @@
 import { NotFound } from "../utlils/errors.js";
+import { resolveVideoFormat } from "../utlils/prompt-blocks.js";
 const EMPTY_SESSION = {
     videoProjectId: null,
     topicId: null,
@@ -45,6 +46,7 @@ class ContextService {
                 ? record.competitors
                 : [];
             const base = {
+                format: resolveVideoFormat(record.format),
                 niche: record.niche ?? null,
                 targetAudience: record.targetAudience ?? null,
                 brandName: record.brandName ?? null,

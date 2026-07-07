@@ -94,6 +94,7 @@ describe("ContextService.assemble — degradation matrix", () => {
     const ctx = await service.assemble(USER_ID, { videoProjectId: "proj-1" });
 
     expect(ctx.channelContext).toEqual({
+      format: "talking_head",
       niche: "AI productivity",
       targetAudience: "solo founders",
       brandName: "MomentumX",
@@ -188,6 +189,15 @@ describe("ContextService.assemble — degradation matrix", () => {
     expect(ctx.channelContext.topTitles).toEqual([]);
     expect(ctx.channelContext.competitorUrls).toEqual([]);
     expect(ctx.channelContext.competitorTitles).toEqual([]);
+    expect(ctx.channelContext.format).toBe("talking_head");
+  });
+
+  it("respects a stored faceless format; unknown values default to talking_head", async () => {
+    userRepo.get = jest.fn().mockResolvedValue({ ...userDoc, format: "faceless" });
+    expect((await service.assemble(USER_ID)).channelContext.format).toBe("faceless");
+
+    userRepo.get = jest.fn().mockResolvedValue({ ...userDoc, format: "cinematic" });
+    expect((await service.assemble(USER_ID)).channelContext.format).toBe("talking_head");
   });
 
   describe("overrides (pre-persist onboarding context)", () => {

@@ -3,15 +3,31 @@ import { GENERATION_CONFIG_PACKAGING } from "../constants/firebase.js";
 import { generateStreamingContent } from "../utlils/ai.js";
 import { BadRequest, Forbidden, NotFound } from "../utlils/errors.js";
 class HooksService {
-    constructor(repo, videoProjectService) {
+    constructor(repo, videoProjectService, contextService) {
         this.repo = repo;
         this.videoProjectService = videoProjectService;
+        this.contextService = contextService;
+        // Body script (if sent) wins; otherwise resolve the project's stored script
+        // server-side (phases 1D). Hooks are script-native — no script anywhere is a 400.
+        this.resolveScript = async (userId, videoProjectId, explicitScript) => {
+            if (explicitScript?.trim()) {
+                return explicitScript;
+            }
+            if (this.contextService) {
+                const ctx = await this.contextService.assemble(userId, { videoProjectId });
+                if (ctx.sessionContext.script) {
+                    return ctx.sessionContext.script;
+                }
+            }
+            throw BadRequest("script is required — none found on this project");
+        };
         this.generate = async (userId, videoProjectId, script) => {
             const project = await this.videoProjectService.getById(videoProjectId, userId);
             if (project.pipeline.script.status !== "completed") {
                 throw BadRequest("Script must be completed before generating hooks");
             }
-            const userPrompt = GENERATE_HOOKS_PROMPT.replace("{script}", script);
+            const resolvedScript = await this.resolveScript(userId, videoProjectId, script);
+            const userPrompt = GENERATE_HOOKS_PROMPT.replace("{script}", resolvedScript);
             const result = await generateStreamingContent(HOOKS_SYSTEM_PROMPT, userPrompt, GENERATION_CONFIG_PACKAGING);
             let accumulatedRes = "";
             for await (const chunk of result.stream) {
@@ -69,10 +85,13 @@ class HooksService {
             if (hooksBatch.createdBy !== userId) {
                 throw Forbidden();
             }
-            if (!script) {
+            if (!script && !hooksBatch.videoProjectId) {
                 throw BadRequest("script is required");
             }
-            const userPrompt = GENERATE_HOOKS_PROMPT.replace("{script}", script);
+            const resolvedScript = script?.trim()
+                ? script
+                : await this.resolveScript(userId, hooksBatch.videoProjectId, script);
+            const userPrompt = GENERATE_HOOKS_PROMPT.replace("{script}", resolvedScript);
             const result = await generateStreamingContent(HOOKS_SYSTEM_PROMPT, userPrompt, GENERATION_CONFIG_PACKAGING);
             let accumulatedRes = "";
             for await (const chunk of result.stream) {

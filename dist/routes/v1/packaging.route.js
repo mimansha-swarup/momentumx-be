@@ -6,14 +6,18 @@ import VideoProjectRepository from "../../repository/video-project.repository.js
 import VideoProjectService from "../../service/video-project.service.js";
 import ContentRepository from "../../repository/content.repository.js";
 import HooksRepository from "../../repository/hooks.repository.js";
+import UserRepository from "../../repository/user.repository.js";
+import ContextService from "../../service/context.service.js";
 import { authMiddleware } from "../../middleware/auth.js";
 const router = Router();
 const packagingRepository = new PackagingRepository();
 const videoProjectRepo = new VideoProjectRepository();
 const contentRepo = new ContentRepository();
 const hooksRepository = new HooksRepository();
+const userRepository = new UserRepository();
 const videoProjectService = new VideoProjectService(videoProjectRepo, contentRepo, packagingRepository);
-const packagingService = new PackagingService(packagingRepository, hooksRepository, videoProjectService);
+const contextService = new ContextService(userRepository, contentRepo, hooksRepository, videoProjectService);
+const packagingService = new PackagingService(packagingRepository, hooksRepository, videoProjectService, contextService);
 const packagingController = new PackagingController(packagingService);
 router.use(authMiddleware);
 // Generation endpoints

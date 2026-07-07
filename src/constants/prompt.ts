@@ -125,7 +125,7 @@ These topics should:
 Please follow the expert system prompt's structure to output 10 optimized titles.
 `;
 
-export const SCRIPT_SYSTEM_PROMPT = `You are a professional YouTube scriptwriter specializing in faceless, documentary-style videos that maximize viewer retention. 
+export const SCRIPT_SYSTEM_PROMPT = `You are a professional YouTube scriptwriter specializing in {videoFormatStyle} that maximize viewer retention.
 
 Your scripts are emotionally compelling, structured for storytelling, and written in a human, first-person tone.
 
@@ -208,12 +208,14 @@ Rules:
 - Write in a conversational, human tone
 - Use mild emphasis with CAPS where appropriate
 - Each title should have a distinct angle or approach
+- If creator context is provided, match the channel's voice and audience
+
+{creatorContext}
 
 Video Script:
 {script}
 
-Opening Hook (if creator has selected a preferred hook):
-{selectedHook}
+{hookSection}
 
 Return a JSON object with the following structure:
 {
@@ -223,7 +225,7 @@ Return a JSON object with the following structure:
     {"title": "I Tried 10 Morning Hacks for 30 Days — Here's What Actually Works", "characterCount": 65}
   ]
 }`;
-export const GENERATE_DESCRIPTION_PROMPT = `Based on the following video script and video title, generate an optimized YouTube video description.
+export const GENERATE_DESCRIPTION_PROMPT = `Based on the following video title and available context, generate an optimized YouTube video description.
 
 Video Title: {title}
 
@@ -235,19 +237,21 @@ Rules:
 - Include a clear call-to-action
 - Keep it between 200-500 words
 - Use line breaks for readability
+- If creator context is provided, match the channel's voice and audience
+- If no script is provided, write from the title, hook, and creator context — do not invent specific script details, names, or numbers
 
-Video Script:
-{script}
+{creatorContext}
 
-Opening Hook (if creator has selected a preferred hook):
-{selectedHook}
+{scriptSection}
+
+{hookSection}
 
 Return a JSON object with the following structure:
 {
   "description": "The full YouTube description text"
 }`;
 
-export const GENERATE_THUMBNAIL_PROMPT = `Based on the following video script and video title, generate THREE detailed thumbnail creation instructions with different visual approaches.
+export const GENERATE_THUMBNAIL_PROMPT = `Based on the following video title and available context, generate THREE detailed thumbnail creation instructions with different visual approaches.
 
 Video Title: {title}
 
@@ -256,16 +260,17 @@ Rules:
 - Ensure thumbnail visually represents the video title
 - Specify text overlay (max 3-5 words, large and readable)
 - Suggest colors and contrast for maximum visibility
-- Do not suggest faces, people, or facial expressions — these are faceless videos; use text, graphics, icons, and scene imagery
+{formatDirective}
 - Consider mobile viewing (text must be readable on small screens)
 - Include style references if helpful
 - Each variation should have a distinct visual approach
+- If no script is provided, design from the title, hook, and creator context — do not invent specific script details
 
-Video Script:
-{script}
+{creatorContext}
 
-Opening Hook (if creator has selected a preferred hook):
-{selectedHook}
+{scriptSection}
+
+{hookSection}
 
 Return a JSON object with the following structure:
 {
@@ -315,6 +320,9 @@ Rules:
 - Script MUST fit within {duration} seconds when spoken
 - Scale the number of segments to fit the duration: ~2 segments for 15s, ~3 for 30s, ~5 for 60s
 - Each segment "type" must be one of: "hook", "point", "transition", "cta"
+- If creator context is provided, match the channel's voice and audience
+
+{creatorContext}
 
 Video Script:
 {script}

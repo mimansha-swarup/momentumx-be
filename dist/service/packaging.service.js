@@ -3,10 +3,12 @@ import { GENERATION_CONFIG_PACKAGING } from "../constants/firebase.js";
 import { generateStreamingContent } from "../utlils/ai.js";
 import { firebase } from "../config/firebase.js";
 import { BadRequest, Forbidden, NotFound } from "../utlils/errors.js";
+import { buildCreatorContextBlock, buildHookSection, buildScriptSection, THUMBNAIL_FORMAT_DIRECTIVE, resolveVideoFormat, } from "../utlils/prompt-blocks.js";
 class PackagingService {
-    constructor(repo, hooksRepo, videoProjectService) {
+    constructor(repo, hooksRepo, videoProjectService, contextService) {
         this.hooksRepo = hooksRepo;
         this.videoProjectService = videoProjectService;
+        this.contextService = contextService;
         this.resolveSelectedHook = async (videoProjectId, userId) => {
             if (!videoProjectId || !this.videoProjectService)
                 return "";
@@ -17,6 +19,26 @@ class PackagingService {
             if (!hooksBatch)
                 return "";
             return hooksBatch.hooks?.[project.selectedHookIndex] ?? "";
+        };
+        // Best-available context (phases 1D): channel context always, script/hook
+        // resolved server-side from the project when not supplied by the client.
+        // An explicit body script wins over the stored one (supports edited-but-
+        // unsaved scripts and keeps existing calls behaving identically).
+        this.resolveGenerationInputs = async (userId, videoProjectId, explicitScript) => {
+            if (this.contextService) {
+                const ctx = await this.contextService.assemble(userId, videoProjectId ? { videoProjectId } : {});
+                return {
+                    channel: ctx.channelContext,
+                    script: explicitScript?.trim()
+                        ? explicitScript
+                        : ctx.sessionContext.script ?? "",
+                    hook: ctx.sessionContext.selectedHook ?? "",
+                };
+            }
+            // Legacy path (no context service wired, e.g. older tests): behavior
+            // identical to pre-1D — explicit script only, hook from the project.
+            const hook = await this.resolveSelectedHook(videoProjectId, userId);
+            return { channel: null, script: explicitScript ?? "", hook };
         };
         this.generateContent = async (userPrompt) => {
             const result = await generateStreamingContent(PACKAGING_SYSTEM_PROMPT, userPrompt, GENERATION_CONFIG_PACKAGING);
@@ -30,57 +52,47 @@ class PackagingService {
             return JSON.parse(accumulatedRes);
         };
         this.generateTitle = async (userId, script, videoProjectId) => {
-            try {
-                const selectedHook = await this.resolveSelectedHook(videoProjectId, userId);
-                const userPrompt = GENERATE_TITLE_PROMPT
-                    .replace("{script}", script)
-                    .replace("{selectedHook}", selectedHook);
-                const result = await this.generateContent(userPrompt);
-                return result;
+            const inputs = await this.resolveGenerationInputs(userId, videoProjectId, script);
+            if (!inputs.script) {
+                throw BadRequest("Script is required — provide one or use a project with a generated script");
             }
-            catch (error) {
-                throw error;
-            }
+            const userPrompt = GENERATE_TITLE_PROMPT
+                .replace("{creatorContext}", buildCreatorContextBlock(inputs.channel))
+                .replace("{script}", inputs.script)
+                .replace("{hookSection}", buildHookSection(inputs.hook));
+            return this.generateContent(userPrompt);
         };
         this.generateDescription = async (userId, script, title, videoProjectId) => {
-            try {
-                const selectedHook = await this.resolveSelectedHook(videoProjectId, userId);
-                const userPrompt = GENERATE_DESCRIPTION_PROMPT
-                    .replace("{script}", script)
-                    .replace("{title}", title)
-                    .replace("{selectedHook}", selectedHook);
-                const result = await this.generateContent(userPrompt);
-                return result;
-            }
-            catch (error) {
-                throw error;
-            }
+            const inputs = await this.resolveGenerationInputs(userId, videoProjectId, script);
+            const userPrompt = GENERATE_DESCRIPTION_PROMPT
+                .replace("{title}", title)
+                .replace("{creatorContext}", buildCreatorContextBlock(inputs.channel))
+                .replace("{scriptSection}", buildScriptSection(inputs.script))
+                .replace("{hookSection}", buildHookSection(inputs.hook));
+            return this.generateContent(userPrompt);
         };
         this.generateThumbnail = async (userId, script, title, videoProjectId) => {
-            try {
-                const selectedHook = await this.resolveSelectedHook(videoProjectId, userId);
-                const userPrompt = GENERATE_THUMBNAIL_PROMPT
-                    .replace("{script}", script)
-                    .replace("{title}", title)
-                    .replace("{selectedHook}", selectedHook);
-                const result = await this.generateContent(userPrompt);
-                return result;
-            }
-            catch (error) {
-                throw error;
-            }
+            const inputs = await this.resolveGenerationInputs(userId, videoProjectId, script);
+            const format = resolveVideoFormat(inputs.channel?.format);
+            const userPrompt = GENERATE_THUMBNAIL_PROMPT
+                .replace("{title}", title)
+                .replace("{formatDirective}", THUMBNAIL_FORMAT_DIRECTIVE[format])
+                .replace("{creatorContext}", buildCreatorContextBlock(inputs.channel))
+                .replace("{scriptSection}", buildScriptSection(inputs.script))
+                .replace("{hookSection}", buildHookSection(inputs.hook));
+            return this.generateContent(userPrompt);
         };
-        this.generateShorts = async (script, duration) => {
-            try {
-                const userPrompt = GENERATE_SHORTS_PROMPT
-                    .replace("{script}", script)
-                    .replace(/{duration}/g, duration.toString());
-                const result = await this.generateContent(userPrompt);
-                return result;
+        this.generateShorts = async (userId, script, duration) => {
+            if (!script) {
+                throw BadRequest("Script is required");
             }
-            catch (error) {
-                throw error;
-            }
+            // Shorts has no project linkage yet (P6A) — channel context only.
+            const inputs = await this.resolveGenerationInputs(userId, undefined, script);
+            const userPrompt = GENERATE_SHORTS_PROMPT
+                .replace("{creatorContext}", buildCreatorContextBlock(inputs.channel))
+                .replace("{script}", inputs.script)
+                .replace(/{duration}/g, duration.toString());
+            return this.generateContent(userPrompt);
         };
         this.normalizeField = (field, raw) => {
             const wrapper = (raw ?? {});
@@ -228,14 +240,20 @@ class PackagingService {
             if (pkg.createdBy !== userId) {
                 throw Forbidden();
             }
-            // Resolve the selected hook from the STORED project on this packaging doc —
-            // never from a client-supplied id (that would re-open the trust gap on regenerate).
+            // Resolve the selected hook (and stored script) from the STORED project on
+            // this packaging doc — never from a client-supplied id (that would re-open
+            // the trust gap on regenerate).
             const videoProjectId = pkg.videoProjectId ?? undefined;
             const validItems = ["title", "description", "thumbnail", "shorts"];
             if (!validItems.includes(item)) {
                 throw BadRequest(`item must be one of: ${validItems.join(", ")}`);
             }
-            if (!script) {
+            // Script requirements are per-item: title/shorts are script-native;
+            // description/thumbnail degrade to best-available context (phases 1D).
+            // The body script (if sent) wins; otherwise the project's stored script
+            // is resolved server-side, so no body script is needed at all.
+            const resolved = await this.resolveGenerationInputs(userId, videoProjectId, script);
+            if ((item === "title" || item === "shorts") && !resolved.script) {
                 throw BadRequest("script is required");
             }
             if ((item === "description" || item === "thumbnail") && !title) {
@@ -252,19 +270,19 @@ class PackagingService {
             let fieldKey;
             try {
                 if (item === "title") {
-                    result = await this.generateTitle(userId, script, videoProjectId);
+                    result = await this.generateTitle(userId, resolved.script, videoProjectId);
                     fieldKey = "titles";
                 }
                 else if (item === "description") {
-                    result = await this.generateDescription(userId, script, title, videoProjectId);
+                    result = await this.generateDescription(userId, resolved.script || undefined, title, videoProjectId);
                     fieldKey = "description";
                 }
                 else if (item === "thumbnail") {
-                    result = await this.generateThumbnail(userId, script, title, videoProjectId);
+                    result = await this.generateThumbnail(userId, resolved.script || undefined, title, videoProjectId);
                     fieldKey = "thumbnail";
                 }
                 else {
-                    result = await this.generateShorts(script, duration);
+                    result = await this.generateShorts(userId, resolved.script, duration);
                     fieldKey = "shorts";
                 }
             }

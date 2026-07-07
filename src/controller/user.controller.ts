@@ -23,6 +23,13 @@ class UserController {
       throw BadRequest(`Missing required fields: ${missing.join(", ")}`);
     }
 
+    // Optional video format (phases 1C decision) — defaults to talking_head
+    // downstream; only validate when the client sends it.
+    const { format } = req.body;
+    if (format !== undefined && format !== "talking_head" && format !== "faceless") {
+      throw BadRequest('format must be "talking_head" or "faceless"');
+    }
+
     const payload = await this.service.createOnboardingData(
       req.userId,
       req.body
