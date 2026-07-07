@@ -107,6 +107,9 @@ class ContentService {
       const similarTitles = await getClusteredTitles(userId, this.repo);
 
       const userRecord = await this.userRepo.get(userId);
+      if (!userRecord) {
+        throw NotFound("User not found");
+      }
       let userPrompt = TOPIC_USER_PROMPT
         .replace(/{niche}/g, userRecord?.niche ?? "")
         .replace("{website}", userRecord?.website ?? "")

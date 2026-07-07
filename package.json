@@ -5,7 +5,7 @@
   "main": "src/server.ts",
   "type": "module",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json",
     "test": "jest --config=jest.config.cjs",
     "vercel-build": "echo 'Using pre-built dist folder'",
     "start": "node dist/server.js",

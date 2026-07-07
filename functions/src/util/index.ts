@@ -14,4 +14,7 @@ export const enum COLLECTIONS {
   USERS = "users",
   SCRIPTS = "scripts",
   TOPICS = "topics",
+  PACKAGING = "packaging",
+  VIDEO_PROJECTS = "videoProjects",
+  HOOKS = "hooks",
 }

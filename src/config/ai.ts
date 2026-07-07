@@ -1,6 +1,10 @@
 import { GenerationConfig, GoogleGenerativeAI } from "@google/generative-ai";
 
-const genAI = new GoogleGenerativeAI(process.env.API_KEY);
+const apiKey = process.env.API_KEY;
+if (!apiKey) {
+  throw new Error("API_KEY environment variable is required");
+}
+const genAI = new GoogleGenerativeAI(apiKey);
 const genAIModel = (systemPrompt: string, generationConfig: GenerationConfig) =>
   genAI.getGenerativeModel({
     model: "gemini-3.5-flash",

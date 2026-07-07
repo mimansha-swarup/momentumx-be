@@ -4,6 +4,7 @@ module.exports = {
   testEnvironment: "node",
   roots: ["<rootDir>/tests"],
   testMatch: ["**/*.test.ts"],
+  setupFiles: ["<rootDir>/tests/setup-env.cjs"],
   moduleNameMapper: {
     // Strip .js extensions so ts-jest can resolve .ts source files
     "^(\\.{1,2}/.*)\\.js$": "$1",

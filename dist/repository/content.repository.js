@@ -79,6 +79,9 @@ class ContentRepository {
                 return null;
             }
             const data = snapshot.data();
+            if (!data) {
+                return null;
+            }
             data.createdAt = data.createdAt?.toDate();
             return data;
         };

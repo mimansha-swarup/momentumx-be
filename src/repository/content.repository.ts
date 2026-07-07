@@ -116,6 +116,9 @@ class ContentRepository {
     }
 
     const data = snapshot.data();
+    if (!data) {
+      return null;
+    }
     data.createdAt = data.createdAt?.toDate();
     return data as IScript;
   };
@@ -204,7 +207,7 @@ class ContentRepository {
       .set(data, { merge: true });
   };
 
-  saveScript = async (scriptId: string, data: unknown) => {
+  saveScript = async (scriptId: string, data: Record<string, unknown>) => {
     await this.db
       .collection(this.script_collection)
       .doc(scriptId)
