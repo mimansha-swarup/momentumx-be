@@ -13,6 +13,17 @@ export interface IGeneratedIdea {
   evidence?: string;
 }
 
+// Instant-first-idea (3.3): a transient, not-yet-persisted channel context the
+// client can pass to idea generation (from the onboarding prefill, possibly
+// user-edited), so a user sees their first ideas before onboarding is saved.
+// Every field optional — it is merged over the stored user record, override wins.
+export interface IIdeaContextOverride {
+  niche?: string;
+  targetAudience?: string;
+  brandName?: string;
+  topTitles?: string[];
+}
+
 // A topic document as stored in / read from Firestore (see formatGeneratedTitle /
 // formatGeneratedIdea). `title` holds the idea's working title. The idea fields
 // are optional: legacy docs and bring-your-own-title docs are title-only.

@@ -42,7 +42,13 @@ class TopicController {
   });
 
   generateTopics = asyncHandler(async (req: Request, res: Response) => {
-    const ideas = await this.service.generateIdeas(req.userId);
+    // Optional instant-first-idea context (validated by generateIdeasSchema) —
+    // absent means generate from the persisted user record as before.
+    const ideas = await this.service.generateIdeas(
+      req.userId,
+      true,
+      req.body.context
+    );
     const batchId = randomUUID();
     const modifiedDataResults = await Promise.allSettled(
       (ideas || [])?.map(async (idea) =>

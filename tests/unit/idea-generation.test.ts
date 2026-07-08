@@ -47,6 +47,7 @@ import ContentRepository from "../../src/repository/content.repository";
 import UserRepository from "../../src/repository/user.repository";
 import ResearchContextService from "../../src/service/research-context.service";
 import { generateContent } from "../../src/utlils/ai";
+import { formatCreatorsData } from "../../src/utlils/content";
 import { IDEA_USER_PROMPT } from "../../src/constants/prompt";
 
 jest.mock("../../src/repository/content.repository");
@@ -143,6 +144,43 @@ describe("ContentService.generateIdeas", () => {
     await expect(service.generateIdeas("user-1")).rejects.toMatchObject({
       statusCode: 404,
     });
+  });
+
+  it("merges a not-yet-persisted override context over the record (instant-first-idea)", async () => {
+    const ideas = await service.generateIdeas("user-1", true, {
+      niche: "Personal finance",
+      targetAudience: "young professionals",
+      brandName: "Wealth With Sam",
+      topTitles: ["How to budget", "Index funds 101"],
+    });
+
+    expect(ideas).toHaveLength(2);
+    // Research + prompt use the override niche, not the persisted "AI tools".
+    expect(researchContext.getIdeaSignals).toHaveBeenCalledWith("Personal finance");
+    const userPrompt = mockGenerate.mock.calls[0][1] as string;
+    expect(userPrompt).toContain("Personal finance");
+    expect(userPrompt).toContain("young professionals");
+    expect(userPrompt).toContain("Wealth With Sam");
+    // Channel titles ride into the creators-data block via userTitle (override
+    // mapped onto the ctx passed to formatCreatorsData).
+    expect(formatCreatorsData).toHaveBeenCalledWith(
+      expect.objectContaining({
+        niche: "Personal finance",
+        userTitle: ["How to budget", "Index funds 101"],
+      }),
+      expect.anything()
+    );
+  });
+
+  it("generates from the override even when the user record is missing (pre-onboarding)", async () => {
+    userRepo.get = jest.fn().mockResolvedValue(undefined);
+
+    const ideas = await service.generateIdeas("user-1", true, {
+      niche: "Personal finance",
+    });
+
+    expect(ideas).toHaveLength(2);
+    expect(researchContext.getIdeaSignals).toHaveBeenCalledWith("Personal finance");
   });
 });
 

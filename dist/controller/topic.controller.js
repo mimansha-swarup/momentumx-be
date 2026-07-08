@@ -25,7 +25,9 @@ class TopicController {
             });
         });
         this.generateTopics = asyncHandler(async (req, res) => {
-            const ideas = await this.service.generateIdeas(req.userId);
+            // Optional instant-first-idea context (validated by generateIdeasSchema) —
+            // absent means generate from the persisted user record as before.
+            const ideas = await this.service.generateIdeas(req.userId, true, req.body.context);
             const batchId = randomUUID();
             const modifiedDataResults = await Promise.allSettled((ideas || [])?.map(async (idea) => formatGeneratedIdea(idea, req.userId, batchId)));
             const modifiedData = modifiedDataResults

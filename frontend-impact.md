@@ -122,7 +122,7 @@ Response messages now say "ideas" ("successfully generated ideas", "Ideas regene
 ### 3.5 Description split + safer profile updates — **check**
 
 - The user doc now keeps the **user-submitted `description`** (previously it was silently overwritten by the YouTube channel description on every save). The channel's own description moves to a new field, **`channelDescription`**.
-- `GET /v1/user/profile` now returns both `description` (user's) and `channelDescription` (channel's, server-derived). **FE action:** if you displayed the channel description, read `channelDescription`; old docs without it still resolve (the backend falls back to legacy `description` internally for generation context).
+- `GET /v1/user/profile` now returns both `description` (user's) and `channelDescription` (channel's, server-derived). **FE action:** if you displayed the channel description, read `channelDescription`. (Channel context reads `channelDescription` only — re-onboard any pre-split test users to repopulate it.)
 - **Partial profile updates are now safe:** `PATCH /v1/user/profile` no longer blanks `channelId` / `userTitle` / `channelDescription` / `websiteContent` when those inputs aren't included in the body, and no longer 500s when a body omits both `competitors` and `website`. Send only the fields you're changing.
 - **Lower-friction onboarding:** the user's own channel data (id, top titles, channel description) is now resolved from the **channel URL alone** — `competitors` no longer needs to be sent to get it. This unblocks the URL-only onboarding path landing in 3.8; `competitors` becomes pure enrichment.
 
@@ -147,6 +147,27 @@ Response messages now say "ideas" ("successfully generated ideas", "Ideas regene
 - `channelUrl` must be a valid YouTube channel URL (`youtube.com/@handle`, `/channel/ID`, `/c/`, `/user/`) — invalid → `400`.
 - **Graceful degradation:** if the channel can't be resolved (unreachable / no data), the endpoint still returns `200` with **blank** `suggestions` and empty `channel` — the FE should just fall back to an empty form, not treat it as an error.
 - **FE flow:** on channel-URL entry → call prefill → pre-fill niche/audience/brand + show the pulled titles as social proof → user confirms. Pairs with the instant-first-idea flow (3.3, next).
+
+### 3.3 Instant-first-idea — **additive, backward-compatible**
+
+`POST /v1/topics/generate` now accepts an **optional** body to generate ideas from a not-yet-saved context (the prefill suggestions, possibly user-edited) — so the user sees their first ideas *before* committing onboarding:
+
+```jsonc
+// Optional body — omit entirely for unchanged behavior (generate from saved profile)
+{
+  "context": {
+    "niche": "personal finance for millennials",
+    "targetAudience": "young professionals",
+    "brandName": "Wealth With Sam",
+    "topTitles": ["How to budget", "Index funds 101"]   // the channel's own titles from prefill
+  }
+}
+```
+
+- Every `context` field is optional; it's **merged over** the stored user record server-side (override wins). Unknown keys stripped; strings trimmed; `topTitles` capped at 20.
+- Works even if the user hasn't onboarded yet (no persisted profile) — the ideas still generate and save to their topic list.
+- **No body → exactly today's behavior.** Existing callers need no change.
+- **Onboarding flow:** channel URL → `prefill` (3.2) → user confirms/edits → `topics/generate` **with** `context` → ideas (the aha) → then `PATCH /onboarding` to save.
 
 ---
 

@@ -67,27 +67,42 @@ class ContentService {
         // video concepts — headline optimization happens post-script at the Title
         // step, never here. Research signals are an enhancer: their failure
         // degrades to channel-context-only generation, it never blocks.
-        this.generateIdeas = async (userId, countTowardStats = true) => {
+        this.generateIdeas = async (userId, countTowardStats = true, override) => {
             const [similarTitles, userRecord] = await Promise.all([
                 getClusteredTitles(userId, this.repo),
                 this.userRepo.get(userId),
             ]);
-            if (!userRecord) {
+            if (!userRecord && !override) {
                 throw NotFound("User not found");
             }
+            // Instant-first-idea (3.3): an optional, not-yet-persisted context (from the
+            // onboarding prefill, possibly user-edited) is merged over the stored record
+            // so a user can see their first ideas before onboarding is saved. Absent →
+            // behaves exactly as before (generation from the persisted record only).
+            const ctx = { ...(userRecord ?? {}) };
+            if (override) {
+                if (override.niche !== undefined)
+                    ctx.niche = override.niche;
+                if (override.targetAudience !== undefined)
+                    ctx.targetAudience = override.targetAudience;
+                if (override.brandName !== undefined)
+                    ctx.brandName = override.brandName;
+                if (override.topTitles !== undefined)
+                    ctx.userTitle = override.topTitles;
+            }
             const researchSignals = this.researchContext
-                ? await this.researchContext.getIdeaSignals(userRecord.niche ?? "")
+                ? await this.researchContext.getIdeaSignals(ctx.niche ?? "")
                 : "";
             const userPrompt = fillTemplate(IDEA_USER_PROMPT, {
-                "{niche}": userRecord?.niche ?? "",
-                "{website}": userRecord?.website ?? "",
-                "{websiteContent}": userRecord?.websiteContent ?? "",
-                "{competitors}": formatCompetitorUrls(userRecord?.competitors),
-                "{targetAudience}": userRecord?.targetAudience ?? "",
-                "{userName}": userRecord?.brandName ?? "",
+                "{niche}": ctx.niche ?? "",
+                "{website}": ctx.website ?? "",
+                "{websiteContent}": ctx.websiteContent ?? "",
+                "{competitors}": formatCompetitorUrls(ctx.competitors),
+                "{targetAudience}": ctx.targetAudience ?? "",
+                "{userName}": ctx.brandName ?? "",
                 "{researchSignals}": researchSignals,
             });
-            const text = formatCreatorsData(userRecord, similarTitles.flat());
+            const text = formatCreatorsData(ctx, similarTitles.flat());
             const result = await generateContent(IDEA_SYSTEM_PROMPT, userPrompt, GENERATION_CONFIG_IDEAS, "text/plain", text);
             let accumulatedRes = "";
             for await (const chunk of result.stream) {
