@@ -33,16 +33,29 @@ describe("onboardingSchema", () => {
     expect(parsed).not.toHaveProperty("isAdmin");
   });
 
-  it.each(["brandName", "niche", "targetAudience", "userName"])(
-    "rejects a missing required field: %s",
-    (field) => {
-      const body = { ...validOnboarding } as Record<string, unknown>;
-      delete body[field];
-      const result = onboardingSchema.safeParse(body);
-      expect(result.success).toBe(false);
-      expect(result.error?.issues[0].path).toContain(field);
-    }
-  );
+  // 3.8: required minimum split by entry path.
+  it("accepts the channel path — a channel URL alone is enough", () => {
+    expect(onboardingSchema.safeParse({ userName: CHANNEL }).success).toBe(true);
+  });
+
+  it("accepts the no-channel path — niche + targetAudience, no URL", () => {
+    expect(
+      onboardingSchema.safeParse({ niche: "AI tools", targetAudience: "founders" })
+        .success
+    ).toBe(true);
+  });
+
+  it("no longer requires brandName", () => {
+    const { brandName: _omit, ...noBrand } = validOnboarding;
+    expect(onboardingSchema.safeParse(noBrand).success).toBe(true);
+  });
+
+  it("rejects when neither path is satisfied", () => {
+    // no channel URL, and only one of niche/targetAudience
+    expect(onboardingSchema.safeParse({ niche: "AI tools" }).success).toBe(false);
+    expect(onboardingSchema.safeParse({ brandName: "Acme" }).success).toBe(false);
+    expect(onboardingSchema.safeParse({}).success).toBe(false);
+  });
 
   it("rejects a userName that is not a resolvable YouTube URL", () => {
     const result = onboardingSchema.safeParse({

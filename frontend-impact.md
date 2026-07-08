@@ -187,6 +187,22 @@ Response messages now say "ideas" ("successfully generated ideas", "Ideas regene
 - Weighting: the 4 core-identity fields (`niche`, `targetAudience`, `brandName`, `userName`) are 15 each (60); enrichment (`website`, `competitors`, `userTitle`, `channelDescription`) 10 each (40). A user who onboards + resolves their channel typically lands ~80; adding website + competitors reaches 100.
 - **FE action:** show the meter from `score`; turn `missing` into nudges. No breaking change — it's a new field.
 
+### 3.7 Refresh-context endpoint — **new capability**
+
+`POST /v1/user/refresh-context` (no body) — re-pulls the channel/website enrichment (channel id, top titles, channel description, website content, competitor data) from the user's **already-stored** inputs, without re-submitting the onboarding form. Returns the refreshed profile + `completeness`. Use for a "refresh my data" action.
+
+### 3.8 Required minimum loosened — **CONTRACT CHANGE (coordinate release)**
+
+`PATCH /v1/user/onboarding` no longer requires all of `userName`/`brandName`/`niche`/`targetAudience`. The new rule is **either path**:
+
+- **Channel path:** a valid YouTube channel `userName` alone is enough (everything else is enriched/optional).
+- **No-channel path:** `niche` **and** `targetAudience` (no channel URL).
+
+`brandName` is **no longer required** on either path. If neither path is satisfied → `400` `"Provide a YouTube channel URL, or both a niche and a target audience"` (error `path: ["userName"]`).
+
+- **FE action:** the onboarding form can now submit with just a channel URL (the low-friction path — pairs with prefill 3.2). Update client-side required-field validation to match, and don't hard-require `brandName`.
+- Per-field rules unchanged when a field *is* sent (URL format, length caps, trimming).
+
 ---
 
 ## Heads-up: contract changes coming in later phases (plan, don't build yet)

@@ -160,8 +160,9 @@ Snapshot of the API surface. When exact behavior matters, verify against `src/ro
 
 /v1/user
   POST  /onboarding/prefill    — infer {niche, targetAudience, brandName} from a channel URL (suggestions, not persisted)
-  PATCH /onboarding            — complete brand setup
-  GET   /profile               — get user profile
+  PATCH /onboarding            — complete brand setup (required minimum: channel URL, OR niche + targetAudience)
+  POST  /refresh-context       — re-pull channel/website enrichment from stored inputs (no body)
+  GET   /profile               — get user profile (+ completeness score)
   PATCH /profile               — update profile
 
 /v1/topics

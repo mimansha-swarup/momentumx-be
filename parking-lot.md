@@ -41,22 +41,24 @@
   keyword pools per niche with a short TTL.
 - **Revisit:** around P4/P5 infra work, or at the first sign of quota pain.
 
-## 0. Phase 3 closed with two tasks deferred (2026-07-09)
+## 0. Phase 3 — COMPLETE (2026-07-09)
 
-Phase 3 (value-first onboarding) is paused/closed after shipping **3.1** (Zod validation),
+Phase 3 (value-first onboarding) is fully closed. Shipped: **3.1** (Zod validation),
 **3.5** (description split + decoupled channel resolution), **3.6** (stats baseline +
-drop redundant write), **3.2** (prefill endpoint), **3.3** (instant-first-idea), and
-**3.4** (completeness score). Two planned tasks remain unbuilt — pick up when Phase 3 resumes:
+drop redundant write), **3.2** (prefill endpoint), **3.3** (instant-first-idea),
+**3.4** (completeness score), **3.7** (`POST /refresh-context`), and **3.8** (split the
+required minimum — channel-URL-only OR niche+targetAudience; `brandName`/`userName` no
+longer individually required). **3.8 is an FE contract change** — see `frontend-impact.md`.
 
-- **3.7 — `POST /v1/user/refresh-context`** *(MED)* — thin endpoint to re-pull channel/
-  website enrichment without re-submitting the onboarding form. Small; reuses
-  `formatUserData` / `resolveChannel`. No FE contract risk.
-- **3.8 — Split the required minimum** *(HIGH — the core value-first goal + an FE contract change)* —
-  loosen onboarding required fields: channel path = URL only; no-channel path =
-  `niche` + `targetAudience`; drop `brandName`/`userName` from the required set
-  (`onboardingSchema` in `user.validation.ts`). Downstream already tolerates absent
-  fields (1C conditional blocks + 3.5 decoupling), so the groundwork is done — this is
-  mostly a schema change + coordinated FE contract update. **Do not skip when resuming 3.**
+## 5. Refresh/enrich blanks data on a YouTube outage — **LOW**
+
+`formatUserData` writes derived channel fields (`channelId`, `channelDescription`,
+`userTitle`) whenever `userName` is present — even when resolution fails (returns empty).
+So `POST /refresh-context` (and onboarding/update) during a transient YouTube outage will
+**overwrite good stored enrichment with empties**. Consistent across all three call sites,
+but `refresh-context` is the most casual/repeatable, so most likely to bite.
+**Candidate fix:** preserve prior non-empty values when a re-pull comes back empty
+(merge in `refreshContext`, or make `formatUserData` skip empty overwrites).
 
 ## 4. Data-model debt — **LOW (consolidate at P6B)**
 

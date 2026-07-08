@@ -32,19 +32,32 @@ const websiteUrl = z
     .refine((value) => value === "" || /^https?:\/\/\S+\.\S+/i.test(value), {
     message: "must be a valid URL",
 });
-export const onboardingSchema = z.object({
-    userName: youtubeChannelUrl,
-    brandName: z.string().trim().min(1).max(MAX.short),
-    niche: z.string().trim().min(1).max(MAX.short),
-    targetAudience: z.string().trim().min(1).max(MAX.medium),
+// Base shape — every field optional with its per-field rules. Cross-field
+// requirements are layered on top per use case (see onboardingSchema).
+const userFields = z.object({
+    userName: youtubeChannelUrl.optional(),
+    brandName: z.string().trim().max(MAX.short).optional(),
+    niche: z.string().trim().max(MAX.short).optional(),
+    targetAudience: z.string().trim().max(MAX.medium).optional(),
     website: websiteUrl.optional(),
     purpose: z.string().trim().max(MAX.long).optional(),
     description: z.string().trim().max(MAX.text).optional(),
     competitors: z.array(youtubeChannelUrl).max(MAX.competitors).optional(),
     format: z.enum(["talking_head", "faceless"]).optional(),
 });
-// Profile update: every field optional (partial edits), same per-field rules.
-export const profileUpdateSchema = onboardingSchema.partial();
+// Onboarding (3.8): the required minimum is split by entry path —
+//   • channel path:    a channel URL is enough (we enrich everything from it)
+//   • no-channel path: niche + targetAudience
+// `brandName`/`userName` are no longer individually required. Low-friction:
+// the fastest path is just the URL.
+export const onboardingSchema = userFields.refine((data) => Boolean(data.userName) ||
+    (Boolean(data.niche) && Boolean(data.targetAudience)), {
+    message: "Provide a YouTube channel URL, or both a niche and a target audience",
+    path: ["userName"],
+});
+// Profile update: every field optional, no cross-field requirement (a partial
+// edit may touch a single field).
+export const profileUpdateSchema = userFields;
 // Onboarding prefill (3.2): a single channel URL to infer suggestions from.
 export const prefillSchema = z.object({
     channelUrl: youtubeChannelUrl,
