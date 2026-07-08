@@ -27,7 +27,8 @@
     "googleapis": "^144.0.0",
     "helmet": "^8.0.0",
     "ml-kmeans": "^6.0.0",
-    "nodemon": "^3.1.9"
+    "nodemon": "^3.1.9",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",

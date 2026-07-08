@@ -104,6 +104,23 @@ Response messages now say "ideas" ("successfully generated ideas", "Ideas regene
 
 ---
 
+## Phase 3 — Value-first onboarding (branch: `feature/phase-3-onboarding`)
+
+### 3.1 Real validation on onboarding/profile — **check, mostly additive**
+
+`PATCH /v1/user/onboarding` and `PATCH /v1/user/profile` now validate the body (Zod) and return a **400** with a field-prefixed message on malformed input. Previously only missing-required-fields and a bad `format` were caught.
+
+- New rejections (each a clear `400`, e.g. `"userName: must be a valid YouTube channel URL ..."`):
+  - `userName` / `competitors[]` must be resolvable YouTube channel URLs (`youtube.com/@handle`, `/channel/ID`, `/c/name`, `/user/name`) — same forms the extract pipeline already required downstream, so this only surfaces the failure earlier with a better message.
+  - `website` must be a real `http(s)` URL (empty string still allowed).
+  - `competitors` capped at 20; string length caps applied; all strings trimmed.
+  - `format` still limited to `"talking_head"` | `"faceless"`.
+- **Unknown keys are stripped** — the client can no longer smuggle extra fields (e.g. `stats`) into the stored user doc.
+- Required set is **unchanged** for now (`userName`, `brandName`, `niche`, `targetAudience`); the loosening to URL-only / niche+audience lands later in this phase (3.8) as a coordinated contract change.
+- **FE action:** surface the returned `message` on validation failure; ensure channel fields are sent as full `youtube.com` URLs (not bare `@handles`).
+
+---
+
 ## Heads-up: contract changes coming in later phases (plan, don't build yet)
 
 | Phase | Expected FE impact |
