@@ -119,6 +119,13 @@ Response messages now say "ideas" ("successfully generated ideas", "Ideas regene
 - Required set is **unchanged** for now (`userName`, `brandName`, `niche`, `targetAudience`); the loosening to URL-only / niche+audience lands later in this phase (3.8) as a coordinated contract change.
 - **FE action:** surface the returned `message` on validation failure; ensure channel fields are sent as full `youtube.com` URLs (not bare `@handles`).
 
+### 3.5 Description split + safer profile updates — **check**
+
+- The user doc now keeps the **user-submitted `description`** (previously it was silently overwritten by the YouTube channel description on every save). The channel's own description moves to a new field, **`channelDescription`**.
+- `GET /v1/user/profile` now returns both `description` (user's) and `channelDescription` (channel's, server-derived). **FE action:** if you displayed the channel description, read `channelDescription`; old docs without it still resolve (the backend falls back to legacy `description` internally for generation context).
+- **Partial profile updates are now safe:** `PATCH /v1/user/profile` no longer blanks `channelId` / `userTitle` / `channelDescription` / `websiteContent` when those inputs aren't included in the body, and no longer 500s when a body omits both `competitors` and `website`. Send only the fields you're changing.
+- **Lower-friction onboarding:** the user's own channel data (id, top titles, channel description) is now resolved from the **channel URL alone** — `competitors` no longer needs to be sent to get it. This unblocks the URL-only onboarding path landing in 3.8; `competitors` becomes pure enrichment.
+
 ---
 
 ## Heads-up: contract changes coming in later phases (plan, don't build yet)

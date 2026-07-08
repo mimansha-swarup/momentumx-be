@@ -115,6 +115,19 @@ describe("ContextService.assemble — degradation matrix", () => {
     });
   });
 
+  it("prefers channelDescription over the legacy description field (3.5)", async () => {
+    userRepo.get = jest.fn().mockResolvedValue({
+      ...userDoc,
+      description: "User's own blurb", // now the user-submitted description
+      channelDescription: "The real channel description",
+    });
+
+    const ctx = await service.assemble(USER_ID, {});
+    expect(ctx.channelContext.channelDescription).toBe(
+      "The real channel description"
+    );
+  });
+
   it("script only: no hook selected yet → selectedHook null", async () => {
     vpService.getById = jest.fn().mockResolvedValue({
       ...fullProject,

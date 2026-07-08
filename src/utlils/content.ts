@@ -119,6 +119,24 @@ export function formatCreatorsData(
   return result.trim();
 }
 
+// Resolve one YouTube channel to its id, description, and top titles. Best-
+// effort: any failure (invalid URL, API error) degrades to empties and never
+// throws, so a single bad channel can't fail onboarding.
+async function resolveChannel(
+  extractService: ExtractService,
+  url: string,
+): Promise<{ id: string; description: string; titles: string[] }> {
+  try {
+    const info = await extractService.retrieveChannelId(url);
+    const id = extractChannelField(info, "id");
+    const description = extractChannelField(info, "description");
+    const titles = id ? (await extractService.getTopTenTitle(id)) ?? [] : [];
+    return { id, description, titles };
+  } catch {
+    return { id: "", description: "", titles: [] };
+  }
+}
+
 export async function formatUserData(
   data: IOnboardingPayload,
   extractService: ExtractService,
@@ -129,68 +147,55 @@ export async function formatUserData(
       userTitle: string[];
       websiteContent: string;
       channelId: string;
+      channelDescription: string;
     }> = { ...data };
 
-  const asyncList: Promise<unknown>[] = [];
+  // Each enrichment source is resolved independently and only when its input was
+  // provided. This means onboarding succeeds off a channel URL alone (low
+  // friction — the user's own channel is no longer coupled to `competitors`),
+  // and a partial profile update never blanks unrelated stored data. All sources
+  // run concurrently; each is best-effort and degrades to empty on failure.
+  const jobs: Promise<void>[] = [];
+
   if (data.website) {
-    asyncList.push(extractService.getWebsiteContent(data.website));
-  }
-  if (data.competitors) {
-    asyncList.push(
-      ...[data.userName, ...record.competitors]?.map((competitorUrl) =>
-        extractService.retrieveChannelId(competitorUrl),
-      ),
+    jobs.push(
+      extractService
+        .getWebsiteContent(data.website)
+        .then((content) => {
+          record.websiteContent = content;
+        })
+        .catch(() => {
+          record.websiteContent = "";
+        }),
     );
   }
-  const settledList = await Promise.allSettled(asyncList);
 
-  let websiteContent;
-  if (data.website) {
-    websiteContent = settledList[0];
-    settledList.shift();
+  // The user's own channel — id, top titles, and (3.5) the channel description
+  // stored separately so the user-submitted `description` is never clobbered.
+  if (data.userName) {
+    jobs.push(
+      resolveChannel(extractService, data.userName).then((channel) => {
+        record.channelId = channel.id;
+        record.channelDescription = channel.description;
+        record.userTitle = channel.titles;
+      }),
+    );
   }
-  const [userYTId, ...competitorId] = settledList;
 
-  asyncList.length = 0;
+  if (data.competitors) {
+    jobs.push(
+      Promise.all(
+        data.competitors.map(async (url: string) => {
+          const channel = await resolveChannel(extractService, url);
+          return { url, id: channel.id, titles: channel.titles };
+        }),
+      ).then((competitors) => {
+        record.competitors = competitors as unknown as typeof record.competitors;
+      }),
+    );
+  }
 
-  asyncList.push(
-    ...[{ value: userYTId.status === 'fulfilled' ? userYTId.value : undefined }, ...competitorId]?.map((competitor: { value?: unknown; status?: string }) =>
-      extractService.getTopTenTitle(extractChannelField(competitor.value, "id")),
-    ),
-  );
-  const [userTitle, ...settledTitle] = await Promise.allSettled(asyncList);
-
-  record.competitors = data.competitors?.map((url: string, idx: number) => {
-    const idResult = competitorId[idx];
-    const titleResult = settledTitle[idx];
-
-    return {
-      url,
-      id:
-        idResult && idResult.status === "fulfilled"
-          ? extractChannelField(idResult.value, "id")
-          : "",
-      titles:
-        titleResult && titleResult.status === "fulfilled"
-          ? (titleResult.value as string[])
-          : [],
-    };
-  }) as unknown as typeof record.competitors;
-
-  record.userTitle =
-    userTitle && userTitle.status === "fulfilled"
-      ? (userTitle.value as string[])
-      : [];
-  record.channelId =
-    userYTId?.status === "fulfilled" ? extractChannelField(userYTId.value, "id") : "";
-  record.description =
-    userYTId?.status === "fulfilled"
-      ? extractChannelField(userYTId.value, "description")
-      : "";
-  record.websiteContent =
-    websiteContent?.status === "fulfilled"
-      ? (websiteContent?.value as string)
-      : "";
+  await Promise.all(jobs);
 
   return record;
 }

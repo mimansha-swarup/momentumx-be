@@ -82,7 +82,9 @@ class ContextService {
       brandName: record.brandName ?? null,
       website: record.website ?? null,
       websiteContent: record.websiteContent ?? null,
-      channelDescription: record.description ?? null,
+      // Prefer the dedicated field (3.5); fall back to legacy docs that stored
+      // the channel description in `description` before the split.
+      channelDescription: record.channelDescription ?? record.description ?? null,
       topTitles: Array.isArray(record.userTitle) ? record.userTitle : [],
       competitorUrls: competitors
         .map((competitor) => competitor?.url)
