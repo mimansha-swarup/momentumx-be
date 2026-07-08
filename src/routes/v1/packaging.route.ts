@@ -7,7 +7,9 @@ import VideoProjectService from "../../service/video-project.service.js";
 import ContentRepository from "../../repository/content.repository.js";
 import HooksRepository from "../../repository/hooks.repository.js";
 import UserRepository from "../../repository/user.repository.js";
+import ResearchRepository from "../../repository/research.repository.js";
 import ContextService from "../../service/context.service.js";
+import ResearchContextService from "../../service/research-context.service.js";
 import { authMiddleware } from "../../middleware/auth.js";
 
 const router = Router();
@@ -17,9 +19,11 @@ const videoProjectRepo = new VideoProjectRepository();
 const contentRepo = new ContentRepository();
 const hooksRepository = new HooksRepository();
 const userRepository = new UserRepository();
+const researchRepo = new ResearchRepository();
 const videoProjectService = new VideoProjectService(videoProjectRepo, contentRepo, packagingRepository);
 const contextService = new ContextService(userRepository, contentRepo, hooksRepository, videoProjectService);
-const packagingService = new PackagingService(packagingRepository, hooksRepository, videoProjectService, contextService);
+const researchContextService = new ResearchContextService(researchRepo);
+const packagingService = new PackagingService(packagingRepository, hooksRepository, videoProjectService, contextService, researchContextService);
 const packagingController = new PackagingController(packagingService);
 
 router.use(authMiddleware);

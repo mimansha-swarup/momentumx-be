@@ -1,14 +1,15 @@
 import { PACKAGING_SYSTEM_PROMPT, GENERATE_TITLE_PROMPT, GENERATE_DESCRIPTION_PROMPT, GENERATE_THUMBNAIL_PROMPT, GENERATE_SHORTS_PROMPT, } from "../constants/prompt.js";
-import { GENERATION_CONFIG_PACKAGING } from "../constants/firebase.js";
+import { GENERATION_CONFIG_PACKAGING, GENERATION_CONFIG_TITLE_VARIATIONS } from "../constants/firebase.js";
 import { generateStreamingContent } from "../utlils/ai.js";
 import { firebase } from "../config/firebase.js";
 import { BadRequest, Forbidden, NotFound } from "../utlils/errors.js";
 import { buildCreatorContextBlock, buildHookSection, buildScriptSection, THUMBNAIL_FORMAT_DIRECTIVE, resolveVideoFormat, } from "../utlils/prompt-blocks.js";
 class PackagingService {
-    constructor(repo, hooksRepo, videoProjectService, contextService) {
+    constructor(repo, hooksRepo, videoProjectService, contextService, researchContext) {
         this.hooksRepo = hooksRepo;
         this.videoProjectService = videoProjectService;
         this.contextService = contextService;
+        this.researchContext = researchContext;
         this.resolveSelectedHook = async (videoProjectId, userId) => {
             if (!videoProjectId || !this.videoProjectService)
                 return "";
@@ -33,15 +34,16 @@ class PackagingService {
                         ? explicitScript
                         : ctx.sessionContext.script ?? "",
                     hook: ctx.sessionContext.selectedHook ?? "",
+                    workingTitle: ctx.sessionContext.workingTitle,
                 };
             }
             // Legacy path (no context service wired, e.g. older tests): behavior
             // identical to pre-1D — explicit script only, hook from the project.
             const hook = await this.resolveSelectedHook(videoProjectId, userId);
-            return { channel: null, script: explicitScript ?? "", hook };
+            return { channel: null, script: explicitScript ?? "", hook, workingTitle: null };
         };
-        this.generateContent = async (userPrompt) => {
-            const result = await generateStreamingContent(PACKAGING_SYSTEM_PROMPT, userPrompt, GENERATION_CONFIG_PACKAGING);
+        this.generateContent = async (userPrompt, config = GENERATION_CONFIG_PACKAGING) => {
+            const result = await generateStreamingContent(PACKAGING_SYSTEM_PROMPT, userPrompt, config);
             let accumulatedRes = "";
             for await (const chunk of result.stream) {
                 const part = chunk.text();
@@ -51,16 +53,26 @@ class PackagingService {
             }
             return JSON.parse(accumulatedRes);
         };
+        // The post-script Title step (phase 2C): script + hook + channel context +
+        // live competitive title research → 3 scored variations. Research query =
+        // the project's working title when available (specific beats broad), else
+        // the script's opening. Research failure degrades to context-only titles.
         this.generateTitle = async (userId, script, videoProjectId) => {
             const inputs = await this.resolveGenerationInputs(userId, videoProjectId, script);
             if (!inputs.script) {
                 throw BadRequest("Script is required — provide one or use a project with a generated script");
             }
+            let researchSignals = "";
+            if (this.researchContext) {
+                const query = inputs.workingTitle || inputs.script.slice(0, 120);
+                researchSignals = await this.researchContext.getTitleSignals(query);
+            }
             const userPrompt = GENERATE_TITLE_PROMPT
                 .replace("{creatorContext}", buildCreatorContextBlock(inputs.channel))
+                .replace("{researchSignals}", researchSignals)
                 .replace("{script}", inputs.script)
                 .replace("{hookSection}", buildHookSection(inputs.hook));
-            return this.generateContent(userPrompt);
+            return this.generateContent(userPrompt, GENERATION_CONFIG_TITLE_VARIATIONS);
         };
         this.generateDescription = async (userId, script, title, videoProjectId) => {
             const inputs = await this.resolveGenerationInputs(userId, videoProjectId, script);

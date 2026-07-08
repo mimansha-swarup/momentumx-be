@@ -23,12 +23,16 @@ Both initialized in `src/config/ai.ts`. Use the factory functions — never init
 ## Generation Config Must Match Output Format
 
 ```
-JSON array output   → GENERATION_CONFIG_TITLES
-Plain text output   → GENERATION_CONFIG_SCRIPTS
-JSON object output  → GENERATION_CONFIG_PACKAGING
+GENERATION_CONFIG_IDEAS             → {concept, workingTitle, type, evidence}[] (responseSchema-enforced; step-1 idea generation)
+GENERATION_CONFIG_TITLES            → string[] (responseSchema-enforced)
+GENERATION_CONFIG_SCRIPTS           → plain text (text/plain, streamed via SSE)
+GENERATION_CONFIG_PACKAGING         → JSON object (MIME type only, no schema)
+GENERATION_CONFIG_TITLE_VARIATIONS  → {titles: [{title, characterCount?, score, reason}]} (responseSchema-enforced; post-script Title step)
 ```
 
 **Critical:** Never use a JSON config with a plain text prompt — Gemini will return malformed output that breaks `JSON.parse`.
+
+**New JSON configs must define a `responseSchema`** (see `GENERATION_CONFIG_IDEAS` for the pattern) — schema-enforced structured output is the strongest guarantee against malformed JSON. `GENERATION_CONFIG_PACKAGING` predates this and relies on MIME type alone; don't copy that for new configs.
 
 Configs are in `src/constants/firebase.ts`. Only AI Engineer modifies this file.
 
@@ -51,14 +55,26 @@ Prompts live in `src/constants/prompt.ts`. Only AI Engineer modifies this file.
 
 ---
 
-## Always Parse Packaging Responses
+## Always Parse JSON Responses
 
 ```typescript
-// Gemini returns JSON as a string — always parse
+// Gemini returns JSON as a string — always parse (packaging, titles, scoring)
 const result = JSON.parse(accumulatedRes);
 ```
 
-If `JSON.parse` throws, the prompt or config is misconfigured — fix the prompt, do not swallow the error.
+If `JSON.parse` throws, the prompt or config is misconfigured — fix the prompt/config, do not swallow the error and do not add "repair" heuristics on top of malformed output.
+
+---
+
+## Research-Grounded Generation (phase 2)
+
+`ResearchContextService` (`research-context.service.ts`) is the shared research engine: it fetches trending + keyword-ranked videos from YouTube, cleans the pool (drops Shorts/livestream junk, dedupes, caps 2 titles per channel), and annotates titles with real view counts.
+
+- **Idea generation (step 1)** injects `getIdeaSignals(niche)` into `IDEA_USER_PROMPT`'s `{researchSignals}` slot — ideas cite grounding in their `evidence` field.
+- **Title step (post-script)** injects `getTitleSignals(workingTitle)` into `GENERATE_TITLE_PROMPT` and returns scored variations via `GENERATION_CONFIG_TITLE_VARIATIONS`.
+- **Degradation contract (non-negotiable):** research is an enhancer, never a gate — every signal fetch failure resolves to an empty block and generation proceeds on channel context alone. Never let a YouTube error propagate out of `ResearchContextService`.
+
+(The former standalone `/v1/title-intelligence` pipelines were retired in phase 2; their machinery was absorbed into the above.)
 
 ---
 

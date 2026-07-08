@@ -5,11 +5,12 @@ import {
   GENERATE_THUMBNAIL_PROMPT,
   GENERATE_SHORTS_PROMPT,
 } from "../constants/prompt.js";
-import { GENERATION_CONFIG_PACKAGING } from "../constants/firebase.js";
+import { GENERATION_CONFIG_PACKAGING, GENERATION_CONFIG_TITLE_VARIATIONS } from "../constants/firebase.js";
 import PackagingRepository from "../repository/packaging.repository.js";
 import HooksRepository from "../repository/hooks.repository.js";
 import VideoProjectService from "./video-project.service.js";
 import ContextService from "./context.service.js";
+import ResearchContextService from "./research-context.service.js";
 import { generateStreamingContent } from "../utlils/ai.js";
 import { firebase } from "../config/firebase.js";
 import { BadRequest, Forbidden, NotFound } from "../utlils/errors.js";
@@ -28,6 +29,7 @@ interface IGenerationInputs {
   channel: IChannelContext | null;
   script: string;
   hook: string;
+  workingTitle: string | null;
 }
 
 class PackagingService {
@@ -37,7 +39,8 @@ class PackagingService {
     repo: PackagingRepository,
     private hooksRepo: HooksRepository,
     private videoProjectService?: VideoProjectService,
-    private contextService?: ContextService
+    private contextService?: ContextService,
+    private researchContext?: ResearchContextService
   ) {
     this.repo = repo;
   }
@@ -74,19 +77,23 @@ class PackagingService {
           ? explicitScript
           : ctx.sessionContext.script ?? "",
         hook: ctx.sessionContext.selectedHook ?? "",
+        workingTitle: ctx.sessionContext.workingTitle,
       };
     }
     // Legacy path (no context service wired, e.g. older tests): behavior
     // identical to pre-1D — explicit script only, hook from the project.
     const hook = await this.resolveSelectedHook(videoProjectId, userId);
-    return { channel: null, script: explicitScript ?? "", hook };
+    return { channel: null, script: explicitScript ?? "", hook, workingTitle: null };
   };
 
-  private generateContent = async (userPrompt: string) => {
+  private generateContent = async (
+    userPrompt: string,
+    config = GENERATION_CONFIG_PACKAGING
+  ) => {
     const result = await generateStreamingContent(
       PACKAGING_SYSTEM_PROMPT,
       userPrompt,
-      GENERATION_CONFIG_PACKAGING
+      config
     );
 
     let accumulatedRes = "";
@@ -100,16 +107,28 @@ class PackagingService {
     return JSON.parse(accumulatedRes);
   };
 
+  // The post-script Title step (phase 2C): script + hook + channel context +
+  // live competitive title research → 3 scored variations. Research query =
+  // the project's working title when available (specific beats broad), else
+  // the script's opening. Research failure degrades to context-only titles.
   generateTitle = async (userId: string, script?: string, videoProjectId?: string) => {
     const inputs = await this.resolveGenerationInputs(userId, videoProjectId, script);
     if (!inputs.script) {
       throw BadRequest("Script is required — provide one or use a project with a generated script");
     }
+
+    let researchSignals = "";
+    if (this.researchContext) {
+      const query = inputs.workingTitle || inputs.script.slice(0, 120);
+      researchSignals = await this.researchContext.getTitleSignals(query);
+    }
+
     const userPrompt = GENERATE_TITLE_PROMPT
       .replace("{creatorContext}", buildCreatorContextBlock(inputs.channel))
+      .replace("{researchSignals}", researchSignals)
       .replace("{script}", inputs.script)
       .replace("{hookSection}", buildHookSection(inputs.hook));
-    return this.generateContent(userPrompt);
+    return this.generateContent(userPrompt, GENERATION_CONFIG_TITLE_VARIATIONS);
   };
 
   generateDescription = async (

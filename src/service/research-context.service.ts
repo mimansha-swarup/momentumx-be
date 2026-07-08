@@ -68,17 +68,18 @@ class ResearchContextService {
       })
       .join("\n");
 
-  /**
-   * Live signals block for Idea generation, keyed on the creator's niche.
-   * Returns "" when nothing usable could be fetched — callers inject the
-   * block as-is and generation degrades gracefully.
-   */
-  getIdeaSignals = async (niche: string): Promise<string> => {
-    if (!niche?.trim()) return "";
+  // Shared fetch → clean → view-annotate pipeline behind both signal blocks.
+  private buildSignalsBlock = async (
+    query: string,
+    header: string,
+    trendingLabel: string,
+    keywordLabel: string
+  ): Promise<string> => {
+    if (!query?.trim()) return "";
     try {
       const [trendingResult, keywordResult] = await Promise.allSettled([
-        this.researchRepo.getTrendingVideos(niche),
-        this.researchRepo.getKeywordSignals(niche),
+        this.researchRepo.getTrendingVideos(query),
+        this.researchRepo.getKeywordSignals(query),
       ]);
       const trending: IResearchVideo[] =
         trendingResult.status === "fulfilled" ? trendingResult.value : [];
@@ -100,17 +101,15 @@ class ResearchContextService {
         stats = {}; // titles without view counts still carry signal
       }
 
-      const sections: string[] = [
-        "Live research signals (ground ideas in these and cite the relevant signal in each idea's evidence):",
-      ];
+      const sections: string[] = [header];
       if (cleanTrending.length) {
         sections.push(
-          `Trending now in this niche:\n${this.formatTitleLines(cleanTrending, stats)}`
+          `${trendingLabel}\n${this.formatTitleLines(cleanTrending, stats)}`
         );
       }
       if (cleanKeyword.length) {
         sections.push(
-          `What audiences are searching for:\n${this.formatTitleLines(cleanKeyword, stats)}`
+          `${keywordLabel}\n${this.formatTitleLines(cleanKeyword, stats)}`
         );
       }
       return sections.join("\n\n");
@@ -118,6 +117,32 @@ class ResearchContextService {
       return ""; // research must never block generation
     }
   };
+
+  /**
+   * Live signals block for Idea generation, keyed on the creator's niche.
+   * Returns "" when nothing usable could be fetched — callers inject the
+   * block as-is and generation degrades gracefully.
+   */
+  getIdeaSignals = async (niche: string): Promise<string> =>
+    this.buildSignalsBlock(
+      niche,
+      "Live research signals (ground ideas in these and cite the relevant signal in each idea's evidence):",
+      "Trending now in this niche:",
+      "What audiences are searching for:"
+    );
+
+  /**
+   * Live signals block for the post-script Title step, keyed on the video's
+   * working title (a far more specific query than the niche). Same
+   * degradation contract as getIdeaSignals.
+   */
+  getTitleSignals = async (query: string): Promise<string> =>
+    this.buildSignalsBlock(
+      query.trim().slice(0, 120),
+      "Live competitive title research (learn from the structures that earned clicks — do not copy titles):",
+      "Top-performing titles on this topic:",
+      "Titles ranking for related searches:"
+    );
 }
 
 export default ResearchContextService;

@@ -116,6 +116,18 @@ describe("ResearchContextService", () => {
       expect(block).not.toContain("Trending now in this niche:");
     });
 
+    it("getTitleSignals uses competitive-title labels and truncates the query", async () => {
+      repo.getTrendingVideos = jest.fn().mockResolvedValue([
+        video("A top performing competitor title", "T1", "t1"),
+      ]);
+
+      const block = await service.getTitleSignals("x".repeat(300));
+
+      expect(repo.getTrendingVideos).toHaveBeenCalledWith("x".repeat(120));
+      expect(block).toContain("Live competitive title research");
+      expect(block).toContain("Top-performing titles on this topic:");
+    });
+
     it("survives a stats fetch failure (titles without view counts)", async () => {
       repo.getTrendingVideos = jest.fn().mockResolvedValue([
         video("Trending video with no stats data", "T1", "t1"),

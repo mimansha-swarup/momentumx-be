@@ -80,6 +80,7 @@ describe("prompt blocks", () => {
     it("title prompt (full inputs)", () => {
       const prompt = GENERATE_TITLE_PROMPT
         .replace("{creatorContext}", "")
+        .replace("{researchSignals}", "")
         .replace("{script}", "script text")
         .replace("{hookSection}", "");
       expect(prompt).not.toMatch(PLACEHOLDER);
