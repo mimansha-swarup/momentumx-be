@@ -39,6 +39,8 @@ createdAt: new Date()
 createdAt: Date.now()
 ```
 
+This applies to **stored** fields. Computing a `Date` in code for a query boundary (e.g. "videos from the last 30 days" in `research.repository.ts`) is fine — the rule is that timestamps written to documents come from the server, so clock skew can't corrupt ordering.
+
 ---
 
 ## Document IDs
@@ -114,7 +116,8 @@ Filtering by `userId` first is required for both security (only return the user'
 ```
 users          — user profiles, onboarding data, channel/competitor info
 topics         — generated title ideas with vector embeddings
-scripts        — full video scripts (document ID = own UUID; topicId + videoProjectId FKs link back)
+scripts        — full video scripts (document ID = own UUID; topicId + videoProjectId FKs link back.
+                 Legacy docs may have id == topicId — handle both, do NOT backfill)
 hooks          — hook batches tied to video projects, per-hook feedback
 packaging      — packaged assets with per-item status tracking and stale cascade
 videoProjects  — pipeline state machine linking topics → scripts → hooks → packaging

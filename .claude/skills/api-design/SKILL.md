@@ -1,219 +1,128 @@
 ---
 name: api-design
-description: Reference for MomentumX REST API conventions, endpoint patterns, and response shapes. Use when designing or building new endpoints.
+description: Implementation recipes for MomentumX endpoints — route file structure, controller pattern, auth wiring, and SSE controller. Use when building new endpoints.
 ---
 
-# API Design Reference
+# API Endpoint Implementation Reference
 
-## Base URL and Path Conventions
-
-- Base: `/v1`
-- Kebab-case: `/generate-title`, not `/generateTitle`
-- Plural nouns: `/topics`, not `/topic`
-- No trailing slashes
-
-## Auth Pattern
-
-Every router applies `authMiddleware`:
-
-```typescript
-import { authMiddleware } from '../../middleware/auth.middleware';
-
-const router = express.Router();
-router.use(authMiddleware); // apply once at router level
-router.get('/topics', controller.getTopics.bind(controller));
-```
-
-**SSE exception:** `GET /stream/scripts/:scriptId` uses `?token=` query param because EventSource API cannot send Authorization headers. Token is verified manually:
-
-```typescript
-async streamScript(req: Request, res: Response) {
-  const token = req.query.token as string;
-  if (!token) {
-    res.sendError({ message: 'Missing token', statusCode: 403 });
-    return;
-  }
-  try {
-    const decoded = await admin.auth().verifyIdToken(token);
-    const userId = decoded.uid;
-    // proceed with stream
-  } catch {
-    res.sendError({ message: 'Invalid token', statusCode: 403 });
-  }
-}
-```
-
-## Response Helpers
-
-Never use `res.json()` directly. Always use:
-
-```typescript
-// Success
-res.sendSuccess({ data: result })
-res.sendSuccess({ data: result, message: 'Topics generated' })
-res.sendSuccess({ data: result, statusCode: 201 })
-res.sendSuccess({ data: items, meta: { total: items.length } })
-
-// Error
-res.sendError({ message: 'Failed to get topics' })
-res.sendError({ message: 'Topic not found', statusCode: 404 })
-res.sendError({ message: 'Generation failed', detail: error })
-```
-
-## Controller Pattern
-
-Thin controller — validate, delegate, respond:
-
-```typescript
-export class ContentController {
-  constructor(private contentService: ContentService) {}
-
-  async getTopics(req: Request, res: Response) {
-    try {
-      const topics = await this.contentService.getTopicsByUser(req.userId);
-      res.sendSuccess({ data: topics });
-    } catch (error) {
-      res.sendError({ message: 'Failed to get topics', detail: error });
-    }
-  }
-
-  async updateTopic(req: Request, res: Response) {
-    try {
-      const { title } = req.body as { title: string };
-      const updated = await this.contentService.updateTopic(
-        req.params.topicId,
-        req.userId,
-        title
-      );
-      res.sendSuccess({ data: updated, message: 'Topic updated' });
-    } catch (error) {
-      res.sendError({ message: 'Failed to update topic', detail: error });
-    }
-  }
-}
-```
-
-## HTTP Status Codes
-
-| Status | When |
-|---|---|
-| 200 | Successful read or update |
-| 201 | Successful create |
-| 400 | Missing/invalid request fields |
-| 403 | Missing or invalid auth token |
-| 404 | Resource not found |
-| 500 | Unexpected server error |
+The conventions themselves (URL structure, methods, status codes, response shape, identity rules) and the full route inventory are enforced in `.claude/rules/api-design.md` — read that first. This file is the code-level recipe.
 
 ## Route File Structure
 
 ```typescript
 // src/routes/v1/{feature}.route.ts
-import { Router } from 'express';
-import { authMiddleware } from '../../middleware/auth.middleware';
-import { FeatureController } from '../../controller/feature.controller';
-import { FeatureService } from '../../service/feature.service';
-import { FeatureRepository } from '../../repository/feature.repository';
+import { Router } from "express";
+import { authMiddleware } from "../../middleware/auth.js";
+import FeatureRepository from "../../repository/feature.repository.js";
+import FeatureService from "../../service/feature.service.js";
+import FeatureController from "../../controller/feature.controller.js";
 
 const router = Router();
 
+// Instantiation happens in the route file
 const repo = new FeatureRepository();
 const service = new FeatureService(repo);
 const controller = new FeatureController(service);
 
-router.use(authMiddleware);
+router.use(authMiddleware); // every router — no exceptions
 
-router.get('/', controller.list.bind(controller));
-router.get('/:id', controller.getById.bind(controller));
-router.post('/', controller.create.bind(controller));
-router.patch('/:id', controller.update.bind(controller));
+router.get("/", controller.list.bind(controller));
+router.get("/:id", controller.getById.bind(controller));
+router.post("/", controller.create.bind(controller));
+router.patch("/:id", controller.update.bind(controller));
 
 export default router;
 ```
 
-## Registering a New Route
+Note the `.js` extensions on relative imports (ESM output) and the `.bind(controller)` on every handler.
 
-In `src/app.ts`:
+## Registering the Router
+
+Routers register in `src/routes/v1/index.ts` — NOT in `app.ts`:
 
 ```typescript
-import featureRouter from './routes/v1/feature.route';
-app.use('/v1/feature', featureRouter);
+import featureRouter from "./feature.route.js";
+router.use("/feature", featureRouter);
 ```
 
-## SSE Endpoint Pattern
+## Auth Wiring
+
+- Standard routes: `router.use(authMiddleware)` at router level; `authMiddleware` sets `req.userId` from the Firebase JWT.
+- SSE routes: apply `sseAuthMiddleware` per-route (it reads `?token=` because EventSource can't send headers):
 
 ```typescript
-router.get('/stream/something', controller.streamSomething.bind(controller));
+import { authMiddleware, sseAuthMiddleware } from "../../middleware/auth.js";
 
-// Controller method
-async streamSomething(req: Request, res: Response) {
-  try {
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders();
+router.get("/stream/:projectId", sseAuthMiddleware, scriptController.generateScript);
+router.use(authMiddleware); // everything below is header-auth
+```
 
-    const stream = await this.service.generateStreaming(req.userId);
-    for await (const chunk of stream) {
-      if (chunk) res.write('data: ' + chunk + '\n\n');
+Do NOT hand-verify tokens in controllers — both middlewares live in `src/middleware/auth.ts`.
+
+## Controller Pattern
+
+Thin: validate, delegate, respond via helpers.
+
+```typescript
+export default class ContentController {
+  constructor(private contentService: ContentService) {}
+
+  async updateTopic(req: Request, res: Response) {
+    try {
+      const { title } = req.body as { title: string };
+      if (!title) {
+        res.sendError({ message: "title is required", statusCode: 400 });
+        return;
+      }
+      const updated = await this.contentService.updateTopic(
+        req.params.topicId,
+        req.userId,   // identity ALWAYS from middleware, never the body
+        title
+      );
+      res.sendSuccess({ data: updated, message: "Topic updated" });
+    } catch (error) {
+      res.sendError({ message: "Failed to update topic", detail: error });
     }
-
-    res.write('data: [DONE]\n\n');
-    res.end();
-  } catch (error) {
-    // Can't sendError after flushHeaders — stream is already open
-    res.write('data: [ERROR]\n\n');
-    res.end();
   }
 }
 ```
 
-## Existing Endpoints Quick Reference
+Response helpers (`res.sendSuccess` / `res.sendError`) are attached by `src/middleware/response_formatter.ts`. Never use raw `res.json()`.
 
+## SSE Controller
+
+Once `res.flushHeaders()` fires you can no longer `sendError` — the stream is open. Termination is guaranteed by `finally`, and the terminator is always `[DONE]` (there is no `[ERROR]` sentinel in this codebase):
+
+```typescript
+res.setHeader("Content-Type", "text/event-stream");
+res.setHeader("Cache-Control", "no-cache");
+res.setHeader("Connection", "keep-alive");
+res.flushHeaders();
+
+try {
+  for await (const chunk of result.stream) {
+    const text = chunk.text();
+    if (text) res.write(`data: ${JSON.stringify(text)}\n\n`); // JSON-encode every chunk
+  }
+} catch (streamError) {
+  console.error("SSE stream error", streamError);
+} finally {
+  res.write("data: [DONE]\n\n");
+  res.end();
+}
+
+// Post-stream persistence in its OWN try/catch — must not affect the finished stream
+try {
+  await saveScript(...);
+} catch (saveError) {
+  console.error("Post-stream save error", saveError);
+}
 ```
-GET    /v1/user/profile
-PATCH  /v1/user/profile
-PATCH  /v1/user/onboarding
 
-POST   /v1/topics/generate
-GET    /v1/topics
-GET    /v1/topics/export
-POST   /v1/topics/regenerate-all
-PATCH  /v1/topics/edit/:topicId
-POST   /v1/topics/:topicId/regenerate
-PATCH  /v1/topics/:topicId/feedback
+Validate everything you can (auth, project exists, ownership) BEFORE `flushHeaders()` — that's your last chance to return a proper error response.
 
-GET    /v1/scripts/stream/:projectId    (SSE, ?token= auth)
-GET    /v1/scripts
-GET    /v1/scripts/:scriptId
-PATCH  /v1/scripts/edit/:scriptId
-POST   /v1/scripts/:scriptId/regenerate
-PATCH  /v1/scripts/:scriptId/feedback
-GET    /v1/scripts/:scriptId/export
+## Errors That Belong to Each Layer
 
-POST   /v1/hooks/generate
-POST   /v1/hooks/:hooksId/select
-POST   /v1/hooks/:hooksId/regenerate
-PATCH  /v1/hooks/:hooksId/feedback
-GET    /v1/hooks/:hooksId/export
-
-POST   /v1/packaging/generate-title
-POST   /v1/packaging/generate-description
-POST   /v1/packaging/generate-thumbnail
-POST   /v1/packaging/generate-shorts
-POST   /v1/packaging/save
-GET    /v1/packaging/list
-GET    /v1/packaging/:packagingId
-POST   /v1/packaging/:packagingId/regenerate/:item
-PATCH  /v1/packaging/:packagingId/feedback
-GET    /v1/packaging/:packagingId/export
-
-GET    /v1/research/trending
-GET    /v1/research/competitors
-GET    /v1/research/keywords
-
-POST   /v1/video-projects
-GET    /v1/video-projects
-GET    /v1/video-projects/:projectId
-PATCH  /v1/video-projects/:projectId
-DELETE /v1/video-projects/:projectId
-```
+- Controller: input validation → 400; catch-all → `sendError` with sensible message
+- Service: throws (`throw new Error('Topic not found')`) — never returns error objects
+- Repository: returns `null` for missing/not-owned docs; propagates Firestore errors naturally

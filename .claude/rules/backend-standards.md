@@ -49,6 +49,10 @@ Folder names are **singular**: `src/controller/`, `src/service/`, `src/repositor
 ❌ packaging_repository.ts
 ```
 
+Route files: `src/routes/v1/{resource}.route.ts`, registered in `src/routes/v1/index.ts`.
+
+**Middleware exception:** `src/middleware/` predates this convention and uses snake_case (`auth.ts`, `response_formatter.ts`, `error_handler.ts`, `rate_limit.ts`, `async_handler.ts`, `logger_middleware.ts`). Do NOT rename these (breaks imports); new middleware follows the existing snake_case style of that folder.
+
 ---
 
 ## Legacy Typo — DO NOT Fix
@@ -97,6 +101,8 @@ res.json({ success: true, data })
 res.status(500).json({ error: 'something failed' })
 ```
 
+Both helpers are attached by `src/middleware/response_formatter.ts` (typed via `sendSuccessProps` / `sendErrorProps` in `src/types/customTypes.ts`).
+
 ---
 
 ## Error Handling — Non-Negotiable
@@ -142,6 +148,8 @@ router.get('/profile', controller.getProfile);
 // ❌ Wrong — applied globally in app.ts
 app.use(authMiddleware);
 ```
+
+`authMiddleware` and `sseAuthMiddleware` both live in `src/middleware/auth.ts`. SSE routes use `sseAuthMiddleware` per-route (see api-design.md); everything else uses `router.use(authMiddleware)`. Never leave a router unprotected, even temporarily.
 
 ---
 

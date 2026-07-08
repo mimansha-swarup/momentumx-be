@@ -1,273 +1,199 @@
 ---
 name: testing-patterns
-description: Reference for Jest unit tests and Supertest integration tests in MomentumX. Use when writing tests for services, controllers, or utilities.
+description: Reference for Jest unit tests and Supertest integration tests in MomentumX — mock setups, response assertions, auth and SSE testing. Use when writing tests for services, controllers, or utilities.
 ---
 
 # Testing Patterns Reference
 
 ## Stack
 
-- **Unit tests:** Jest
-- **Integration tests:** Jest + Supertest
-- **Mock targets:** `firebase-admin`, `@google/generative-ai`, `googleapis`
+- **Runner:** Jest via `jest.config.cjs` (`npm test`), ts-jest for TypeScript
+- **Integration:** Jest + Supertest (`src/app.ts` default-exports the Express app)
+- **Must mock:** Firebase (via the config module), Gemini (`@google/generative-ai`), and YouTube (**`global.fetch`** — see below)
 
-## File Structure
+`src/__tests__/` does not exist yet — create it on first use:
 
 ```
-src/
-└── __tests__/
-    ├── services/
-    │   ├── content.service.test.ts
-    │   └── packaging.service.test.ts
-    ├── controllers/
-    │   ├── topic.controller.test.ts
-    │   ├── script.controller.test.ts
-    │   └── packaging.controller.test.ts
-    └── utils/
-        └── content.utils.test.ts
+src/__tests__/
+├── services/       content.service.test.ts, packaging.service.test.ts, ...
+├── controllers/    topic.controller.test.ts, ...
+└── utils/          content.utils.test.ts
 ```
 
-## Mock Setup
+## Mocking Firebase — Mock the Config Module, Not firebase-admin
 
-### firebase-admin
+All Firestore access goes through `src/config/firebase.ts` (`export { db, firebase, auth }`), so mock that one module instead of reconstructing the whole `firebase-admin` surface:
 
 ```typescript
-const mockCollection = jest.fn();
-const mockDoc = jest.fn();
 const mockGet = jest.fn();
 const mockSet = jest.fn();
 const mockUpdate = jest.fn();
-const mockAdd = jest.fn();
-const mockWhere = jest.fn();
-const mockOrderBy = jest.fn();
-const mockLimit = jest.fn();
-const mockBatchSet = jest.fn();
 const mockBatchCommit = jest.fn().mockResolvedValue(undefined);
+const mockVerifyIdToken = jest.fn();
 
-jest.mock('firebase-admin', () => ({
-  initializeApp: jest.fn(),
-  firestore: () => ({
-    collection: mockCollection.mockReturnValue({
-      doc: mockDoc.mockReturnValue({
-        get: mockGet,
-        set: mockSet,
-        update: mockUpdate,
-      }),
-      add: mockAdd,
-      where: mockWhere.mockReturnThis(),
-      orderBy: mockOrderBy.mockReturnThis(),
-      limit: mockLimit.mockReturnThis(),
+jest.mock("../../config/firebase.js", () => ({
+  db: {
+    collection: jest.fn().mockReturnValue({
+      doc: jest.fn().mockReturnValue({ get: mockGet, set: mockSet, update: mockUpdate }),
+      add: jest.fn(),
+      where: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
       get: mockGet,
     }),
-    batch: jest.fn().mockReturnValue({
-      set: mockBatchSet,
-      commit: mockBatchCommit,
-    }),
-  }),
-  auth: () => ({
-    verifyIdToken: mockVerifyIdToken,
-  }),
+    batch: jest.fn().mockReturnValue({ set: jest.fn(), commit: mockBatchCommit }),
+  },
+  firebase: {
+    firestore: { FieldValue: { serverTimestamp: jest.fn().mockReturnValue("SERVER_TS") } },
+  },
+  auth: { verifyIdToken: mockVerifyIdToken },
 }));
 ```
 
-### @google/generative-ai
+This also short-circuits the real module's `initializeApp` + service-account parsing, which would otherwise run (and fail) at import time in tests.
+
+## Mocking Gemini
 
 ```typescript
-const mockGenerateContent = jest.fn();
 const mockGenerateContentStream = jest.fn();
 const mockEmbedContent = jest.fn();
 
-jest.mock('@google/generative-ai', () => ({
+jest.mock("@google/generative-ai", () => ({
   GoogleGenerativeAI: jest.fn().mockImplementation(() => ({
     getGenerativeModel: jest.fn().mockReturnValue({
-      generateContent: mockGenerateContent,
       generateContentStream: mockGenerateContentStream,
       embedContent: mockEmbedContent,
     }),
   })),
+  SchemaType: { ARRAY: "array", OBJECT: "object", STRING: "string", NUMBER: "number" },
 }));
+
+// Fake a stream result:
+mockGenerateContentStream.mockResolvedValue({
+  stream: (async function* () {
+    yield { text: () => '["Title one","Title two"]' };
+  })(),
+});
 ```
 
-### googleapis
+Or, simpler for service tests: mock `src/utlils/ai.ts` (`generateStreamingContent` / `generateContent`) directly.
+
+## Mocking YouTube — It's `fetch`, Not `googleapis`
+
+`extract.repository.ts` and `research.repository.ts` call the YouTube REST API with raw `fetch` (the `googleapis` npm package is installed but never imported — mocking it does nothing):
 
 ```typescript
-const mockSearchList = jest.fn();
-const mockChannelsList = jest.fn();
+const mockFetch = jest.fn();
+global.fetch = mockFetch as unknown as typeof fetch;
 
-jest.mock('googleapis', () => ({
-  google: {
-    youtube: jest.fn().mockReturnValue({
-      search: { list: mockSearchList },
-      channels: { list: mockChannelsList },
-    }),
-  },
-}));
+mockFetch.mockResolvedValue({
+  ok: true,
+  json: async () => ({
+    items: [{ snippet: { title: "Top video" }, id: { videoId: "abc" } }],
+  }),
+} as Response);
 ```
 
 ## Service Unit Test Pattern
 
 ```typescript
-import { ContentService } from '../../service/content.service';
-import { ContentRepository } from '../../repository/content.repository';
-
-describe('ContentService', () => {
+describe("ContentService", () => {
   let service: ContentService;
   let mockRepo: jest.Mocked<ContentRepository>;
 
   beforeEach(() => {
     jest.clearAllMocks();
-
     mockRepo = {
       saveTopics: jest.fn(),
       getTopicsByUserId: jest.fn(),
       getTopicById: jest.fn(),
-      updateTopic: jest.fn(),
     } as unknown as jest.Mocked<ContentRepository>;
-
     service = new ContentService(mockRepo);
   });
 
-  describe('getTopics', () => {
-    it('returns user topics', async () => {
-      mockRepo.getTopicsByUserId.mockResolvedValue([
-        { id: 'topic-1', title: 'Test Title', createdBy: 'user-1' }
-      ]);
-
-      const result = await service.getTopics('user-1');
-
-      expect(result).toHaveLength(1);
-      expect(result[0].title).toBe('Test Title');
-      expect(mockRepo.getTopicsByUserId).toHaveBeenCalledWith('user-1');
-    });
-
-    it('throws if repository fails', async () => {
-      mockRepo.getTopicsByUserId.mockRejectedValue(new Error('DB error'));
-
-      await expect(service.getTopics('user-1')).rejects.toThrow('DB error');
-    });
+  it("throws if user not found", async () => {
+    mockRepo.getUserById.mockResolvedValue(null);
+    await expect(service.generateTopics("user-1")).rejects.toThrow("User not found");
   });
 });
 ```
 
-## Controller Integration Test Pattern
+## Controller Integration Tests
 
 ```typescript
-import request from 'supertest';
-import app from '../../app';
+import request from "supertest";
+import app from "../../app";
 
-const mockVerifyIdToken = jest.fn();
+it("returns 403 with no token", async () => {
+  const res = await request(app).get("/v1/topics");
+  expect(res.status).toBe(403);
+});
 
-jest.mock('firebase-admin', () => ({
-  auth: () => ({ verifyIdToken: mockVerifyIdToken }),
-  // ... rest of mock
-}));
-
-describe('GET /v1/topics', () => {
-  it('returns 403 with no token', async () => {
-    const res = await request(app).get('/v1/topics');
-    expect(res.status).toBe(403);
-  });
-
-  it('returns 403 with invalid token', async () => {
-    mockVerifyIdToken.mockRejectedValue(new Error('Invalid token'));
-    const res = await request(app)
-      .get('/v1/topics')
-      .set('Authorization', 'Bearer bad-token');
-    expect(res.status).toBe(403);
-  });
-
-  it('returns 200 with valid token', async () => {
-    mockVerifyIdToken.mockResolvedValue({ uid: 'user-123' });
-    // mock service/repo...
-    const res = await request(app)
-      .get('/v1/topics')
-      .set('Authorization', 'Bearer valid-token');
-    expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ success: true, data: expect.any(Array) });
-  });
+it("returns 200 with valid token", async () => {
+  mockVerifyIdToken.mockResolvedValue({ uid: "user-123" });
+  const res = await request(app)
+    .get("/v1/topics")
+    .set("Authorization", "Bearer valid-token");
+  expect(res.status).toBe(200);
+  expect(res.body).toMatchObject({ success: true, data: expect.any(Array) });
 });
 ```
+
+**Ownership test — highest-value case in this codebase:** authenticate as user B, request user A's resource, expect 404 (never A's data).
 
 ## Response Shape Assertions
 
 ```typescript
-// Success
-expect(res.body).toMatchObject({
-  success: true,
-  data: expect.any(Object),
-});
-
-// Success with meta
-expect(res.body).toMatchObject({
-  success: true,
-  data: expect.any(Array),
-  meta: { total: expect.any(Number) },
-});
-
-// Error
-expect(res.body).toMatchObject({
-  success: false,
-  message: expect.any(String),
-});
+expect(res.body).toMatchObject({ success: true, data: expect.any(Object) });          // success
+expect(res.body).toMatchObject({ success: false, message: expect.any(String) });      // error
 ```
 
-## Priority Test Cases (Every Endpoint)
+## What Every Endpoint's Tests Cover
 
-1. Happy path — 200/201 with correct response shape
-2. Missing required body fields — 400
-3. No auth token — 403
-4. Invalid auth token — 403
-5. Resource not found — 404
-6. Service throws → controller catches → `sendError` called (not unhandled rejection)
+1. Happy path — 200/201, standard shape
+2. Missing/invalid body fields — 400
+3. No token / invalid token — 403
+4. Cross-user access — 404 (ownership)
+5. Nonexistent ID — 404
+6. Service throws → controller catches → `sendError` (no unhandled rejection)
 
 ## SSE Stream Testing
 
-```typescript
-it('streams script content and ends with [done]', (done) => {
-  // Script SSE uses ?token= query param — no Authorization header needed
-  mockVerifyIdToken.mockResolvedValue({ uid: 'user-123' });
-  const chunks: string[] = [];
+Chunks are JSON-encoded; the terminator is the raw literal `[DONE]` (uppercase). Assert shape, not exact content:
 
-  request(app)
-    .get('/v1/scripts/stream/topic-id-123?token=valid-token')
-    .buffer(false)
+```typescript
+it("streams script and terminates with [DONE]", async () => {
+  const res = await request(app)
+    .get(`/v1/scripts/stream/${projectId}?token=valid-token`) // ?token= — no Authorization header
+    .buffer(true)
     .parse((res, callback) => {
-      res.on('data', (chunk: Buffer) => chunks.push(chunk.toString()));
-      res.on('end', () => callback(null, chunks.join('')));
-    })
-    .then((res) => {
-      expect(res.text).toContain('data: ');
-      expect(res.text).toContain('[done]');
-      done();
+      let raw = "";
+      res.on("data", (c: Buffer) => (raw += c.toString()));
+      res.on("end", () => callback(null, raw));
     });
+  expect(res.body).toContain("data: ");
+  expect(res.body).toContain("data: [DONE]");
 });
 ```
 
-## Utility Function Tests (No Mocks Needed)
+Keep SSE integration tests at this level — test generation logic at the service layer instead.
+
+## Utility Tests (No Mocks)
 
 ```typescript
-import { formatGeneratedTitle, getClusteredTitles } from '../../utlils/content';
+import { getClusteredTitles } from "../../utlils/content";
 
-describe('formatGeneratedTitle', () => {
-  it('strips leading/trailing whitespace', () => {
-    expect(formatGeneratedTitle('  My Title  ')).toBe('My Title');
-  });
-});
-
-describe('getClusteredTitles', () => {
-  it('returns all titles in one cluster when count <= k', () => {
-    const topics = [{ title: 'A', embedding: [0.1, 0.2] }];
-    const result = getClusteredTitles(topics as any);
-    expect(result).toHaveLength(1);
-  });
+it("returns all titles in one cluster when count <= k", () => {
+  const topics = [{ title: "A", embedding: [0.1, 0.2] }];
+  expect(getClusteredTitles(topics as ITopic[])).toHaveLength(1);
 });
 ```
 
-## Running Tests
+## Running
 
 ```bash
-npm test                    # all tests
-npm test -- --watch         # watch mode
-npm test -- --coverage      # coverage report
-npm test -- content.service # filter by name
+npm test                     # all tests
+npm test -- --watch          # watch mode
+npm test -- --coverage       # coverage report
+npm test -- content.service  # filter by name
 ```
