@@ -169,6 +169,24 @@ Response messages now say "ideas" ("successfully generated ideas", "Ideas regene
 - **No body → exactly today's behavior.** Existing callers need no change.
 - **Onboarding flow:** channel URL → `prefill` (3.2) → user confirms/edits → `topics/generate` **with** `context` → ideas (the aha) → then `PATCH /onboarding` to save.
 
+### 3.4 Profile completeness score — **additive**
+
+`GET /v1/user/profile` now returns a `completeness` object alongside the profile fields:
+
+```jsonc
+{
+  // ...all existing profile fields...
+  "completeness": {
+    "score": 80,                             // 0–100, weighted
+    "missing": ["website", "competitors"]    // fields not yet filled, priority order
+  }
+}
+```
+
+- Read-time computed, **never persisted**. Drives the FE completeness meter (`score`) and "add this next" nudges (`missing`).
+- Weighting: the 4 core-identity fields (`niche`, `targetAudience`, `brandName`, `userName`) are 15 each (60); enrichment (`website`, `competitors`, `userTitle`, `channelDescription`) 10 each (40). A user who onboards + resolves their channel typically lands ~80; adding website + competitors reaches 100.
+- **FE action:** show the meter from `score`; turn `missing` into nudges. No breaking change — it's a new field.
+
 ---
 
 ## Heads-up: contract changes coming in later phases (plan, don't build yet)

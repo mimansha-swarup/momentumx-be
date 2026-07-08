@@ -9,6 +9,7 @@ import {
   ONBOARDING_PREFILL_PROMPT,
 } from "../constants/prompt.js";
 import { GENERATION_CONFIG_PREFILL } from "../constants/firebase.js";
+import { computeProfileCompleteness } from "../utlils/profile.js";
 
 interface IPrefillSuggestions {
   niche: string;
@@ -87,7 +88,10 @@ class UserService {
   };
 
   getProfile = async (userId: string) => {
-    return this.repo.get(userId);
+    // Completeness (3.4) is computed read-time from the record and never
+    // persisted — it drives the FE meter and "add next" nudges.
+    const record = await this.repo.get(userId);
+    return { ...(record ?? {}), completeness: computeProfileCompleteness(record) };
   };
 
   updateProfile = async (userId: string, data: IOnboardingPayload) => {

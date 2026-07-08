@@ -5,6 +5,7 @@ import { generateStreamingContent } from "../utlils/ai.js";
 import { fillTemplate } from "../utlils/prompt-blocks.js";
 import { ONBOARDING_PREFILL_SYSTEM_PROMPT, ONBOARDING_PREFILL_PROMPT, } from "../constants/prompt.js";
 import { GENERATION_CONFIG_PREFILL } from "../constants/firebase.js";
+import { computeProfileCompleteness } from "../utlils/profile.js";
 class UserService {
     constructor(repo) {
         this.createOnboardingData = async (userId, data) => {
@@ -54,7 +55,10 @@ class UserService {
             };
         };
         this.getProfile = async (userId) => {
-            return this.repo.get(userId);
+            // Completeness (3.4) is computed read-time from the record and never
+            // persisted — it drives the FE meter and "add next" nudges.
+            const record = await this.repo.get(userId);
+            return { ...(record ?? {}), completeness: computeProfileCompleteness(record) };
         };
         this.updateProfile = async (userId, data) => {
             const record = await formatUserData(data, this.extractService);
