@@ -46,7 +46,7 @@ const userDoc = {
   brandName: "MomentumX",
   website: "https://example.com",
   websiteContent: "About the brand...",
-  description: "Channel about AI tools",
+  channelDescription: "Channel about AI tools",
   userTitle: ["My best video", "Second best"],
   competitors: [
     { url: "https://youtube.com/@a", id: "chan-a", titles: ["A1", "A2"] },
@@ -113,19 +113,6 @@ describe("ContextService.assemble — degradation matrix", () => {
       selectedHook: "Hook 1",
       packagingId: "pkg-1",
     });
-  });
-
-  it("prefers channelDescription over the legacy description field (3.5)", async () => {
-    userRepo.get = jest.fn().mockResolvedValue({
-      ...userDoc,
-      description: "User's own blurb", // now the user-submitted description
-      channelDescription: "The real channel description",
-    });
-
-    const ctx = await service.assemble(USER_ID, {});
-    expect(ctx.channelContext.channelDescription).toBe(
-      "The real channel description"
-    );
   });
 
   it("script only: no hook selected yet → selectedHook null", async () => {
