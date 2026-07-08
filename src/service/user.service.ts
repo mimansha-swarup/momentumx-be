@@ -10,6 +10,7 @@ import {
 } from "../constants/prompt.js";
 import { GENERATION_CONFIG_PREFILL } from "../constants/firebase.js";
 import { computeProfileCompleteness } from "../utlils/profile.js";
+import { NotFound } from "../utlils/errors.js";
 
 interface IPrefillSuggestions {
   niche: string;
@@ -98,6 +99,34 @@ class UserService {
     const record = await formatUserData(data, this.extractService);
     await this.repo.update(userId, record);
     return record;
+  };
+
+  // Refresh context (3.7): re-run channel/website enrichment from the STORED
+  // onboarding inputs — no form fields needed. Competitors are stored as
+  // objects, so map them back to their URLs for re-resolution.
+  refreshContext = async (userId: string) => {
+    const record = await this.repo.get(userId);
+    if (!record) throw NotFound("User not found");
+
+    const input = {
+      userName: record.userName,
+      website: record.website,
+      brandName: record.brandName,
+      niche: record.niche,
+      targetAudience: record.targetAudience,
+      purpose: record.purpose,
+      description: record.description,
+      format: record.format,
+      competitors: Array.isArray(record.competitors)
+        ? record.competitors
+            .map((competitor: { url?: string }) => competitor?.url)
+            .filter((url: unknown): url is string => Boolean(url))
+        : [],
+    } as IOnboardingPayload;
+
+    const refreshed = await formatUserData(input, this.extractService);
+    await this.repo.update(userId, refreshed);
+    return { ...refreshed, completeness: computeProfileCompleteness(refreshed) };
   };
 }
 

@@ -20,6 +20,8 @@ router.use(authMiddleware);
 router.post("/onboarding/prefill", validate(prefillSchema), userController.prefill);
 router.patch("/onboarding", validate(onboardingSchema), userController.saveOnboarding);
 
+router.post("/refresh-context", userController.refreshContext);
+
 router.get("/profile", userController.getProfile);
 
 router.patch("/profile", validate(profileUpdateSchema), userController.updateProfile);

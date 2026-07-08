@@ -35,6 +35,15 @@ class UserController {
     });
   });
 
+  // Re-pull channel/website enrichment from the stored inputs (no body).
+  refreshContext = asyncHandler(async (req: Request, res: Response) => {
+    const payload = await this.service.refreshContext(req.userId);
+    res.sendSuccess({
+      message: "Context refreshed successfully",
+      data: { ...payload },
+    });
+  });
+
   getProfile = asyncHandler(async (req: Request, res: Response) => {
     const payload = await this.service.getProfile(req.userId);
 
