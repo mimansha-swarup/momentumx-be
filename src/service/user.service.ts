@@ -1,5 +1,4 @@
 import ExtractRepository from "../repository/extract.repository.js";
-import { stats } from "../constants/collection.js";
 import UserRepository from "../repository/user.repository.js";
 import ExtractService from "./extract.service.js";
 import { formatUserData } from "../utlils/content.js";
@@ -14,10 +13,10 @@ class UserService {
   }
 
   createOnboardingData = async (userId: string, data: IOnboardingPayload) => {
-    const record = await formatUserData(
-      { ...data, stats } as IOnboardingPayload & { stats: typeof stats },
-      this.extractService,
-    );
+    // `stats` is seeded at user creation by the auth trigger (functions/) and
+    // maintained via FieldValue.increment, so onboarding no longer writes it —
+    // re-onboarding must not reset accumulated counters.
+    const record = await formatUserData(data, this.extractService);
     await this.repo.add(userId, record);
     return record;
   };
