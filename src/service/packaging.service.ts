@@ -21,6 +21,7 @@ import {
   buildCreatorContextBlock,
   buildHookSection,
   buildScriptSection,
+  fillTemplate,
   THUMBNAIL_FORMAT_DIRECTIVE,
   resolveVideoFormat,
 } from "../utlils/prompt-blocks.js";
@@ -123,11 +124,12 @@ class PackagingService {
       researchSignals = await this.researchContext.getTitleSignals(query);
     }
 
-    const userPrompt = GENERATE_TITLE_PROMPT
-      .replace("{creatorContext}", buildCreatorContextBlock(inputs.channel))
-      .replace("{researchSignals}", researchSignals)
-      .replace("{script}", inputs.script)
-      .replace("{hookSection}", buildHookSection(inputs.hook));
+    const userPrompt = fillTemplate(GENERATE_TITLE_PROMPT, {
+      "{creatorContext}": buildCreatorContextBlock(inputs.channel),
+      "{researchSignals}": researchSignals,
+      "{script}": inputs.script,
+      "{hookSection}": buildHookSection(inputs.hook),
+    });
     return this.generateContent(userPrompt, GENERATION_CONFIG_TITLE_VARIATIONS);
   };
 
@@ -138,11 +140,12 @@ class PackagingService {
     videoProjectId?: string
   ) => {
     const inputs = await this.resolveGenerationInputs(userId, videoProjectId, script);
-    const userPrompt = GENERATE_DESCRIPTION_PROMPT
-      .replace("{title}", title)
-      .replace("{creatorContext}", buildCreatorContextBlock(inputs.channel))
-      .replace("{scriptSection}", buildScriptSection(inputs.script))
-      .replace("{hookSection}", buildHookSection(inputs.hook));
+    const userPrompt = fillTemplate(GENERATE_DESCRIPTION_PROMPT, {
+      "{title}": title,
+      "{creatorContext}": buildCreatorContextBlock(inputs.channel),
+      "{scriptSection}": buildScriptSection(inputs.script),
+      "{hookSection}": buildHookSection(inputs.hook),
+    });
     return this.generateContent(userPrompt);
   };
 
@@ -154,12 +157,13 @@ class PackagingService {
   ) => {
     const inputs = await this.resolveGenerationInputs(userId, videoProjectId, script);
     const format = resolveVideoFormat(inputs.channel?.format);
-    const userPrompt = GENERATE_THUMBNAIL_PROMPT
-      .replace("{title}", title)
-      .replace("{formatDirective}", THUMBNAIL_FORMAT_DIRECTIVE[format])
-      .replace("{creatorContext}", buildCreatorContextBlock(inputs.channel))
-      .replace("{scriptSection}", buildScriptSection(inputs.script))
-      .replace("{hookSection}", buildHookSection(inputs.hook));
+    const userPrompt = fillTemplate(GENERATE_THUMBNAIL_PROMPT, {
+      "{title}": title,
+      "{formatDirective}": THUMBNAIL_FORMAT_DIRECTIVE[format],
+      "{creatorContext}": buildCreatorContextBlock(inputs.channel),
+      "{scriptSection}": buildScriptSection(inputs.script),
+      "{hookSection}": buildHookSection(inputs.hook),
+    });
     return this.generateContent(userPrompt);
   };
 
@@ -169,10 +173,11 @@ class PackagingService {
     }
     // Shorts has no project linkage yet (P6A) — channel context only.
     const inputs = await this.resolveGenerationInputs(userId, undefined, script);
-    const userPrompt = GENERATE_SHORTS_PROMPT
-      .replace("{creatorContext}", buildCreatorContextBlock(inputs.channel))
-      .replace("{script}", inputs.script)
-      .replace(/{duration}/g, duration.toString());
+    const userPrompt = fillTemplate(GENERATE_SHORTS_PROMPT, {
+      "{creatorContext}": buildCreatorContextBlock(inputs.channel),
+      "{script}": inputs.script,
+      "{duration}": duration.toString(),
+    });
     return this.generateContent(userPrompt);
   };
 

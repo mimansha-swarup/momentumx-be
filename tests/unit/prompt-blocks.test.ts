@@ -2,6 +2,7 @@ import {
   buildCreatorContextBlock,
   buildHookSection,
   buildScriptSection,
+  fillTemplate,
   resolveVideoFormat,
   SCRIPT_FORMAT_STYLE,
   THUMBNAIL_FORMAT_DIRECTIVE,
@@ -60,6 +61,33 @@ describe("prompt blocks", () => {
       expect(buildHookSection("Great hook")).toContain("Great hook");
       expect(buildHookSection(null)).toBe("");
       expect(buildHookSection("  ")).toBe("");
+    });
+  });
+
+  describe("fillTemplate", () => {
+    it("inserts values verbatim — no $-pattern interpretation", () => {
+      // Every dollar special-pattern that String.replace would otherwise expand.
+      for (const danger of ["$&", "$'", "$`", "$$", "$1", "money $$$ talk"]) {
+        expect(fillTemplate("before {x} after", { "{x}": danger })).toBe(
+          `before ${danger} after`
+        );
+      }
+    });
+
+    it("replaces every occurrence of a token (subsumes the /g sites)", () => {
+      expect(
+        fillTemplate("{n} and {n} again", { "{n}": "AI" })
+      ).toBe("AI and AI again");
+    });
+
+    it("applies substitutions left to right", () => {
+      expect(
+        fillTemplate("{a}-{b}", { "{a}": "x", "{b}": "y" })
+      ).toBe("x-y");
+    });
+
+    it("leaves unknown placeholders untouched", () => {
+      expect(fillTemplate("{a} {b}", { "{a}": "x" })).toBe("x {b}");
     });
   });
 

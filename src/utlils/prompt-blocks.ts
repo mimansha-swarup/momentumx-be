@@ -6,6 +6,25 @@ import { IChannelContext, VideoFormat } from "../types/routes/context.js";
  * {placeholder} is ever left unreplaced in an assembled prompt.
  */
 
+/**
+ * Fill `{placeholder}` slots with untrusted values (scripts, titles, niche,
+ * research signals). Uses split/join instead of String.replace because the
+ * replacement form of `.replace()` treats `$&`, `$'`, `` $` ``, and `$$` in the
+ * VALUE as special patterns — a user script containing e.g. `$&` would silently
+ * corrupt the prompt. split/join inserts every value verbatim and replaces all
+ * occurrences of each token (subsuming the old `/{token}/g` sites).
+ * Constant, trusted substitutions (format directives) may stay on plain
+ * `.replace()`; use this whenever the value carries user/external content.
+ */
+export const fillTemplate = (
+  template: string,
+  values: Record<string, string>
+): string =>
+  Object.entries(values).reduce(
+    (acc, [token, value]) => acc.split(token).join(value),
+    template
+  );
+
 export const resolveVideoFormat = (value: unknown): VideoFormat =>
   value === "faceless" ? "faceless" : "talking_head";
 

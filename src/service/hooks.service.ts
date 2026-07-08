@@ -4,6 +4,7 @@ import {
 } from "../constants/prompt.js";
 import { GENERATION_CONFIG_PACKAGING } from "../constants/firebase.js";
 import { generateStreamingContent } from "../utlils/ai.js";
+import { fillTemplate } from "../utlils/prompt-blocks.js";
 import HooksRepository from "../repository/hooks.repository.js";
 import VideoProjectService from "./video-project.service.js";
 import ContextService from "./context.service.js";
@@ -48,7 +49,7 @@ class HooksService {
     }
 
     const resolvedScript = await this.resolveScript(userId, videoProjectId, script);
-    const userPrompt = GENERATE_HOOKS_PROMPT.replace("{script}", resolvedScript);
+    const userPrompt = fillTemplate(GENERATE_HOOKS_PROMPT, { "{script}": resolvedScript });
 
     const result = await generateStreamingContent(
       HOOKS_SYSTEM_PROMPT,
@@ -133,7 +134,7 @@ class HooksService {
     const resolvedScript = script?.trim()
       ? script
       : await this.resolveScript(userId, hooksBatch.videoProjectId, script);
-    const userPrompt = GENERATE_HOOKS_PROMPT.replace("{script}", resolvedScript);
+    const userPrompt = fillTemplate(GENERATE_HOOKS_PROMPT, { "{script}": resolvedScript });
     const result = await generateStreamingContent(
       HOOKS_SYSTEM_PROMPT,
       userPrompt,

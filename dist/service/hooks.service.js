@@ -1,6 +1,7 @@
 import { HOOKS_SYSTEM_PROMPT, GENERATE_HOOKS_PROMPT, } from "../constants/prompt.js";
 import { GENERATION_CONFIG_PACKAGING } from "../constants/firebase.js";
 import { generateStreamingContent } from "../utlils/ai.js";
+import { fillTemplate } from "../utlils/prompt-blocks.js";
 import { BadRequest, Forbidden, NotFound } from "../utlils/errors.js";
 class HooksService {
     constructor(repo, videoProjectService, contextService) {
@@ -27,7 +28,7 @@ class HooksService {
                 throw BadRequest("Script must be completed before generating hooks");
             }
             const resolvedScript = await this.resolveScript(userId, videoProjectId, script);
-            const userPrompt = GENERATE_HOOKS_PROMPT.replace("{script}", resolvedScript);
+            const userPrompt = fillTemplate(GENERATE_HOOKS_PROMPT, { "{script}": resolvedScript });
             const result = await generateStreamingContent(HOOKS_SYSTEM_PROMPT, userPrompt, GENERATION_CONFIG_PACKAGING);
             let accumulatedRes = "";
             for await (const chunk of result.stream) {
@@ -91,7 +92,7 @@ class HooksService {
             const resolvedScript = script?.trim()
                 ? script
                 : await this.resolveScript(userId, hooksBatch.videoProjectId, script);
-            const userPrompt = GENERATE_HOOKS_PROMPT.replace("{script}", resolvedScript);
+            const userPrompt = fillTemplate(GENERATE_HOOKS_PROMPT, { "{script}": resolvedScript });
             const result = await generateStreamingContent(HOOKS_SYSTEM_PROMPT, userPrompt, GENERATION_CONFIG_PACKAGING);
             let accumulatedRes = "";
             for await (const chunk of result.stream) {

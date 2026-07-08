@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { SCRIPT_SYSTEM_PROMPT, SCRIPT_USER_PROMPT, IDEA_SYSTEM_PROMPT, IDEA_USER_PROMPT, } from "../constants/prompt.js";
 import { generateContent, generateStreamingContent } from "../utlils/ai.js";
-import { SCRIPT_FORMAT_STYLE, resolveVideoFormat } from "../utlils/prompt-blocks.js";
+import { SCRIPT_FORMAT_STYLE, fillTemplate, resolveVideoFormat } from "../utlils/prompt-blocks.js";
 import { formatCreatorsData, formatGeneratedScript, formatGeneratedIdea, getClusteredTitles, } from "../utlils/content.js";
 import { GENERATION_CONFIG_SCRIPTS, GENERATION_CONFIG_IDEAS, } from "../constants/firebase.js";
 import { firebase } from "../config/firebase.js";
@@ -22,12 +22,14 @@ class ContentService {
         // Builds the script user prompt from the creator's profile + a title.
         // Shared by generateScripts (SSE) and regenerateScript so the placeholder
         // replacement chain lives in one place.
-        this.buildScriptUserPrompt = (userRecord, title) => SCRIPT_USER_PROMPT.replace("{userName}", userRecord?.brandName ?? "")
-            .replace("{targetAudience}", userRecord?.targetAudience ?? "")
-            .replace("{competitors}", formatCompetitorUrls(userRecord?.competitors))
-            .replace("{niche}", userRecord?.niche ?? "")
-            .replace("{websiteContent}", userRecord?.websiteContent ?? "")
-            .replace("{title}", title);
+        this.buildScriptUserPrompt = (userRecord, title) => fillTemplate(SCRIPT_USER_PROMPT, {
+            "{userName}": userRecord?.brandName ?? "",
+            "{targetAudience}": userRecord?.targetAudience ?? "",
+            "{competitors}": formatCompetitorUrls(userRecord?.competitors),
+            "{niche}": userRecord?.niche ?? "",
+            "{websiteContent}": userRecord?.websiteContent ?? "",
+            "{title}": title,
+        });
         this.getPaginatedUsersTopics = async ({ userId, limit, cursor, filters, }) => {
             try {
                 const docs = await this.repo.getTopics({
@@ -76,14 +78,15 @@ class ContentService {
             const researchSignals = this.researchContext
                 ? await this.researchContext.getIdeaSignals(userRecord.niche ?? "")
                 : "";
-            const userPrompt = IDEA_USER_PROMPT
-                .replace(/{niche}/g, userRecord?.niche ?? "")
-                .replace("{website}", userRecord?.website ?? "")
-                .replace("{websiteContent}", userRecord?.websiteContent ?? "")
-                .replace("{competitors}", formatCompetitorUrls(userRecord?.competitors))
-                .replace("{targetAudience}", userRecord?.targetAudience ?? "")
-                .replace(/{userName}/g, userRecord?.brandName ?? "")
-                .replace("{researchSignals}", researchSignals);
+            const userPrompt = fillTemplate(IDEA_USER_PROMPT, {
+                "{niche}": userRecord?.niche ?? "",
+                "{website}": userRecord?.website ?? "",
+                "{websiteContent}": userRecord?.websiteContent ?? "",
+                "{competitors}": formatCompetitorUrls(userRecord?.competitors),
+                "{targetAudience}": userRecord?.targetAudience ?? "",
+                "{userName}": userRecord?.brandName ?? "",
+                "{researchSignals}": researchSignals,
+            });
             const text = formatCreatorsData(userRecord, similarTitles.flat());
             const result = await generateContent(IDEA_SYSTEM_PROMPT, userPrompt, GENERATION_CONFIG_IDEAS, "text/plain", text);
             let accumulatedRes = "";

@@ -13,7 +13,7 @@ import UserRepository from "../repository/user.repository.js";
 import VideoProjectService from "./video-project.service.js";
 import ResearchContextService from "./research-context.service.js";
 import { generateContent, generateStreamingContent } from "../utlils/ai.js";
-import { SCRIPT_FORMAT_STYLE, resolveVideoFormat } from "../utlils/prompt-blocks.js";
+import { SCRIPT_FORMAT_STYLE, fillTemplate, resolveVideoFormat } from "../utlils/prompt-blocks.js";
 import {
   formatCreatorsData,
   formatGeneratedScript,
@@ -58,12 +58,14 @@ class ContentService {
     userRecord: DocumentData | undefined,
     title: string,
   ): string =>
-    SCRIPT_USER_PROMPT.replace("{userName}", userRecord?.brandName ?? "")
-      .replace("{targetAudience}", userRecord?.targetAudience ?? "")
-      .replace("{competitors}", formatCompetitorUrls(userRecord?.competitors))
-      .replace("{niche}", userRecord?.niche ?? "")
-      .replace("{websiteContent}", userRecord?.websiteContent ?? "")
-      .replace("{title}", title);
+    fillTemplate(SCRIPT_USER_PROMPT, {
+      "{userName}": userRecord?.brandName ?? "",
+      "{targetAudience}": userRecord?.targetAudience ?? "",
+      "{competitors}": formatCompetitorUrls(userRecord?.competitors),
+      "{niche}": userRecord?.niche ?? "",
+      "{websiteContent}": userRecord?.websiteContent ?? "",
+      "{title}": title,
+    });
 
   getPaginatedUsersTopics = async ({
     userId,
@@ -126,14 +128,15 @@ class ContentService {
       ? await this.researchContext.getIdeaSignals(userRecord.niche ?? "")
       : "";
 
-    const userPrompt = IDEA_USER_PROMPT
-      .replace(/{niche}/g, userRecord?.niche ?? "")
-      .replace("{website}", userRecord?.website ?? "")
-      .replace("{websiteContent}", userRecord?.websiteContent ?? "")
-      .replace("{competitors}", formatCompetitorUrls(userRecord?.competitors))
-      .replace("{targetAudience}", userRecord?.targetAudience ?? "")
-      .replace(/{userName}/g, userRecord?.brandName ?? "")
-      .replace("{researchSignals}", researchSignals);
+    const userPrompt = fillTemplate(IDEA_USER_PROMPT, {
+      "{niche}": userRecord?.niche ?? "",
+      "{website}": userRecord?.website ?? "",
+      "{websiteContent}": userRecord?.websiteContent ?? "",
+      "{competitors}": formatCompetitorUrls(userRecord?.competitors),
+      "{targetAudience}": userRecord?.targetAudience ?? "",
+      "{userName}": userRecord?.brandName ?? "",
+      "{researchSignals}": researchSignals,
+    });
 
     const text = formatCreatorsData(userRecord, similarTitles.flat());
 

@@ -41,17 +41,25 @@ Configs are in `src/constants/firebase.ts`. Only AI Engineer modifies this file.
 ## Prompt Variables — Always `{placeholder}` Syntax
 
 ```typescript
-// ✅ Consistent convention
-PROMPT.replace('{script}', script).replace('{title}', title)
+// ✅ Untrusted values (script, title, niche, hook, research signals):
+//    use fillTemplate — String.replace expands $&, $', $`, $$ in the VALUE,
+//    so a script containing "$&" would silently corrupt the prompt.
+fillTemplate(PROMPT, { "{script}": script, "{title}": title })
 
-// Multiple occurrences — use regex replace
-PROMPT.replace(/{duration}/g, duration.toString())
+// ✅ Trusted constant substitutions may stay on .replace
+PROMPT.replace("{videoFormatStyle}", SCRIPT_FORMAT_STYLE[format])
+
+// ❌ Never feed user/external content straight into .replace's second arg
+PROMPT.replace("{script}", script)   // $-patterns in `script` corrupt output
 
 // ❌ Never leave unreplaced placeholders
-// If a variable is optional, handle it before replace, not after
+// If a variable is optional, handle it before fill, not after
 ```
 
-Prompts live in `src/constants/prompt.ts`. Only AI Engineer modifies this file.
+`fillTemplate` (`src/utlils/prompt-blocks.ts`) inserts each value verbatim via
+split/join and replaces **all** occurrences of a token (so it also subsumes the
+old `/{token}/g` sites). Prompts live in `src/constants/prompt.ts`. Only AI
+Engineer modifies that file.
 
 ---
 
