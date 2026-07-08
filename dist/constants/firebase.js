@@ -31,6 +31,19 @@ export const GENERATION_CONFIG_SCRIPTS = {
 export const GENERATION_CONFIG_PACKAGING = {
     responseMimeType: "application/json",
 };
+// Onboarding prefill (Phase 3.2): infer niche/audience/brand from channel signals. Schema-enforced.
+export const GENERATION_CONFIG_PREFILL = {
+    responseMimeType: "application/json",
+    responseSchema: {
+        type: SchemaType.OBJECT,
+        properties: {
+            niche: { type: SchemaType.STRING },
+            targetAudience: { type: SchemaType.STRING },
+            brandName: { type: SchemaType.STRING },
+        },
+        required: ["niche", "targetAudience", "brandName"],
+    },
+};
 // Post-script Title step: 3 scored variations. Schema-enforced.
 export const GENERATION_CONFIG_TITLE_VARIATIONS = {
     responseMimeType: "application/json",

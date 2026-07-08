@@ -1,5 +1,6 @@
 import {
   onboardingSchema,
+  prefillSchema,
   profileUpdateSchema,
 } from "../../src/validation/user.validation";
 import { validate } from "../../src/middleware/validate";
@@ -112,6 +113,18 @@ describe("profileUpdateSchema", () => {
 
   it("still enforces per-field rules when a field is present", () => {
     expect(profileUpdateSchema.safeParse({ userName: "bad" }).success).toBe(false);
+  });
+});
+
+describe("prefillSchema", () => {
+  it("requires a valid YouTube channel URL", () => {
+    expect(
+      prefillSchema.safeParse({ channelUrl: CHANNEL }).success
+    ).toBe(true);
+    expect(
+      prefillSchema.safeParse({ channelUrl: "https://example.com" }).success
+    ).toBe(false);
+    expect(prefillSchema.safeParse({}).success).toBe(false);
   });
 });
 

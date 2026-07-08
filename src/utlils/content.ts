@@ -121,8 +121,9 @@ export function formatCreatorsData(
 
 // Resolve one YouTube channel to its id, description, and top titles. Best-
 // effort: any failure (invalid URL, API error) degrades to empties and never
-// throws, so a single bad channel can't fail onboarding.
-async function resolveChannel(
+// throws, so a single bad channel can't fail onboarding. Shared by
+// formatUserData and the onboarding-prefill flow.
+export async function resolveChannel(
   extractService: ExtractService,
   url: string,
 ): Promise<{ id: string; description: string; titles: string[] }> {

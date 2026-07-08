@@ -13,6 +13,15 @@ class UserController {
                 data: { payload },
             });
         });
+        // Body validated by `validate(prefillSchema)` — channelUrl is a valid YouTube
+        // channel URL. Returns inferred suggestions (not persisted).
+        this.prefill = asyncHandler(async (req, res) => {
+            const data = await this.service.prefillFromChannel(req.body.channelUrl);
+            res.sendSuccess({
+                message: "Prefill suggestions generated",
+                data,
+            });
+        });
         this.getProfile = asyncHandler(async (req, res) => {
             const payload = await this.service.getProfile(req.userId);
             res.sendSuccess({

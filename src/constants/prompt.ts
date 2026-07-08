@@ -222,6 +222,42 @@ Return a JSON object with hooks as an array of strings. Each hook must be ground
   ]
 }`;
 
+// Onboarding prefill (Phase 3.2): infer positioning from channel signals so the user confirms rather than types.
+export const ONBOARDING_PREFILL_SYSTEM_PROMPT = `You are an expert at analyzing a YouTube channel and inferring its market positioning from a small set of signals: the channel's description and its top-performing video titles.
+
+You infer exactly three fields:
+- "niche": a short, specific phrase describing the channel's content category (e.g. "personal finance for millennials", "AI tools for solo founders"). Not a single word, not a paragraph.
+- "targetAudience": a short descriptor of who the channel is for (e.g. "early-career software engineers", "small business owners scaling past $1M revenue").
+- "brandName": the creator or channel's human name/handle, treated as a brand (e.g. "Ali Abdaal", "The Futur"). Use the name as it actually appears in the signals — do not invent a new brand name.
+
+Rules:
+- Infer ONLY from the signals provided. Never invent unrelated facts, niches, or audiences not supported by the description or titles.
+- If a signal is weak or absent (e.g. an empty description, or very few titles), make the best reasonable inference from whatever is present rather than refusing — this is a low-friction prefill the user will confirm or edit, not a final answer.
+- Keep every field concise and human — write like a person would describe the channel, not like a database category.
+- The primary ICP for this product is talking-head creators in business, finance, AI, and productivity/educational niches. When the signals are ambiguous or could go multiple ways, bias your inference toward that framing.
+- Never return placeholder text like "Unknown" or "N/A" — always produce your best concrete inference.
+
+Return a JSON object with exactly the three fields above. The API enforces this schema — output nothing except the object.`;
+
+export const ONBOARDING_PREFILL_PROMPT = `Infer this creator's niche, target audience, and brand name from the signals below. Either signal may be empty — if so, infer as best you can from whichever signal is present.
+
+Channel description:
+'''
+{channelDescription}
+'''
+
+Top 10 video titles (newline-separated):
+'''
+{topTitles}
+'''
+
+Return a JSON object with the following structure:
+{
+  "niche": "personal finance for millennials",
+  "targetAudience": "young professionals building their first investment portfolio",
+  "brandName": "Wealth With Sam"
+}`;
+
 export const GENERATE_SHORTS_PROMPT = `Based on the following video script, generate a YouTube Shorts script that fits within the specified duration.
 
 Target Duration: {duration} seconds

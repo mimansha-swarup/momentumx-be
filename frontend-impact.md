@@ -128,6 +128,28 @@ Response messages now say "ideas" ("successfully generated ideas", "Ideas regene
 
 ---
 
+### 3.2 New prefill endpoint — **new capability**
+
+`POST /v1/user/onboarding/prefill` — the "aha before the form." Send a channel URL, get back inferred onboarding suggestions to pre-populate the form (user confirms/edits rather than typing from scratch).
+
+```jsonc
+// Request
+{ "channelUrl": "https://youtube.com/@theirchannel" }
+
+// Response data
+{
+  "suggestions": { "niche": "...", "targetAudience": "...", "brandName": "..." },
+  "channel":     { "channelDescription": "...", "topTitles": ["...", "..."] }
+}
+```
+
+- **Nothing is persisted** — these are suggestions only; the user still submits `PATCH /onboarding` to save.
+- `channelUrl` must be a valid YouTube channel URL (`youtube.com/@handle`, `/channel/ID`, `/c/`, `/user/`) — invalid → `400`.
+- **Graceful degradation:** if the channel can't be resolved (unreachable / no data), the endpoint still returns `200` with **blank** `suggestions` and empty `channel` — the FE should just fall back to an empty form, not treat it as an error.
+- **FE flow:** on channel-URL entry → call prefill → pre-fill niche/audience/brand + show the pulled titles as social proof → user confirms. Pairs with the instant-first-idea flow (3.3, next).
+
+---
+
 ## Heads-up: contract changes coming in later phases (plan, don't build yet)
 
 | Phase | Expected FE impact |

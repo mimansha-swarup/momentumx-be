@@ -159,6 +159,7 @@ Snapshot of the API surface. When exact behavior matters, verify against `src/ro
 /v1/health                     — unauthenticated health check (registered in index.ts)
 
 /v1/user
+  POST  /onboarding/prefill    — infer {niche, targetAudience, brandName} from a channel URL (suggestions, not persisted)
   PATCH /onboarding            — complete brand setup
   GET   /profile               — get user profile
   PATCH /profile               — update profile

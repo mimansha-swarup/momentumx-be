@@ -6,6 +6,7 @@ import { authMiddleware } from "../../middleware/auth.js";
 import { validate } from "../../middleware/validate.js";
 import {
   onboardingSchema,
+  prefillSchema,
   profileUpdateSchema,
 } from "../../validation/user.validation.js";
 
@@ -16,6 +17,7 @@ const userService = new UserService(userRepository);
 const userController = new UserController(userService);
 
 router.use(authMiddleware);
+router.post("/onboarding/prefill", validate(prefillSchema), userController.prefill);
 router.patch("/onboarding", validate(onboardingSchema), userController.saveOnboarding);
 
 router.get("/profile", userController.getProfile);

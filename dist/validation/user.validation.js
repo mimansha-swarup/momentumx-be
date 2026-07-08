@@ -45,3 +45,7 @@ export const onboardingSchema = z.object({
 });
 // Profile update: every field optional (partial edits), same per-field rules.
 export const profileUpdateSchema = onboardingSchema.partial();
+// Onboarding prefill (3.2): a single channel URL to infer suggestions from.
+export const prefillSchema = z.object({
+    channelUrl: youtubeChannelUrl,
+});
