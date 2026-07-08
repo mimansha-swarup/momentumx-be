@@ -25,6 +25,18 @@ export const formatGeneratedTitle = async (title, userId, batchId) => {
         userFeedback: null,
     };
 };
+// Idea docs (phase 2): the working title is the embedded/displayed handle;
+// concept/type/evidence ride along. BYO-title docs stay title-only via
+// formatGeneratedTitle above.
+export const formatGeneratedIdea = async (idea, userId, batchId) => {
+    const base = await formatGeneratedTitle(idea.workingTitle, userId, batchId);
+    return {
+        ...base,
+        concept: idea.concept ?? null,
+        ideaType: idea.type === "short" ? "short" : "long",
+        evidence: idea.evidence?.trim() ? idea.evidence : null,
+    };
+};
 export const formatGeneratedScript = (title, scriptId, topicId, videoProjectId, script, userId) => {
     return {
         id: scriptId,

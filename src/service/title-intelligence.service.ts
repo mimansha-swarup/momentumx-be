@@ -29,6 +29,13 @@ import {
   TitleTimings,
 } from "../types/routes/title-intelligence.js";
 
+/**
+ * RETIRED as a standalone API surface (phase 2 — the /v1/title-intelligence
+ * routes were removed; step 1 is Idea generation now). This service is kept
+ * as the ENGINE for the post-script Title step: its scored-title pipelines
+ * will power packaging title generation (phase 2C). The research fetching/
+ * cleaning half was extracted to research-context.service.ts.
+ */
 class TitleIntelligenceService {
   constructor(private researchRepo: ResearchRepository) {}
 

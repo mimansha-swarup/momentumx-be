@@ -2,6 +2,13 @@ import { generateStreamingContent } from "../utlils/ai.js";
 import { GENERATION_CONFIG_SMART_TITLES, GENERATION_CONFIG_PACKAGING, GENERATION_CONFIG_TITLES, GENERATION_CONFIG_SCORED_TITLES, } from "../constants/firebase.js";
 import { GENERATE_SCORED_TITLES_SYSTEM_PROMPT, GENERATE_SCORED_TITLES_USER_PROMPT, ANALYZE_CONTENT_SYSTEM_PROMPT, ANALYZE_CONTENT_USER_PROMPT, FIND_PATTERNS_SYSTEM_PROMPT, FIND_PATTERNS_USER_PROMPT, GENERATE_ENRICHED_TITLES_SYSTEM_PROMPT, GENERATE_ENRICHED_TITLES_USER_PROMPT, SCORE_TITLES_SYSTEM_PROMPT, SCORE_TITLES_USER_PROMPT, } from "../constants/prompt.js";
 import { performance } from "perf_hooks";
+/**
+ * RETIRED as a standalone API surface (phase 2 — the /v1/title-intelligence
+ * routes were removed; step 1 is Idea generation now). This service is kept
+ * as the ENGINE for the post-script Title step: its scored-title pipelines
+ * will power packaging title generation (phase 2C). The research fetching/
+ * cleaning half was extracted to research-context.service.ts.
+ */
 class TitleIntelligenceService {
     constructor(researchRepo) {
         this.researchRepo = researchRepo;

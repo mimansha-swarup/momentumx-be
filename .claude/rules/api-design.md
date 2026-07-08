@@ -53,7 +53,13 @@ router.get('/topics', controller.getTopics);
 
 **SSE exception:** `GET /v1/scripts/stream/:projectId` uses `?token=` query param.
 Reason: browser EventSource API cannot send Authorization headers.
-Token is verified manually in the controller before the stream starts.
+The token is verified by `sseAuthMiddleware` (from `src/middleware/auth.ts`), applied per-route before the controller:
+
+```typescript
+router.get("/stream/:projectId", sseAuthMiddleware, scriptController.generateScript);
+```
+
+No router ships without auth. A router left unprotected "temporarily for testing" is a Critical review finding.
 
 ---
 
@@ -147,7 +153,11 @@ All collection names live in `src/constants/collection.ts`. Add new names there 
 
 ## Existing Route Structure
 
+Snapshot of the API surface. When exact behavior matters, verify against `src/routes/v1/` — the route files are the source of truth. When you add or change an endpoint, update this list in the same change.
+
 ```
+/v1/health                     — unauthenticated health check (registered in index.ts)
+
 /v1/user
   PATCH /onboarding            — complete brand setup
   GET   /profile               — get user profile
@@ -201,4 +211,9 @@ All collection names live in `src/constants/collection.ts`. Add new names there 
   GET   /:projectId            — get single project
   PATCH /:projectId            — update project
   DELETE /:projectId           — soft delete project
+  PATCH /:projectId/step/:stepName/start    — mark a pipeline step in progress
+  PATCH /:projectId/step/:stepName/complete — mark a pipeline step complete
+  PATCH /:projectId/link/:resourceType      — link a resource (topic/script/hooks/packaging) to the project
 ```
+
+Note: `/v1/topics` generates **ideas** (video concepts with `concept`/`workingTitle`/`ideaType`/`evidence`), grounded in live trending + keyword research. The route path keeps the legacy "topics" name for FE compatibility (rename decision tracked for P6A). The former `/v1/title-intelligence` routes were retired in phase 2 — `title-intelligence.service.ts` remains as the engine reserved for the post-script Title step; the research half lives in `research-context.service.ts`.

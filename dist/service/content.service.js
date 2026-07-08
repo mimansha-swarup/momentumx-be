@@ -1,9 +1,9 @@
 import { randomUUID } from "crypto";
-import { SCRIPT_SYSTEM_PROMPT, SCRIPT_USER_PROMPT, TOPIC_SYSTEM_PROMPT, TOPIC_USER_PROMPT, } from "../constants/prompt.js";
+import { SCRIPT_SYSTEM_PROMPT, SCRIPT_USER_PROMPT, IDEA_SYSTEM_PROMPT, IDEA_USER_PROMPT, } from "../constants/prompt.js";
 import { generateContent, generateStreamingContent } from "../utlils/ai.js";
 import { SCRIPT_FORMAT_STYLE, resolveVideoFormat } from "../utlils/prompt-blocks.js";
-import { formatCreatorsData, formatGeneratedScript, formatGeneratedTitle, getClusteredTitles, } from "../utlils/content.js";
-import { GENERATION_CONFIG_SCRIPTS, GENERATION_CONFIG_TITLES, } from "../constants/firebase.js";
+import { formatCreatorsData, formatGeneratedScript, formatGeneratedIdea, getClusteredTitles, } from "../utlils/content.js";
+import { GENERATION_CONFIG_SCRIPTS, GENERATION_CONFIG_IDEAS, } from "../constants/firebase.js";
 import { firebase } from "../config/firebase.js";
 import { BadRequest, Forbidden, NotFound } from "../utlils/errors.js";
 //  createOnboardingData
@@ -16,8 +16,9 @@ function formatCompetitorUrls(competitors) {
         .join(", ");
 }
 class ContentService {
-    constructor(repo, userRepo, videoProjectService) {
+    constructor(repo, userRepo, videoProjectService, researchContext) {
         this.videoProjectService = videoProjectService;
+        this.researchContext = researchContext;
         // Builds the script user prompt from the creator's profile + a title.
         // Shared by generateScripts (SSE) and regenerateScript so the placeholder
         // replacement chain lives in one place.
@@ -60,40 +61,51 @@ class ContentService {
                 throw error;
             }
         };
-        this.generateTopics = async (userId, countTowardStats = true) => {
-            try {
-                const similarTitles = await getClusteredTitles(userId, this.repo);
-                const userRecord = await this.userRepo.get(userId);
-                if (!userRecord) {
-                    throw NotFound("User not found");
-                }
-                let userPrompt = TOPIC_USER_PROMPT
-                    .replace(/{niche}/g, userRecord?.niche ?? "")
-                    .replace("{website}", userRecord?.website ?? "")
-                    .replace("{websiteContent}", userRecord?.websiteContent ?? "")
-                    .replace("{competitors}", formatCompetitorUrls(userRecord?.competitors))
-                    .replace("{targetAudience}", userRecord?.targetAudience ?? "")
-                    .replace("{userName}", userRecord?.brandName ?? "");
-                const text = formatCreatorsData(userRecord, similarTitles.flat());
-                const result = await generateContent(TOPIC_SYSTEM_PROMPT, userPrompt, GENERATION_CONFIG_TITLES, "text/plain", text);
-                let accumulatedRes = "";
-                for await (const chunk of result.stream) {
-                    const part = chunk.text();
-                    if (part) {
-                        accumulatedRes += part;
-                    }
-                }
-                const parsedRes = JSON.parse(accumulatedRes);
-                if (countTowardStats) {
-                    this.userRepo.update(userId, {
-                        "stats.topics": firebase.firestore.FieldValue.increment(parsedRes.length),
-                    });
-                }
-                return parsedRes;
+        // Step 1 of the pipeline: IDEA generation (phase 2). Produces researched
+        // video concepts — headline optimization happens post-script at the Title
+        // step, never here. Research signals are an enhancer: their failure
+        // degrades to channel-context-only generation, it never blocks.
+        this.generateIdeas = async (userId, countTowardStats = true) => {
+            const [similarTitles, userRecord] = await Promise.all([
+                getClusteredTitles(userId, this.repo),
+                this.userRepo.get(userId),
+            ]);
+            if (!userRecord) {
+                throw NotFound("User not found");
             }
-            catch (error) {
-                throw error;
+            const researchSignals = this.researchContext
+                ? await this.researchContext.getIdeaSignals(userRecord.niche ?? "")
+                : "";
+            const userPrompt = IDEA_USER_PROMPT
+                .replace(/{niche}/g, userRecord?.niche ?? "")
+                .replace("{website}", userRecord?.website ?? "")
+                .replace("{websiteContent}", userRecord?.websiteContent ?? "")
+                .replace("{competitors}", formatCompetitorUrls(userRecord?.competitors))
+                .replace("{targetAudience}", userRecord?.targetAudience ?? "")
+                .replace(/{userName}/g, userRecord?.brandName ?? "")
+                .replace("{researchSignals}", researchSignals);
+            const text = formatCreatorsData(userRecord, similarTitles.flat());
+            const result = await generateContent(IDEA_SYSTEM_PROMPT, userPrompt, GENERATION_CONFIG_IDEAS, "text/plain", text);
+            let accumulatedRes = "";
+            for await (const chunk of result.stream) {
+                const part = chunk.text();
+                if (part) {
+                    accumulatedRes += part;
+                }
             }
+            const parsedRes = JSON.parse(accumulatedRes);
+            const ideas = (Array.isArray(parsedRes) ? parsedRes : []).filter((idea) => idea?.workingTitle?.trim() && idea?.concept?.trim());
+            if (ideas.length === 0) {
+                throw new Error("Unable to generate ideas at the moment");
+            }
+            if (countTowardStats) {
+                // Keyed as stats.topics for continuity — existing lifetime tallies and
+                // the P5 metering plan build on this field.
+                this.userRepo.update(userId, {
+                    "stats.topics": firebase.firestore.FieldValue.increment(ideas.length),
+                });
+            }
+            return ideas;
         };
         this.saveBatchTopics = async (data) => {
             return this.repo.batchSaveTopics(data);
@@ -251,13 +263,10 @@ class ContentService {
             }
             // Archive current active batch
             await this.repo.archiveUserTopics(userId);
-            // Generate new titles
-            const titles = await this.generateTopics(userId);
-            if (!titles || titles.length === 0) {
-                throw new Error("Unable to generate topics at the moment");
-            }
+            // Generate a fresh idea batch
+            const ideas = await this.generateIdeas(userId);
             const batchId = randomUUID();
-            const formattedResults = await Promise.allSettled(titles.map((title) => formatGeneratedTitle(title, userId, batchId)));
+            const formattedResults = await Promise.allSettled(ideas.map((idea) => formatGeneratedIdea(idea, userId, batchId)));
             const formatted = formattedResults
                 .filter((r) => r.status === "fulfilled")
                 .map((r) => r.value);
@@ -272,15 +281,18 @@ class ContentService {
                 throw Forbidden();
             }
             // Suppress the batch-length stats increment — regenerating a single slot
-            // keeps only titles[0], so a full +batch.length here would 10x-inflate stats.topics.
-            const titles = await this.generateTopics(userId, false);
-            if (!titles || titles.length === 0) {
-                throw new Error("Unable to generate topics at the moment");
-            }
-            const newTitle = titles[0];
-            const formatted = await formatGeneratedTitle(newTitle, userId, topic.batchId ?? undefined);
+            // keeps only ideas[0], so a full +batch.length here would 10x-inflate stats.topics.
+            const ideas = await this.generateIdeas(userId, false);
+            // Regenerate into the same slot type when the old doc had one.
+            const preferredType = topic.ideaType;
+            const newIdea = (preferredType && ideas.find((idea) => idea.type === preferredType)) ||
+                ideas[0];
+            const formatted = await formatGeneratedIdea(newIdea, userId, topic.batchId ?? undefined);
             await this.repo.updateTopic(topicId, {
                 title: formatted.title,
+                concept: formatted.concept,
+                ideaType: formatted.ideaType,
+                evidence: formatted.evidence,
                 embedding: formatted.embedding,
                 isScriptGenerated: false,
                 videoProjectId: null,
@@ -378,9 +390,13 @@ class ContentService {
                 day: "numeric",
             });
             const lines = [
-                `Research Topics — ${today}`,
+                `Video Ideas — ${today}`,
                 "──────────────────────────────────",
-                ...sorted.map((t, i) => `${i + 1}. ${t.title}`),
+                ...sorted.map((t, i) => {
+                    const label = t.ideaType === "short" ? " [Shorts]" : "";
+                    const concept = t.concept ? `\n   ${t.concept}` : "";
+                    return `${i + 1}. ${t.title}${label}${concept}`;
+                }),
             ];
             return { text: lines.join("\n"), count: sorted.length };
         };

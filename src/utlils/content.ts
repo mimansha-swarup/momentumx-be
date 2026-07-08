@@ -5,6 +5,7 @@ import { embeddingModel } from "../config/ai.js";
 import { firebase } from "../config/firebase.js";
 import ContentRepository from "../repository/content.repository.js";
 import ExtractService from "../service/extract.service.js";
+import { IGeneratedIdea } from "../types/routes/content.js";
 
 function extractChannelField(value: unknown, field: "id" | "description"): string {
   if (typeof value === "string") return field === "id" ? value : "";
@@ -27,6 +28,23 @@ export const formatGeneratedTitle = async (title: string, userId: string, batchI
     archived: false,
     videoProjectId: null,
     userFeedback: null,
+  };
+};
+
+// Idea docs (phase 2): the working title is the embedded/displayed handle;
+// concept/type/evidence ride along. BYO-title docs stay title-only via
+// formatGeneratedTitle above.
+export const formatGeneratedIdea = async (
+  idea: IGeneratedIdea,
+  userId: string,
+  batchId?: string,
+) => {
+  const base = await formatGeneratedTitle(idea.workingTitle, userId, batchId);
+  return {
+    ...base,
+    concept: idea.concept ?? null,
+    ideaType: idea.type === "short" ? "short" : "long",
+    evidence: idea.evidence?.trim() ? idea.evidence : null,
   };
 };
 export const formatGeneratedScript = (

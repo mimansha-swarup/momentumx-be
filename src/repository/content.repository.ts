@@ -151,17 +151,17 @@ class ContentRepository {
   // Active batch for regenerate/export — excludes embeddings (not needed here).
   getActiveBatch = async (
     userId: string,
-  ): Promise<Pick<ITopic, "id" | "title" | "createdAt" | "videoProjectId">[]> => {
+  ): Promise<Pick<ITopic, "id" | "title" | "concept" | "ideaType" | "createdAt" | "videoProjectId">[]> => {
     const snapshot = await this.db
       .collection(this.collection)
       .where("createdBy", "==", userId)
       .where("archived", "==", false)
-      .select("title", "createdAt", "videoProjectId")
+      .select("title", "concept", "ideaType", "createdAt", "videoProjectId")
       .get();
     return snapshot.docs.map((doc) => {
       const data = doc.data();
       data.id = doc.id;
-      return data as Pick<ITopic, "id" | "title" | "createdAt" | "videoProjectId">;
+      return data as Pick<ITopic, "id" | "title" | "concept" | "ideaType" | "createdAt" | "videoProjectId">;
     });
   };
 

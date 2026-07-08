@@ -114,7 +114,7 @@ class ContentRepository {
                 .collection(this.collection)
                 .where("createdBy", "==", userId)
                 .where("archived", "==", false)
-                .select("title", "createdAt", "videoProjectId")
+                .select("title", "concept", "ideaType", "createdAt", "videoProjectId")
                 .get();
             return snapshot.docs.map((doc) => {
                 const data = doc.data();

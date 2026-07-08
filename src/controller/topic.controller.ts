@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { Request, Response } from "express";
 import ContentService from "../service/content.service.js";
-import { formatGeneratedTitle } from "../utlils/content.js";
+import { formatGeneratedIdea } from "../utlils/content.js";
 import { asyncHandler } from "../middleware/async_handler.js";
 
 class TopicController {
@@ -42,11 +42,11 @@ class TopicController {
   });
 
   generateTopics = asyncHandler(async (req: Request, res: Response) => {
-    const data = await this.service.generateTopics(req.userId);
+    const ideas = await this.service.generateIdeas(req.userId);
     const batchId = randomUUID();
     const modifiedDataResults = await Promise.allSettled(
-      (data || [])?.map(async (record) =>
-        formatGeneratedTitle(record, req.userId, batchId),
+      (ideas || [])?.map(async (idea) =>
+        formatGeneratedIdea(idea, req.userId, batchId),
       ),
     );
     const modifiedData = modifiedDataResults
@@ -58,7 +58,7 @@ class TopicController {
     }
     const updatedData = await this.service.saveBatchTopics(modifiedData);
     res.sendSuccess({
-      message: "successfully generated topics",
+      message: "successfully generated ideas",
       data: updatedData,
     });
   });
@@ -74,12 +74,12 @@ class TopicController {
 
   regenerateAll = asyncHandler(async (req: Request, res: Response) => {
     const data = await this.service.regenerateAll(req.userId);
-    res.sendSuccess({ message: "Topics regenerated successfully", data });
+    res.sendSuccess({ message: "Ideas regenerated successfully", data });
   });
 
   regenerateOne = asyncHandler(async (req: Request, res: Response) => {
     const data = await this.service.regenerateOne(req.userId, req.params.topicId);
-    res.sendSuccess({ message: "Topic regenerated successfully", data });
+    res.sendSuccess({ message: "Idea regenerated successfully", data });
   });
 
   updateFeedback = asyncHandler(async (req: Request, res: Response) => {
@@ -90,7 +90,7 @@ class TopicController {
 
   exportTopics = asyncHandler(async (req: Request, res: Response) => {
     const data = await this.service.exportTopics(req.userId);
-    res.sendSuccess({ message: "Topics exported successfully", data });
+    res.sendSuccess({ message: "Ideas exported successfully", data });
   });
 }
 

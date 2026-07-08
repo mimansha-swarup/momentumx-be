@@ -1,5 +1,23 @@
 import { GenerationConfig, SchemaType } from "@google/generative-ai";
 
+// Idea generation (step 1): concepts, not headlines. Schema-enforced.
+export const GENERATION_CONFIG_IDEAS: GenerationConfig = {
+  responseMimeType: "application/json",
+  responseSchema: {
+    type: SchemaType.ARRAY,
+    items: {
+      type: SchemaType.OBJECT,
+      properties: {
+        concept: { type: SchemaType.STRING },
+        workingTitle: { type: SchemaType.STRING },
+        type: { type: SchemaType.STRING, enum: ["long", "short"], format: "enum" },
+        evidence: { type: SchemaType.STRING },
+      },
+      required: ["concept", "workingTitle", "type"],
+    },
+  },
+};
+
 export const GENERATION_CONFIG_TITLES: GenerationConfig = {
   responseMimeType: "application/json",
   responseSchema: {
