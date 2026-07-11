@@ -31,37 +31,32 @@ class ContentService {
             "{title}": title,
         });
         this.getPaginatedUsersTopics = async ({ userId, limit, cursor, filters, }) => {
-            try {
-                const docs = await this.repo.getTopics({
-                    userId,
-                    limit,
-                    cursor,
-                    filters,
-                });
-                const lastDoc = docs[docs.length - 1];
-                const nextCursor = lastDoc
-                    ? {
-                        createdAt: lastDoc.createdAt.toDate().toISOString(),
-                        docId: lastDoc.id,
-                    }
-                    : null;
-                return {
-                    meta: {
-                        nextCursor,
-                        hasNextPage: limit === docs.length,
-                    },
-                    lists: docs?.map((doc) => ({
-                        ...doc,
-                        createdAt: typeof doc.createdAt === "string"
-                            ? doc.createdAt
-                            : doc.createdAt?.toDate()?.toISOString(),
-                        updatedAt: doc?.updatedAt,
-                    })),
-                };
-            }
-            catch (error) {
-                throw error;
-            }
+            const docs = await this.repo.getTopics({
+                userId,
+                limit,
+                cursor,
+                filters,
+            });
+            const lastDoc = docs[docs.length - 1];
+            const nextCursor = lastDoc
+                ? {
+                    createdAt: lastDoc.createdAt.toDate().toISOString(),
+                    docId: lastDoc.id,
+                }
+                : null;
+            return {
+                meta: {
+                    nextCursor,
+                    hasNextPage: limit === docs.length,
+                },
+                lists: docs?.map((doc) => ({
+                    ...doc,
+                    createdAt: typeof doc.createdAt === "string"
+                        ? doc.createdAt
+                        : doc.createdAt?.toDate()?.toISOString(),
+                    updatedAt: doc?.updatedAt,
+                })),
+            };
         };
         // Step 1 of the pipeline: IDEA generation (phase 2). Produces researched
         // video concepts — headline optimization happens post-script at the Title
@@ -167,9 +162,6 @@ class ContentService {
             try {
                 // Project is mandatory now — load it first (throws NotFound/Forbidden).
                 const vps = this.videoProjectService;
-                if (!vps) {
-                    throw NotFound("Video project service unavailable");
-                }
                 const project = await vps.getById(projectId, userId);
                 const [userRecord, topic] = await Promise.all([
                     this.userRepo.get(userId),
@@ -258,24 +250,22 @@ class ContentService {
             // Fan out the stale cascade to ALL projects on each active topic — a topic
             // can back multiple video projects, so keying off topic.videoProjectId alone
             // would only reach one of them.
-            if (this.videoProjectService) {
-                for (const topic of activeTopics) {
-                    let projects = [];
+            for (const topic of activeTopics) {
+                let projects = [];
+                try {
+                    projects = await this.videoProjectService.getProjectsByTopic(topic.id, userId);
+                }
+                catch (err) {
+                    console.error(JSON.stringify({ event: "stale_cascade_lookup_failed", from: "research", topicId: topic.id, userId, message: err?.message }));
+                    continue;
+                }
+                for (const project of projects) {
                     try {
-                        projects = await this.videoProjectService.getProjectsByTopic(topic.id, userId);
+                        await this.videoProjectService.markStale(project.id, "research");
+                        await this.videoProjectService.markPackagingDocumentStale(project.id, "research_regenerated");
                     }
                     catch (err) {
-                        console.error(JSON.stringify({ event: "stale_cascade_lookup_failed", from: "research", topicId: topic.id, userId, message: err?.message }));
-                        continue;
-                    }
-                    for (const project of projects) {
-                        try {
-                            await this.videoProjectService.markStale(project.id, "research");
-                            await this.videoProjectService.markPackagingDocumentStale(project.id, "research_regenerated");
-                        }
-                        catch (err) {
-                            console.error(JSON.stringify({ event: "stale_cascade_failed", from: "research", projectId: project.id, userId, message: err?.message }));
-                        }
+                        console.error(JSON.stringify({ event: "stale_cascade_failed", from: "research", projectId: project.id, userId, message: err?.message }));
                     }
                 }
             }
@@ -381,7 +371,7 @@ class ContentService {
                     accumulatedRes += part;
             }
             await this.repo.editScript(scriptId, { script: accumulatedRes });
-            if (this.videoProjectService && scriptDoc.videoProjectId) {
+            if (scriptDoc.videoProjectId) {
                 try {
                     const proj = await this.videoProjectService.getById(scriptDoc.videoProjectId, userId);
                     if (proj) {

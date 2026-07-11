@@ -94,7 +94,7 @@ describe("ContentService.generateIdeas", () => {
     researchContext.getIdeaSignals = jest.fn().mockResolvedValue("Live research signals:\nSome trend — 1.2M views");
     // Fresh stream per call — an async generator is single-use.
     mockGenerate.mockImplementation(async () => makeStream(IDEAS));
-    service = new ContentService(repo, userRepo, undefined, researchContext);
+    service = new ContentService(repo, userRepo, {} as any, researchContext);
   });
 
   it("returns parsed idea objects and injects research signals into the prompt", async () => {
@@ -110,7 +110,7 @@ describe("ContentService.generateIdeas", () => {
   });
 
   it("degrades cleanly when no research context service is wired", async () => {
-    service = new ContentService(repo, userRepo);
+    service = new ContentService(repo, userRepo, {} as any);
     const ideas = await service.generateIdeas("user-1");
 
     expect(ideas).toHaveLength(2);

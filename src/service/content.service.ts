@@ -44,7 +44,7 @@ class ContentService {
   constructor(
     repo: ContentRepository,
     userRepo: UserRepository,
-    private videoProjectService?: VideoProjectService,
+    private videoProjectService: VideoProjectService,
     private researchContext?: ResearchContextService,
   ) {
     this.repo = repo;
@@ -73,39 +73,35 @@ class ContentService {
     cursor,
     filters,
   }: IGetTopicByUserIdArgs) => {
-    try {
-      const docs = await this.repo.getTopics({
-        userId,
-        limit,
-        cursor,
-        filters,
-      });
-      const lastDoc = docs[docs.length - 1];
+    const docs = await this.repo.getTopics({
+      userId,
+      limit,
+      cursor,
+      filters,
+    });
+    const lastDoc = docs[docs.length - 1];
 
-      const nextCursor = lastDoc
-        ? {
-            createdAt: lastDoc.createdAt.toDate().toISOString(),
-            docId: lastDoc.id,
-          }
-        : null;
+    const nextCursor = lastDoc
+      ? {
+          createdAt: lastDoc.createdAt.toDate().toISOString(),
+          docId: lastDoc.id,
+        }
+      : null;
 
-      return {
-        meta: {
-          nextCursor,
-          hasNextPage: limit === docs.length,
-        },
-        lists: docs?.map((doc) => ({
-          ...doc,
-          createdAt:
-            typeof doc.createdAt === "string"
-              ? doc.createdAt
-              : doc.createdAt?.toDate()?.toISOString(),
-          updatedAt: doc?.updatedAt,
-        })),
-      };
-    } catch (error) {
-      throw error;
-    }
+    return {
+      meta: {
+        nextCursor,
+        hasNextPage: limit === docs.length,
+      },
+      lists: docs?.map((doc) => ({
+        ...doc,
+        createdAt:
+          typeof doc.createdAt === "string"
+            ? doc.createdAt
+            : doc.createdAt?.toDate()?.toISOString(),
+        updatedAt: doc?.updatedAt,
+      })),
+    };
   };
 
   // Step 1 of the pipeline: IDEA generation (phase 2). Produces researched
@@ -227,9 +223,6 @@ class ContentService {
     try {
       // Project is mandatory now — load it first (throws NotFound/Forbidden).
       const vps = this.videoProjectService;
-      if (!vps) {
-        throw NotFound("Video project service unavailable");
-      }
       const project = await vps.getById(projectId, userId);
 
       const [userRecord, topic] = await Promise.all([
@@ -341,22 +334,20 @@ class ContentService {
     // Fan out the stale cascade to ALL projects on each active topic — a topic
     // can back multiple video projects, so keying off topic.videoProjectId alone
     // would only reach one of them.
-    if (this.videoProjectService) {
-      for (const topic of activeTopics) {
-        let projects: Awaited<ReturnType<VideoProjectService["getProjectsByTopic"]>> = [];
+    for (const topic of activeTopics) {
+      let projects: Awaited<ReturnType<VideoProjectService["getProjectsByTopic"]>> = [];
+      try {
+        projects = await this.videoProjectService.getProjectsByTopic(topic.id, userId);
+      } catch (err) {
+        console.error(JSON.stringify({ event: "stale_cascade_lookup_failed", from: "research", topicId: topic.id, userId, message: (err as Error)?.message }));
+        continue;
+      }
+      for (const project of projects) {
         try {
-          projects = await this.videoProjectService.getProjectsByTopic(topic.id, userId);
+          await this.videoProjectService.markStale(project.id, "research");
+          await this.videoProjectService.markPackagingDocumentStale(project.id, "research_regenerated");
         } catch (err) {
-          console.error(JSON.stringify({ event: "stale_cascade_lookup_failed", from: "research", topicId: topic.id, userId, message: (err as Error)?.message }));
-          continue;
-        }
-        for (const project of projects) {
-          try {
-            await this.videoProjectService.markStale(project.id, "research");
-            await this.videoProjectService.markPackagingDocumentStale(project.id, "research_regenerated");
-          } catch (err) {
-            console.error(JSON.stringify({ event: "stale_cascade_failed", from: "research", projectId: project.id, userId, message: (err as Error)?.message }));
-          }
+          console.error(JSON.stringify({ event: "stale_cascade_failed", from: "research", projectId: project.id, userId, message: (err as Error)?.message }));
         }
       }
     }
@@ -500,7 +491,7 @@ class ContentService {
 
     await this.repo.editScript(scriptId, { script: accumulatedRes });
 
-    if (this.videoProjectService && scriptDoc.videoProjectId) {
+    if (scriptDoc.videoProjectId) {
       try {
         const proj = await this.videoProjectService.getById(scriptDoc.videoProjectId, userId);
         if (proj) {

@@ -53,7 +53,7 @@ describe("ContentService — updateScriptFeedback", () => {
   beforeEach(() => {
     mockContentRepo = new MockContentRepo() as jest.Mocked<ContentRepository>;
     mockUserRepo = new MockUserRepo() as jest.Mocked<UserRepository>;
-    service = new ContentService(mockContentRepo, mockUserRepo);
+    service = new ContentService(mockContentRepo, mockUserRepo, {} as any);
   });
 
   it("throws 404 if script not found", async () => {
@@ -166,7 +166,7 @@ describe("ContentService — exportScript", () => {
   beforeEach(() => {
     mockContentRepo = new MockContentRepo() as jest.Mocked<ContentRepository>;
     mockUserRepo = new MockUserRepo() as jest.Mocked<UserRepository>;
-    service = new ContentService(mockContentRepo, mockUserRepo);
+    service = new ContentService(mockContentRepo, mockUserRepo, {} as any);
   });
 
   it("throws 404 if script not found", async () => {
@@ -201,7 +201,7 @@ describe("ContentService — edit whitelist & SSE ownership guard", () => {
   beforeEach(() => {
     mockContentRepo = new MockContentRepo() as jest.Mocked<ContentRepository>;
     mockUserRepo = new MockUserRepo() as jest.Mocked<UserRepository>;
-    service = new ContentService(mockContentRepo, mockUserRepo);
+    service = new ContentService(mockContentRepo, mockUserRepo, {} as any);
   });
 
   afterEach(() => jest.clearAllMocks());
