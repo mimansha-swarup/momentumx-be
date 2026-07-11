@@ -23,7 +23,7 @@ const researchRepo = new ResearchRepository();
 const videoProjectService = new VideoProjectService(videoProjectRepo, contentRepo, packagingRepository);
 const contextService = new ContextService(userRepository, contentRepo, hooksRepository, videoProjectService);
 const researchContextService = new ResearchContextService(researchRepo);
-const packagingService = new PackagingService(packagingRepository, hooksRepository, videoProjectService, contextService, researchContextService);
+const packagingService = new PackagingService(packagingRepository, videoProjectService, contextService, researchContextService);
 const packagingController = new PackagingController(packagingService);
 
 router.use(authMiddleware);

@@ -5,42 +5,24 @@ import { firebase } from "../config/firebase.js";
 import { BadRequest, Forbidden, NotFound } from "../utlils/errors.js";
 import { buildCreatorContextBlock, buildHookSection, buildScriptSection, fillTemplate, THUMBNAIL_FORMAT_DIRECTIVE, resolveVideoFormat, } from "../utlils/prompt-blocks.js";
 class PackagingService {
-    constructor(repo, hooksRepo, videoProjectService, contextService, researchContext) {
-        this.hooksRepo = hooksRepo;
+    constructor(repo, videoProjectService, contextService, researchContext) {
         this.videoProjectService = videoProjectService;
         this.contextService = contextService;
         this.researchContext = researchContext;
-        this.resolveSelectedHook = async (videoProjectId, userId) => {
-            if (!videoProjectId || !this.videoProjectService)
-                return "";
-            const project = await this.videoProjectService.getById(videoProjectId, userId);
-            if (!project.hooksId || project.selectedHookIndex == null)
-                return "";
-            const hooksBatch = await this.hooksRepo.findById(project.hooksId);
-            if (!hooksBatch)
-                return "";
-            return hooksBatch.hooks?.[project.selectedHookIndex] ?? "";
-        };
         // Best-available context (phases 1D): channel context always, script/hook
         // resolved server-side from the project when not supplied by the client.
         // An explicit body script wins over the stored one (supports edited-but-
         // unsaved scripts and keeps existing calls behaving identically).
         this.resolveGenerationInputs = async (userId, videoProjectId, explicitScript) => {
-            if (this.contextService) {
-                const ctx = await this.contextService.assemble(userId, videoProjectId ? { videoProjectId } : {});
-                return {
-                    channel: ctx.channelContext,
-                    script: explicitScript?.trim()
-                        ? explicitScript
-                        : ctx.sessionContext.script ?? "",
-                    hook: ctx.sessionContext.selectedHook ?? "",
-                    workingTitle: ctx.sessionContext.workingTitle,
-                };
-            }
-            // Legacy path (no context service wired, e.g. older tests): behavior
-            // identical to pre-1D — explicit script only, hook from the project.
-            const hook = await this.resolveSelectedHook(videoProjectId, userId);
-            return { channel: null, script: explicitScript ?? "", hook, workingTitle: null };
+            const ctx = await this.contextService.assemble(userId, videoProjectId ? { videoProjectId } : {});
+            return {
+                channel: ctx.channelContext,
+                script: explicitScript?.trim()
+                    ? explicitScript
+                    : ctx.sessionContext.script ?? "",
+                hook: ctx.sessionContext.selectedHook ?? "",
+                workingTitle: ctx.sessionContext.workingTitle,
+            };
         };
         this.generateContent = async (userPrompt, config = GENERATION_CONFIG_PACKAGING) => {
             const result = await generateStreamingContent(PACKAGING_SYSTEM_PROMPT, userPrompt, config);
@@ -161,48 +143,39 @@ class PackagingService {
             };
         };
         this.savePackaging = async (userId, data, videoProjectId) => {
-            try {
-                if (videoProjectId && this.videoProjectService) {
-                    await this.videoProjectService.getById(videoProjectId, userId);
+            if (videoProjectId) {
+                await this.videoProjectService.getById(videoProjectId, userId);
+            }
+            // Coerce any present content field to its canonical stored shape so the
+            // persisted doc matches what regenerateItem and the readers expect.
+            const normalized = { ...data };
+            for (const field of PackagingService.ITEM_FIELDS) {
+                if (field in data && data[field] != null) {
+                    normalized[field] = this.normalizeField(field, data[field]);
                 }
-                // Coerce any present content field to its canonical stored shape so the
-                // persisted doc matches what regenerateItem and the readers expect.
-                const normalized = { ...data };
-                for (const field of PackagingService.ITEM_FIELDS) {
-                    if (field in data && data[field] != null) {
-                        normalized[field] = this.normalizeField(field, data[field]);
-                    }
-                }
-                const itemStatuses = this.buildItemStatuses(normalized);
-                const packagingData = {
-                    ...normalized,
-                    createdBy: userId,
-                    itemStatuses,
-                    ...(videoProjectId ? { videoProjectId } : {}),
-                };
-                // Stale flags are set fresh ONLY when the document is first created — a
-                // brand-new package is never stale. On update (re-save) we must NOT touch
-                // them: a plain re-save would otherwise silently un-stale a package that
-                // an upstream regenerate had marked stale. Genuine un-staling happens via
-                // regenerateItem → refreshPackagingStep.
-                const freshStaleFlags = { isStale: false, staleReason: null, staleSince: null };
-                let result;
-                // Upsert: check if packaging already exists for this video project
-                if (videoProjectId) {
-                    const existing = await this.repo.findByVideoProject(videoProjectId);
-                    if (existing) {
-                        result = await this.repo.update(existing.id, {
-                            ...packagingData,
-                            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-                        });
-                    }
-                    else {
-                        result = await this.repo.save({
-                            ...packagingData,
-                            ...freshStaleFlags,
-                            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                        });
-                    }
+            }
+            const itemStatuses = this.buildItemStatuses(normalized);
+            const packagingData = {
+                ...normalized,
+                createdBy: userId,
+                itemStatuses,
+                ...(videoProjectId ? { videoProjectId } : {}),
+            };
+            // Stale flags are set fresh ONLY when the document is first created — a
+            // brand-new package is never stale. On update (re-save) we must NOT touch
+            // them: a plain re-save would otherwise silently un-stale a package that
+            // an upstream regenerate had marked stale. Genuine un-staling happens via
+            // regenerateItem → refreshPackagingStep.
+            const freshStaleFlags = { isStale: false, staleReason: null, staleSince: null };
+            let result;
+            // Upsert: check if packaging already exists for this video project
+            if (videoProjectId) {
+                const existing = await this.repo.findByVideoProject(videoProjectId);
+                if (existing) {
+                    result = await this.repo.update(existing.id, {
+                        ...packagingData,
+                        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    });
                 }
                 else {
                     result = await this.repo.save({
@@ -211,42 +184,35 @@ class PackagingService {
                         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
                     });
                 }
-                if (videoProjectId && this.videoProjectService) {
-                    try {
-                        await this.videoProjectService.linkResource(videoProjectId, "packaging", result.id, userId);
-                        await this.videoProjectService.completeStep(videoProjectId, "packaging", userId);
-                    }
-                    catch (pipelineError) {
-                        console.error(JSON.stringify({ event: "pipeline_transition_failed", step: "packaging", projectId: videoProjectId, packagingId: result.id, userId, message: pipelineError?.message }));
-                    }
+            }
+            else {
+                result = await this.repo.save({
+                    ...packagingData,
+                    ...freshStaleFlags,
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                });
+            }
+            if (videoProjectId) {
+                try {
+                    await this.videoProjectService.linkResource(videoProjectId, "packaging", result.id, userId);
+                    await this.videoProjectService.completeStep(videoProjectId, "packaging", userId);
                 }
-                return result;
+                catch (pipelineError) {
+                    console.error(JSON.stringify({ event: "pipeline_transition_failed", step: "packaging", projectId: videoProjectId, packagingId: result.id, userId, message: pipelineError?.message }));
+                }
             }
-            catch (error) {
-                throw error;
-            }
+            return result;
         };
         this.getPackaging = async (packagingId, userId) => {
-            try {
-                const result = await this.repo.get(packagingId);
-                if (!result)
-                    return null;
-                if (result.createdBy !== userId)
-                    throw Forbidden();
-                return result;
-            }
-            catch (error) {
-                throw error;
-            }
+            const result = await this.repo.get(packagingId);
+            if (!result)
+                return null;
+            if (result.createdBy !== userId)
+                throw Forbidden();
+            return result;
         };
         this.getPackagingByUser = async (userId) => {
-            try {
-                const result = await this.repo.getByUserId(userId);
-                return result;
-            }
-            catch (error) {
-                throw error;
-            }
+            return this.repo.getByUserId(userId);
         };
         this.regenerateItem = async (userId, packagingId, item, script, title, duration) => {
             const pkg = await this.repo.get(packagingId);
@@ -328,7 +294,7 @@ class PackagingService {
             // Packaging is fresh again — clear the project's stale packaging step so the
             // dashboard "needs update" badge actually clears. Best-effort: a sync failure
             // must not fail the already-saved regeneration.
-            if (!anyStillStale && videoProjectId && this.videoProjectService) {
+            if (!anyStillStale && videoProjectId) {
                 try {
                     await this.videoProjectService.refreshPackagingStep(videoProjectId, userId);
                 }
@@ -338,7 +304,7 @@ class PackagingService {
             }
             // The thumbnail content changed -> refresh the project's dashboard thumbnailHint
             // (best-effort; otherwise it stays the brief captured at save time).
-            if (item === "thumbnail" && videoProjectId && this.videoProjectService) {
+            if (item === "thumbnail" && videoProjectId) {
                 try {
                     const briefs = updateData.thumbnail;
                     await this.videoProjectService.setThumbnailHint(videoProjectId, briefs?.[0] ?? null, userId);
