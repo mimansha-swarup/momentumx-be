@@ -2,13 +2,13 @@
 title: "Research — Feature Spec"
 description: "User flow, states, regeneration behavior, and edge cases for the Research step"
 status: "implemented"
-last_updated: 2026-03-17
-tags: ["feature", "research", "topics", "spec"]
+last_updated: 2026-07-12
+tags: ["feature", "research", "ideas", "spec"]
 ---
 
 # Research — Feature Spec
 
-The Research step is the entry point of the MomentumX pipeline. The creator uses it to discover what video to make next — generating AI-powered title ideas personalized to their channel, niche, and competitive landscape.
+The Research step is the entry point of the MomentumX pipeline. The creator uses it to discover what video to make next — generating AI-powered video ideas personalized to their channel, niche, and competitive landscape.
 
 ---
 
@@ -18,30 +18,30 @@ The Research step is the entry point of the MomentumX pipeline. The creator uses
 |---|---|
 | **Pipeline position** | Step 1 of 4 |
 | **Input** | User's onboarding data (channel, competitors, website, niche, audience) |
-| **Output** | A selected topic that unlocks the Script step |
-| **Blocks** | All downstream steps (Script → Hooks → Packaging) depend on a selected topic |
+| **Output** | A selected idea that unlocks the Script step |
+| **Blocks** | All downstream steps (Script → Hooks → Packaging) depend on a selected idea |
 
 ---
 
 ## User Flow
 
-### First-time (no existing topics)
+### First-time (no existing ideas)
 
 1. Creator opens the Research step.
 2. System shows an empty state with a **Generate Ideas** CTA.
 3. Creator clicks Generate Ideas.
-4. System generates 10 title ideas using the creator's channel and competitor context.
+4. System generates 10 video ideas using the creator's channel and competitor context.
 5. Ideas are displayed as cards — status transitions to `in_review`.
 6. Creator reviews the 10 ideas.
 7. Creator selects one → a **video project** is created, status transitions to `completed`.
-8. Creator is taken to the Script step with the selected topic pre-loaded.
+8. Creator is taken to the Script step with the selected idea pre-loaded.
 
-### Returning (topics already exist)
+### Returning (ideas already exist)
 
 1. Creator opens the Research step.
-2. System loads the most recent active batch of topic cards.
-3. If a topic is already selected (step is `completed`), the selected card is highlighted.
-4. Creator can select a different topic from the current batch (replaces current selection).
+2. System loads the most recent active batch of idea cards.
+3. If an idea is already selected (step is `completed`), the selected card is highlighted.
+4. Creator can select a different idea from the current batch (replaces current selection).
 5. Creator can regenerate the full batch (Regenerate All).
 6. Creator can replace a single card (Regenerate One).
 
@@ -59,8 +59,8 @@ not_started → generating → in_review → completed
 |---|---|---|
 | `not_started` | No generation has run | Empty state, Generate Ideas CTA |
 | `generating` | AI is generating ideas | Loading state, "Generating your ideas..." |
-| `in_review` | Generation complete, awaiting selection | 10 topic cards, all selectable |
-| `completed` | Creator has selected a topic | Selected card highlighted, proceed to Script unlocked |
+| `in_review` | Generation complete, awaiting selection | 10 idea cards, all selectable |
+| `completed` | Creator has selected an idea | Selected card highlighted, proceed to Script unlocked |
 
 **Transition triggers:**
 
@@ -68,12 +68,12 @@ not_started → generating → in_review → completed
 |---|---|---|
 | Creator clicks Generate Ideas | `not_started` | `generating` |
 | Generation completes | `generating` | `in_review` |
-| Creator selects a topic | `in_review` | `completed` |
+| Creator selects an idea | `in_review` | `completed` |
 | Creator clicks Regenerate All | `in_review` | `generating` |
 | Creator clicks Regenerate All | `completed` | `generating` |
 | Creator clicks Regenerate One (single slot) | any | that slot regenerates; step status unchanged |
 
-**Stale note:** Research is never marked stale by downstream changes. Research is upstream — regenerating a script or hooks does not change the topic selection.
+**Stale note:** Research is never marked stale by downstream changes. Research is upstream — regenerating a script or hooks does not change the idea selection.
 
 ---
 
@@ -94,9 +94,9 @@ Every generation uses the creator's onboarding data:
 
 ## Repetition Avoidance (KMeans)
 
-To prevent the AI from suggesting titles it has suggested before, MomentumX runs KMeans clustering on all previously generated topics for the user before each generation.
+To prevent the AI from suggesting ideas it has suggested before, MomentumX runs KMeans clustering on all previously generated ideas for the user before each generation.
 
-- All past topic titles (including archived batches) are fetched.
+- All past idea titles (including archived batches) are fetched.
 - Titles are clustered by semantic similarity using their vector embeddings.
 - Representative titles from each cluster are passed to the AI prompt as "Avoid these."
 - This ensures each generation explores new idea space.
@@ -109,40 +109,41 @@ To prevent the AI from suggesting titles it has suggested before, MomentumX runs
 
 ### Regenerate All
 
-Creates a completely fresh batch of 10 topic ideas. Old batch is archived, not deleted.
+Creates a completely fresh batch of 10 video ideas. Old batch is archived, not deleted.
 
-- Old topics: `archived: true` on all documents in the old batch.
-- New topics get a new `batchId`.
+- Old ideas: `archived: true` on all documents in the old batch.
+- New ideas get a new `batchId`.
 - KMeans clustering includes the newly archived batch for the next generation.
-- **Stale cascade:** For each archived topic, the cascade fans out to **all** video projects backed by that topic (looked up via `getProjectsByTopic` → `findByTopicId`) — the Script, Hooks, and Packaging steps on every such project are marked `stale: true`. The projects are not deleted — the stale warning prompts the creator to take action.
+- **Stale cascade:** For each archived idea, the cascade fans out to **all** video projects backed by that idea (looked up via `getProjectsByIdea` → `findByIdeaId`) — the Script, Hooks, and Packaging steps on every such project are marked `stale: true`. The projects are not deleted — the stale warning prompts the creator to take action.
 
 ### Regenerate One
 
-Replaces a single topic card in the current batch. The slot position is preserved.
+Replaces a single idea card in the current batch. The slot position is preserved.
 
 - Only that one document is replaced.
 - `batchId` stays the same.
 - No stale cascade — the step-level status is unaffected.
-- If the replaced card was the selected topic, the selection is cleared and step reverts to `in_review`.
+- If the replaced card was the selected idea, the selection is cleared and step reverts to `in_review`.
 
 ---
 
-## Output: Topic Document Shape
+## Output: Idea Document Shape
 
-Each generated topic is saved to Firestore with:
+Each generated idea is saved to Firestore with:
 
 ```
 {
   id: string                   // UUID
-  title: string                // AI-generated YouTube title
+  title: string                // AI-generated working title
+  concept: string              // AI-generated video concept/theme
+  ideaType: string             // "evergreen" | "trendy" | etc.
+  evidence: string             // Grounding from research signals
   createdBy: string            // userId
   createdAt: Timestamp         // server-side
-  isScriptGenerated: boolean   // true once a script has been generated for this topic
   embedding: number[]          // vector embedding (gemini-embedding-001) for KMeans
   batchId: string              // identifies the generation batch
-  archived: boolean            // true if this topic was superseded by Regenerate All
-  videoProjectId: string | null // set when this topic is linked to a video project
-  userFeedback: "like" | "dislike" | null  // per-topic feedback signal
+  archived: boolean            // true if this idea was superseded by Regenerate All
+  videoProjectId: string | null // set when this idea is linked to a video project
 }
 ```
 
@@ -153,10 +154,10 @@ Each generated topic is saved to Firestore with:
 | Scenario | Behavior |
 |---|---|
 | Generation fails (Gemini error) | Error response returned. Status stays `not_started` or `in_review`. Creator can retry. |
-| All generated titles fail embedding | Titles where embedding fails are silently dropped from the batch. If zero succeed, a "Unable to generate at the moment" error is returned. |
+| All generated ideas fail embedding | Ideas where embedding fails are silently dropped from the batch. If zero succeed, a "Unable to generate at the moment" error is returned. |
 | Creator has no onboarding data | Generation will produce generic output. No explicit error — this is a product gap to address with onboarding enforcement. |
-| Creator regenerates while video projects exist on active topics | Old batch is archived; the stale cascade fans out to all projects backed by each archived topic, marking their downstream steps (Script, Hooks, Packaging) stale. Creator is warned. |
-| Creator selects a topic from an archived batch | Not currently prevented. Will need a guard once video project model ships. |
+| Creator regenerates while video projects exist on active ideas | Old batch is archived; the stale cascade fans out to all projects backed by each archived idea, marking their downstream steps (Script, Hooks, Packaging) stale. Creator is warned. |
+| Creator selects an idea from an archived batch | Not currently prevented. Will need a guard once video project model ships. |
 
 ---
 
@@ -166,7 +167,7 @@ These are planned for future phases but explicitly not part of the current Resea
 
 | Feature | Notes |
 |---|---|
-| Topic refinement via follow-up prompt | "Make these more aggressive" style iteration. Not built. |
+| Idea refinement via follow-up prompt | "Make these more aggressive" style iteration. Not built. |
 | Live competitor data refresh | Refreshing competitor channel data beyond onboarding. Not built. |
 
 ---
@@ -175,21 +176,21 @@ These are planned for future phases but explicitly not part of the current Resea
 
 | Capability | Status | Notes |
 |---|---|---|
-| Generate 10 topic ideas | ✅ Built | `POST /v1/topics/generate` |
-| Save topics to Firestore | ✅ Built | Batch write with embeddings |
-| Paginated topic list | ✅ Built | `GET /v1/topics` |
-| Edit a topic title | ✅ Built | `PATCH /v1/topics/edit/:topicId` |
+| Generate 10 video ideas | ✅ Built | `POST /v1/ideas/generate` |
+| Save ideas to Firestore | ✅ Built | Batch write with embeddings |
+| Paginated idea list | ✅ Built | `GET /v1/ideas` |
+| Edit an idea title | ✅ Built | `PATCH /v1/ideas/edit/:ideaId` |
 | KMeans repetition avoidance | ✅ Built | Runs before every generation |
-| Regenerate All | ✅ Built | `POST /v1/topics/regenerate-all` |
-| Regenerate One (slot-replace) | ✅ Built | `POST /v1/topics/:topicId/regenerate` |
-| Per-topic feedback (like/dislike) | ✅ Built | `PATCH /v1/topics/:topicId/feedback` |
-| Export topics | ✅ Built | `GET /v1/topics/export` |
-| `archived` + `batchId` fields on topics | ✅ Built | Set on generation |
+| Regenerate All | ✅ Built | `POST /v1/ideas/regenerate-all` |
+| Regenerate One (slot-replace) | ✅ Built | `POST /v1/ideas/:ideaId/regenerate` |
+| Export ideas | ✅ Built | `GET /v1/ideas/export` |
+| `archived` + `batchId` fields on ideas | ✅ Built | Set on generation |
 | Stale cascade on Regenerate All | ✅ Built | Marks downstream video project steps stale |
+| Implicit signal capture (export, regenerate) | ✅ Built | Events recorded in `events` collection |
 | Trend discovery | ✅ Built | `GET /v1/research/trending` |
 | Competitor performance analysis | ✅ Built | `GET /v1/research/competitors` |
 | Keyword / SEO data | ✅ Built | `GET /v1/research/keywords` |
-| Video project creation on topic selection | ✅ Built — handled by the video projects module (`POST /v1/video-projects`) |
+| Video project creation on idea selection | ✅ Built — handled by the video projects module (`POST /v1/video-projects`) |
 
 ---
 

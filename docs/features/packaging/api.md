@@ -2,7 +2,7 @@
 title: "Packaging API Reference"
 description: "Endpoint reference for packaging generation, save, list, and retrieval."
 date: 2026-02-27
-last_updated: 2026-03-17
+last_updated: 2026-07-12
 status: "implemented"
 tags: ["api", "packaging"]
 ---
@@ -28,7 +28,7 @@ Base path: `/v1/packaging`
 | `GET` | `/v1/packaging/list` | List user's packaging | ✅ Built |
 | `GET` | `/v1/packaging/:packagingId` | Get single packaging | ✅ Built |
 | `POST` | `/v1/packaging/:packagingId/regenerate/:item` | Regenerate a specific packaging item | ✅ Built |
-| `PATCH` | `/v1/packaging/:packagingId/feedback` | Record per-item like/dislike | ✅ Built |
+| `POST` | `/v1/packaging/:packagingId/select-title` | Finalize a title, update project display title | ✅ Built |
 | `GET` | `/v1/packaging/:packagingId/export` | Export packaging as plain text | ✅ Built |
 
 ---
@@ -151,6 +151,7 @@ Generate a YouTube Shorts script. Structured as hook / body / CTA, written to fi
 |---|---|---|---|
 | `script` | `string` | Yes | Full script text |
 | `duration` | `number` | Yes | Target duration in seconds (e.g. `60`) |
+| `videoProjectId` | `string` | No | If provided, the server resolves the project's selected hook (`hooksId` + `selectedHookIndex`) and injects it as context. The hook is never sent by the client. |
 
 ### Response — `200`
 ```json
@@ -332,9 +333,9 @@ Regenerates a single packaging item and overwrites it on the existing document. 
 
 ---
 
-## PATCH `/v1/packaging/:packagingId/feedback`
+## POST `/v1/packaging/:packagingId/select-title`
 
-Records a like or dislike signal on a specific packaging item. Overwrites any prior feedback for that item.
+Finalize a title selection. Persists `selectedTitleIndex` on the packaging document and updates the linked video project's display title to the selected title.
 
 ### Path Parameters
 
@@ -346,19 +347,18 @@ Records a like or dislike signal on a specific packaging item. Overwrites any pr
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `item` | `string` | Yes | One of: `title`, `description`, `thumbnail`, `shorts` |
-| `feedback` | `"like" \| "dislike" \| null` | Yes | `null` clears existing feedback |
+| `index` | `number` | Yes | Array index of the selected title in the `titles` array (0–2) |
 
 ### Response — `200`
 
 ```json
 {
   "success": true,
-  "message": "Feedback updated successfully",
+  "message": "Title selected successfully",
   "data": {
     "id": "string",
-    "item": "title",
-    "feedback": "like"
+    "selectedTitleIndex": 1,
+    "updatedAt": "<timestamp>"
   }
 }
 ```
@@ -367,9 +367,10 @@ Records a like or dislike signal on a specific packaging item. Overwrites any pr
 
 | Status | Condition |
 |---|---|
-| 400 | `item` or `feedback` missing, or invalid values |
-| 403 | Not owned by requesting user |
-| 404 | Packaging document not found |
+| `400` | `index` missing or out of bounds |
+| `403` | Not owned by requesting user |
+| `404` | Packaging document not found |
+| `500` | Failed to update video project |
 
 ---
 

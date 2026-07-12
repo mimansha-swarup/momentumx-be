@@ -2,7 +2,7 @@
 title: "Script — API Reference"
 description: "All endpoints for script generation, retrieval, and editing."
 date: 2026-02-27
-last_updated: 2026-03-11
+last_updated: 2026-07-12
 status: "implemented"
 tags: ["api", "script"]
 ---
@@ -24,24 +24,23 @@ All endpoints require `Authorization: Bearer <token>` except `GET /scripts/strea
 | `GET` | `/v1/scripts/:scriptId` | Get single script | ✅ Built |
 | `PATCH` | `/v1/scripts/edit/:scriptId` | Edit script text | ✅ Built |
 | `POST` | `/v1/scripts/:scriptId/regenerate` | Regenerate script (non-SSE) | ✅ Built |
-| `PATCH` | `/v1/scripts/:scriptId/feedback` | Record like/dislike on script | ✅ Built |
 | `GET` | `/v1/scripts/:scriptId/export` | Export script as plain text | ✅ Built |
 
 ---
 
 ## GET `/v1/scripts/stream/:projectId`
 
-Streams a full YouTube video script for the given video project via SSE. The script is generated for the topic referenced by `project.topicId`.
+Streams a full YouTube video script for the given video project via SSE. The script is generated for the idea referenced by `project.ideaId`.
 
 **Auth:** `?token=<firebase_jwt>` query param, verified by `sseAuthMiddleware`. Bearer headers not supported — browser `EventSource` API cannot send custom headers.
 
-**Note on `:projectId`:** This is the **video project ID**. The script document is saved under its own `randomUUID` id (reused across regenerations via `project.scriptId`), not the topic's id, and stores `topicId` + `videoProjectId` FKs.
+**Note on `:projectId`:** This is the **video project ID**. The script document is saved under its own `randomUUID` id (reused across regenerations via `project.scriptId`), not the idea's id, and stores `ideaId` + `videoProjectId` FKs.
 
 ### Path Parameters
 
 | Param | Type | Description |
 |---|---|---|
-| `projectId` | `string` | The video project to generate a script for (topic derived from `project.topicId`) |
+| `projectId` | `string` | The video project to generate a script for (idea derived from `project.ideaId`) |
 
 ### Query Parameters
 
@@ -69,8 +68,8 @@ data: [DONE]\n\n
 ```
 
 ### Side Effects on Completion
-- Script document saved to `scripts` collection under its own `randomUUID` id (reused via `project.scriptId` on regenerate), with `topicId` + `videoProjectId` FKs
-- Topic document updated: `isScriptGenerated: true`
+- Script document saved to `scripts` collection under its own `randomUUID` id (reused via `project.scriptId` on regenerate), with `ideaId` + `videoProjectId` FKs
+- Idea document updated: `isScriptGenerated: true`
 - Script linked to the project (`linkResource`) and the Script step completed (`completeStep`)
 
 ### Error Cases
@@ -81,7 +80,7 @@ These fire **before** the stream starts (headers not yet flushed), so they retur
 |---|---|
 | 401 | `token` query param missing |
 | 403 | Token invalid/expired, or project not owned by requesting user |
-| 404 | Video project not found, or its `topicId` topic not found |
+| 404 | Video project not found, or its `ideaId` idea not found |
 | 500 | Gemini generation failed or Firestore write failed (before stream start) |
 
 ### Notes
@@ -110,7 +109,7 @@ Returns all scripts owned by the authenticated user, ordered by `createdAt` desc
       "createdBy": "string",
       "createdAt": "ISO timestamp",
       "script": "string",
-      "topicId": "string",
+      "ideaId": "string",
       "videoProjectId": "string"
     }
   ]
@@ -138,7 +137,7 @@ Ownership enforced — `createdBy` must match the requesting user.
 
 | Param | Type | Description |
 |---|---|---|
-| `scriptId` | `string` | Script document ID (its own `randomUUID`, not the topicId) |
+| `scriptId` | `string` | Script document ID (its own `randomUUID`, not the ideaId) |
 
 ### Response — `200`
 
@@ -152,7 +151,7 @@ Ownership enforced — `createdBy` must match the requesting user.
     "createdBy": "string",
     "createdAt": "ISO timestamp",
     "script": "string",
-    "topicId": "string",
+    "ideaId": "string",
     "videoProjectId": "string"
   }
 }
@@ -215,23 +214,23 @@ Any subset of script fields to update. The update uses `{ merge: true }` — onl
 
 ## Script Document Schema
 
-Stored in the `scripts` Firestore collection. Document ID is the script's own `randomUUID`; `topicId` and `videoProjectId` link back to the source topic and owning project.
+Stored in the `scripts` Firestore collection. Document ID is the script's own `randomUUID`; `ideaId` and `videoProjectId` link back to the source idea and owning project.
 
 | Field | Type | Description |
 |---|---|---|
-| `id` | `string` | Document ID — own `randomUUID`, NOT the topicId |
-| `title` | `string` | Title of the topic this script was generated for |
+| `id` | `string` | Document ID — own `randomUUID`, NOT the ideaId |
+| `title` | `string` | Title of the idea this script was generated for |
 | `createdBy` | `string` | `userId` of the owner |
 | `createdAt` | `Timestamp` | Server-side Firestore timestamp |
 | `script` | `string` | Full script text |
-| `topicId` | `string` | FK → source topic |
+| `ideaId` | `string` | FK → source idea |
 | `videoProjectId` | `string` | FK → owning video project |
 
 ---
 
 ## POST `/v1/scripts/:scriptId/regenerate`
 
-Regenerates the script for a topic without SSE. Returns the full script in the response body once generation is complete.
+Regenerates the script for a idea without SSE. Returns the full script in the response body once generation is complete.
 
 ### Auth
 `Authorization: Bearer <token>` — required. Ownership enforced — `createdBy` must match the requesting user.
@@ -240,7 +239,7 @@ Regenerates the script for a topic without SSE. Returns the full script in the r
 
 | Param | Type | Description |
 |---|---|---|
-| `scriptId` | `string` | Script document ID (its own `randomUUID`, not the topicId) |
+| `scriptId` | `string` | Script document ID (its own `randomUUID`, not the ideaId) |
 
 ### Response — `200`
 
@@ -267,48 +266,6 @@ Regenerates the script for a topic without SSE. Returns the full script in the r
 | 403 | Script not owned by requesting user |
 | 404 | Script not found |
 | 500 | Gemini generation failed or Firestore write failed |
-
----
-
-## PATCH `/v1/scripts/:scriptId/feedback`
-
-Records a like or dislike signal on a script. Overwrites any prior feedback value.
-
-### Auth
-`Authorization: Bearer <token>` — required. Ownership enforced.
-
-### Path Parameters
-
-| Param | Type | Description |
-|---|---|---|
-| `scriptId` | `string` | Script document ID |
-
-### Request Body
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `feedback` | `"like" \| "dislike" \| null` | Yes | `null` clears existing feedback |
-
-### Response — `200`
-
-```json
-{
-  "success": true,
-  "message": "Feedback updated",
-  "data": {
-    "id": "string",
-    "userFeedback": "like"
-  }
-}
-```
-
-### Error Cases
-
-| Status | Condition |
-|---|---|
-| 400 | `feedback` is not `"like"`, `"dislike"`, or `null` |
-| 403 | Script not owned by requesting user |
-| 404 | Script not found |
 
 ---
 

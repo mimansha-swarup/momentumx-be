@@ -2,7 +2,7 @@
 title: "Hooks Feature Spec"
 description: "How the Hooks step works — hook generation, selection mechanic, and state machine behavior"
 date: 2026-02-27
-last_updated: 2026-03-17
+last_updated: 2026-07-12
 status: "implemented"
 tags: ["feature", "hooks", "spec"]
 ---
@@ -120,8 +120,8 @@ Hooks are generated in batches. Each batch produces 5 variations saved as a sing
 | `selectedHookIndex` on video project | ✅ Built |
 | Hooks step state tracking on video project | ✅ Built |
 | Regenerate hooks (`POST /v1/hooks/:hooksId/regenerate`) | ✅ Built |
-| Per-hook feedback (`PATCH /v1/hooks/:hooksId/feedback`) | ✅ Built |
 | Export hooks (`GET /v1/hooks/:hooksId/export`) | ✅ Built |
+| Implicit signal capture on select/regenerate | ✅ Built (P6A: `HOOK_SELECTED`, `REGENERATE` events) |
 | Stale flag: script change → hooks `stale: true` | ✅ Built |
 | Stale cascade: hooks regenerated → packaging `stale: true` | ✅ Built |
 

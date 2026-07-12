@@ -241,7 +241,9 @@ Internally ordered by risk: **additive first (1A, 1B — separate PR, zero behav
 
 ---
 
-## Phase 6A — Launch-required workflow changes *(must merge before launch)*
+## Phase 6A — Launch-required workflow changes *(must merge before launch)* — ✅ SHIPPED
+
+**Status (2026-07-12):** all of 6A.1–6A.6 built, reviewed, and committed. `[DECIDE]`s resolved: 6A.5 = **full `topic`→`idea` rename** (routes, collection, types, `stats.ideas` — not a copy-only alias); 6A.3 = **yes, packaging is a door** (save with no project lazily creates a shallow project); 6A.6 = **yes**, a new `POST /v1/packaging/:packagingId/select-title` persists the choice and renames the project. 6A.1 events also capture `TITLE_SELECTED`. (Thumbnail-download signal deferred to P4 — the endpoint doesn't exist yet.)
 
 **Goal:** the remaining **product decisions from the doc** — decided behavior the launch can't ship without. Kept out of earlier phases only to avoid merge noise; every item is dependency-light, so pull any of them forward if a slot opens.
 

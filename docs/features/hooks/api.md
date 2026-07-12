@@ -2,7 +2,7 @@
 title: "Hooks API Reference"
 description: "Endpoint reference for the Hooks step — hook generation and selection"
 date: 2026-02-27
-last_updated: 2026-03-08
+last_updated: 2026-07-12
 status: "implemented"
 tags: ["api", "hooks"]
 ---
@@ -20,7 +20,6 @@ Hooks is a standalone pipeline step. The dedicated `/v1/hooks` endpoints are liv
 | `POST` | `/v1/hooks/generate` | ✅ Built | Generate a 5-hook batch tied to a video project |
 | `POST` | `/v1/hooks/:hooksId/select` | ✅ Built | Select a hook index, stores it on the video project |
 | `POST` | `/v1/hooks/:hooksId/regenerate` | ✅ Built | Regenerate hooks for the same video project |
-| `PATCH` | `/v1/hooks/:hooksId/feedback` | ✅ Built | Record per-hook like/dislike |
 | `GET` | `/v1/hooks/:hooksId/export` | ✅ Built | Export hooks as plain text |
 | `POST` | `/v1/packaging/generate-hooks` | ✅ Built (deprecated) | Stateless hook generation — legacy path |
 
@@ -171,52 +170,6 @@ Regenerates hooks for the same video project, overwriting the existing batch in 
 | 403 | Hooks batch not owned by user |
 | 404 | Hooks batch not found |
 | 500 | Gemini generation failed or Firestore write failed |
-
----
-
-## PATCH `/v1/hooks/:hooksId/feedback` ✅ Built
-
-Records a like or dislike signal on a specific hook within the batch. Overwrites any prior feedback for that hook index.
-
-### Auth
-`Authorization: Bearer <token>` — required. Ownership enforced.
-
-### Path Parameters
-
-| Param | Type | Description |
-|---|---|---|
-| `hooksId` | `string` | ID of the hooks batch document |
-
-### Request Body
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `hookIndex` | `number` | Yes | Zero-based index (0–4) of the hook being rated |
-| `feedback` | `"like" \| "dislike" \| null` | Yes | `null` clears existing feedback for that hook |
-
-### Response — `200`
-
-```json
-{
-  "success": true,
-  "message": "Feedback updated",
-  "data": {
-    "id": "hooks-batch-id",
-    "hookFeedback": {
-      "0": "like",
-      "2": "dislike"
-    }
-  }
-}
-```
-
-### Error Cases
-
-| Status | Condition |
-|---|---|
-| 400 | `hookIndex` or `feedback` invalid |
-| 403 | Hooks batch not owned by user |
-| 404 | Hooks batch not found |
 
 ---
 

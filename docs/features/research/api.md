@@ -1,36 +1,35 @@
 ---
 title: "Research — API Contract"
-description: "Endpoint reference for the Research step — topic generation, iteration, feedback, and export"
+description: "Endpoint reference for the Research step — idea generation, iteration, and export"
 status: "implemented"
-last_updated: 2026-03-11
-tags: ["api", "research", "topics"]
+last_updated: 2026-07-12
+tags: ["api", "research", "ideas"]
 ---
 
 # Research — API Contract
 
-Topic endpoints are under `/v1/topics`. Research intelligence endpoints are under `/v1/research`. All require `Authorization: Bearer <token>`.
+Idea endpoints are under `/v1/ideas`. Research intelligence endpoints are under `/v1/research`. All require `Authorization: Bearer <token>`.
 
 ---
 
 ## Endpoints Summary
 
-### `/v1/topics` — Topic Lifecycle
+### `/v1/ideas` — Idea Lifecycle
 
 | Method | URL | Purpose | Status |
 |---|---|---|---|
-| `POST `/v1/topics/generate` | Generate 10 topic ideas (new batch) | ✅ Built |
-| `GET` | `/v1/topics` | List saved topics (paginated) | ✅ Built |
-| `PATCH` | `/v1/topics/edit/:topicId` | Edit a topic title | ✅ Built |
-| `POST` | `/v1/topics/regenerate-all` | Archive current batch, generate 10 new | ✅ Built |
-| `POST` | `/v1/topics/:topicId/regenerate` | Regenerate a single topic slot in-place | ✅ Built |
-| `PATCH` | `/v1/topics/:topicId/feedback` | Set like/dislike signal on a topic | ✅ Built |
-| `GET` | `/v1/topics/export` | Export active batch as formatted text | ✅ Built |
+| `POST` | `/v1/ideas/generate` | Generate 10 video ideas (new batch) | ✅ Built |
+| `GET` | `/v1/ideas` | List saved ideas (paginated) | ✅ Built |
+| `PATCH` | `/v1/ideas/edit/:ideaId` | Edit an idea title | ✅ Built |
+| `POST` | `/v1/ideas/regenerate-all` | Archive current batch, generate 10 new | ✅ Built |
+| `POST` | `/v1/ideas/:ideaId/regenerate` | Regenerate a single idea slot in-place | ✅ Built |
+| `GET` | `/v1/ideas/export` | Export active batch as formatted text | ✅ Built |
 
 ### `/v1/video-projects` — Project Creation
 
 | Method | URL | Purpose | Status |
 |---|---|---|---|
-| `POST` | `/v1/video-projects` | Create a video project from a selected topic | ✅ Built |
+| `POST` | `/v1/video-projects` | Create a video project from a selected idea | ✅ Built |
 
 ### `/v1/research` — Research Intelligence
 
@@ -42,11 +41,11 @@ Topic endpoints are under `/v1/topics`. Research intelligence endpoints are unde
 
 ---
 
-## POST `/v1/topics/generate`
+## POST `/v1/ideas/generate`
 
-Generates 10 new topic ideas for the authenticated user using their onboarding context and KMeans clustering to avoid repetition. Saves all topics to Firestore and returns them in a single JSON response.
+Generates 10 new video ideas for the authenticated user using their onboarding context and KMeans clustering to avoid repetition. Saves all ideas to Firestore and returns them in a single JSON response.
 
-> **Note on naming:** The route is named `/stream/topics` but it is not an SSE endpoint — it returns a standard JSON response after all generation is complete. The name is a legacy artifact.
+Idea documents include `concept`, `ideaType`, and `evidence` fields grounding each idea in research signals.
 
 ### Auth
 `Authorization: Bearer <token>` — required.
@@ -59,14 +58,16 @@ No body. No query params.
 ```json
 {
   "success": true,
-  "message": "successfully generated topics",
+  "message": "successfully generated ideas",
   "data": [
     {
       "id": "a1b2c3d4-...",
       "title": "How I Built a $10K/Month Business Using Only Free AI Tools",
+      "concept": "Building a sustainable side business with minimal overhead",
+      "ideaType": "evergreen",
+      "evidence": "Based on competitor analysis and trending topics in business niche",
       "createdBy": "uid_abc123",
       "createdAt": "2026-02-27T10:00:00.000Z",
-      "isScriptGenerated": false,
       "embedding": [0.012, -0.045, ...]
     }
   ]
@@ -85,17 +86,16 @@ No body. No query params.
 ```
 
 ### Notes
-- Generates exactly 10 titles per call: 5 long-form (60–65 chars) and 5 Shorts titles (under 50 chars).
-- KMeans clustering runs before generation. All previously saved topics for this user (including archived) are clustered and passed to the prompt as "avoid these."
-- All generated topics are batch-saved to Firestore before the response is returned.
-- `isScriptGenerated` is set to `true` on a topic when a script has been generated for it.
+- Generates exactly 10 ideas per call.
+- KMeans clustering runs before generation. All previously saved ideas for this user (including archived) are clustered and passed to the prompt as "avoid these."
+- All generated ideas are batch-saved to Firestore before the response is returned.
 - `embedding` field will be removed from the response in a future cleanup — it is internal data. Do not build frontend UI that depends on it.
 
 ---
 
-## GET `/v1/topics`
+## GET `/v1/ideas`
 
-Returns a paginated list of the authenticated user's saved topics. Supports cursor-based pagination and filtering.
+Returns a paginated list of the authenticated user's saved ideas. Supports cursor-based pagination and filtering.
 
 ### Auth
 `Authorization: Bearer <token>` — required.
@@ -104,11 +104,10 @@ Returns a paginated list of the authenticated user's saved topics. Supports curs
 
 | Param | Type | Default | Description |
 |---|---|---|---|
-| `limit` | `number` | `9` | Number of topics to return per page |
+| `limit` | `number` | `9` | Number of ideas to return per page |
 | `createdAt` | `string` | `""` | Cursor: ISO timestamp of the last item from previous page |
 | `docId` | `string` | `""` | Cursor: Firestore document ID of the last item from previous page |
-| `searchText` | `string` | `""` | Prefix search on topic title |
-| `isScriptGenerated` | `string` | `""` | Pass `"true"` to return only topics that have a script generated |
+| `searchText` | `string` | `""` | Prefix search on idea title |
 
 > Pagination and search are mutually exclusive. If `searchText` is present, cursor pagination is ignored.
 
@@ -117,7 +116,7 @@ Returns a paginated list of the authenticated user's saved topics. Supports curs
 ```json
 {
   "success": true,
-  "message": "successfully retrieved topics",
+  "message": "successfully retrieved ideas",
   "data": {
     "meta": {
       "nextCursor": {
@@ -130,9 +129,10 @@ Returns a paginated list of the authenticated user's saved topics. Supports curs
       {
         "id": "a1b2c3d4-...",
         "title": "How I Built a $10K/Month Business Using Only Free AI Tools",
+        "concept": "Building a sustainable side business with minimal overhead",
+        "ideaType": "evergreen",
         "createdBy": "uid_abc123",
-        "createdAt": "2026-02-27T10:00:00.000Z",
-        "isScriptGenerated": false
+        "createdAt": "2026-02-27T10:00:00.000Z"
       }
     ]
   }
@@ -147,21 +147,20 @@ Returns a paginated list of the authenticated user's saved topics. Supports curs
 ```json
 {
   "success": false,
-  "message": "Failed to retrieve topics",
+  "message": "Failed to retrieve ideas",
   "detail": "..."
 }
 ```
 
 ### Notes
 - Results are ordered by `createdAt` descending (newest first) unless `searchText` is active, in which case they are ordered alphabetically by title prefix.
-- `isScriptGenerated` filter: only filters when the param value is truthy. Passing `"false"` is treated as not filtering (known quirk — rely on absence of the param to get all topics).
 - `embedding` is not returned in this endpoint's response.
 
 ---
 
-## PATCH `/v1/topics/edit/:topicId`
+## PATCH `/v1/ideas/edit/:ideaId`
 
-Updates fields on a topic document. Used when a creator manually edits a title.
+Updates fields on an idea document. Used when a creator manually edits a title.
 
 ### Auth
 `Authorization: Bearer <token>` — required.
@@ -170,7 +169,7 @@ Updates fields on a topic document. Used when a creator manually edits a title.
 
 | Param | Type | Description |
 |---|---|---|
-| `topicId` | `string` | The UUID of the topic to update |
+| `ideaId` | `string` | The UUID of the idea to update |
 
 ### Request Body
 
@@ -200,20 +199,20 @@ Any Firestore-compatible field can be passed. The update uses `{ merge: true }` 
 ```json
 {
   "success": false,
-  "message": "Failed to update topic",
+  "message": "Failed to update idea",
   "detail": "..."
 }
 ```
 
 ### Notes
-- No ownership check currently — any authenticated user can technically edit any topic if they know the `topicId`. This is a known security gap to fix in Phase 0.
+- Ownership is checked — returns 403 if `ideaId` belongs to a different user.
 - No validation on field names — any field key will be accepted and merged.
 
 ---
 
-## POST `/v1/topics/regenerate-all` ✅ Built
+## POST `/v1/ideas/regenerate-all` ✅ Built
 
-Archives all active (non-archived) topics for the user and generates a fresh batch of 10. Triggers a stale cascade that fans out to **all** video projects backed by each archived topic.
+Archives all active (non-archived) ideas for the user and generates a fresh batch of 10. Triggers a stale cascade that fans out to **all** video projects backed by each archived idea.
 
 ### Auth
 `Authorization: Bearer <token>` — required.
@@ -226,7 +225,7 @@ None.
 ```json
 {
   "success": true,
-  "message": "Topics regenerated successfully",
+  "message": "Ideas regenerated successfully",
   "data": [
     {
       "id": "new-uuid",
@@ -239,15 +238,16 @@ None.
 ```
 
 ### Notes
-- Old topics are set to `archived: true` — they are not deleted, just hidden.
+- Old ideas are set to `archived: true` — they are not deleted, just hidden.
 - A new `batchId` is generated for the fresh batch.
-- For each archived topic, every video project backed by it (via `getProjectsByTopic` → `findByTopicId`) has its `pipeline.script`, `.hooks`, and `.packaging` marked `stale`, and any linked packaging document is marked stale. The cascade reaches all projects on a topic, not just one.
+- For each archived idea, every video project backed by it (via `getProjectsByIdea` → `findByIdeaId`) has its `pipeline.script`, `.hooks`, and `.packaging` marked `stale`, and any linked packaging document is marked stale. The cascade reaches all projects on an idea, not just one.
+- Implicit signal captured: `REGENERATE` event recorded in events collection.
 
 ---
 
-## POST `/v1/topics/:topicId/regenerate` ✅ Built
+## POST `/v1/ideas/:ideaId/regenerate` ✅ Built
 
-Regenerates a single topic slot in-place. Replaces the title and embedding while preserving the document ID and `batchId`.
+Regenerates a single idea slot in-place. Replaces the concept, title, ideaType, and embedding while preserving the document ID and `batchId`.
 
 ### Auth
 `Authorization: Bearer <token>` — required.
@@ -256,7 +256,7 @@ Regenerates a single topic slot in-place. Replaces the title and embedding while
 
 | Param | Type | Description |
 |---|---|---|
-| `topicId` | `string` | The UUID of the topic to regenerate |
+| `ideaId` | `string` | The UUID of the idea to regenerate |
 
 ### Request Body
 None.
@@ -266,10 +266,13 @@ None.
 ```json
 {
   "success": true,
-  "message": "Topic regenerated",
+  "message": "Idea regenerated",
   "data": {
     "id": "a1b2c3d4-...",
     "title": "New title replacing the old one",
+    "concept": "New concept/theme",
+    "ideaType": "evergreen",
+    "evidence": "Updated research grounding",
     "createdBy": "uid_abc123",
     "batchId": "batch_xyz",
     "archived": false
@@ -280,55 +283,14 @@ None.
 ### Notes
 - `batchId` stays the same — slot-replace within the existing batch.
 - Does not trigger a stale cascade (only Regenerate All does).
-- Ownership-checked: returns 403 if `topicId` belongs to a different user.
+- Ownership-checked: returns 403 if `ideaId` belongs to a different user.
+- Implicit signal captured: `REGENERATE` event recorded in events collection.
 
 ---
 
-## PATCH `/v1/topics/:topicId/feedback` ✅ Built
+## GET `/v1/ideas/export` ✅ Built
 
-Records a like or dislike signal on a topic. Used for feedback collection — does not affect generation.
-
-### Auth
-`Authorization: Bearer <token>` — required.
-
-### Path Parameters
-
-| Param | Type | Description |
-|---|---|---|
-| `topicId` | `string` | The UUID of the topic |
-
-### Request Body
-
-```json
-{ "feedback": "like" }
-```
-
-| Field | Type | Values |
-|---|---|---|
-| `feedback` | `string \| null` | `"like"`, `"dislike"`, or `null` (to clear) |
-
-### Response — Success `200`
-
-```json
-{
-  "success": true,
-  "data": { "id": "a1b2c3d4-...", "userFeedback": "like" }
-}
-```
-
-### Error Cases
-
-| Status | Condition |
-|---|---|
-| 400 | `feedback` value is not `"like"`, `"dislike"`, or `null` |
-| 403 | Topic belongs to a different user |
-| 404 | Topic not found |
-
----
-
-## GET `/v1/topics/export` ✅ Built
-
-Returns the user's active topic batch as a formatted plain-text numbered list, ready to copy-paste.
+Returns the user's active idea batch as a formatted plain-text numbered list, ready to copy-paste. Records an implicit signal for telemetry.
 
 ### Auth
 `Authorization: Bearer <token>` — required.
@@ -342,21 +304,22 @@ No body. No query params.
 {
   "success": true,
   "data": {
-    "text": "Research Topics — March 8, 2026\n──────────────────────────────────\n1. Title one\n2. Title two\n...",
+    "text": "Research Ideas — March 8, 2026\n──────────────────────────────────\n1. Title one\n2. Title two\n...",
     "count": 10
   }
 }
 ```
 
 ### Notes
-- Only returns active (non-archived) topics.
+- Only returns active (non-archived) ideas.
 - Ordered by `createdAt` ascending (original generation order).
+- Implicit signal captured: `EXPORT` event recorded in events collection.
 
 ---
 
 ## POST `/v1/video-projects` ✅ Built
 
-Creates a video project when a creator selects a topic. Writes `videoProjectId` back to the topic document. See [Video Project API Reference](../video-project/api.md) for the full contract.
+Creates a video project when a creator selects an idea. Writes `videoProjectId` back to the idea document. See [Video Project API Reference](../video-project/api.md) for the full contract. Records an implicit `PROJECT_CREATED` signal.
 
 ---
 

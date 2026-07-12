@@ -13,7 +13,7 @@ Rules for working with Gemini, prompts, SSE streaming, and embeddings. Ensures A
 
 ```
 gemini-3.5-flash      → all text/content generation
-gemini-embedding-001  → embeddings only (topics for KMeans)
+gemini-embedding-001  → embeddings only (ideas for KMeans)
 ```
 
 Both initialized in `src/config/ai.ts`. Use the factory functions — never initialize `GoogleGenerativeAI` directly in services.
@@ -132,7 +132,7 @@ Non-negotiable:
 ## KMeans — Guards and Preprocessing
 
 ```typescript
-// 1. Filter archived topics and cap at 200
+// 1. Filter archived ideas and cap at 200
 const activeTitles = (titleRecord || []).filter((doc) => !doc.archived);
 const capped = activeTitles.slice(0, 200);
 
@@ -144,8 +144,8 @@ if (titles.length <= k) return [titles];
 ```
 
 Non-negotiable:
-- Always filter out archived topics before clustering
-- Cap at 200 topics to prevent KMeans timeout on Vercel
+- Always filter out archived ideas before clustering
+- Cap at 200 ideas to prevent KMeans timeout on Vercel
 - Guard `titles.length <= k` prevents clustering crash when `k > n`
 - Never remove any of these guards
 

@@ -2,7 +2,7 @@
 title: "Video Project — API Contracts"
 description: "All endpoints for creating, reading, updating, and managing Video Project pipeline state"
 date: 2026-02-27
-last_updated: 2026-03-08
+last_updated: 2026-07-12
 status: "implemented"
 tags: ["api", "video-project", "phase-0"]
 ---
@@ -19,7 +19,7 @@ All endpoints require `Authorization: Bearer <token>`. `authMiddleware` applied 
 
 | Method | URL | Purpose |
 |---|---|---|
-| `POST` | `/v1/video-projects` | Create project from a topic id or a new title |
+| `POST` | `/v1/video-projects` | Create project from an idea id or a new title |
 | `GET` | `/v1/video-projects` | List user's projects (dashboard) |
 | `GET` | `/v1/video-projects/:projectId` | Get single project with full pipeline state |
 | `PATCH` | `/v1/video-projects/:projectId` | Update working title |
@@ -32,11 +32,11 @@ All endpoints require `Authorization: Bearer <token>`. `authMiddleware` applied 
 
 ## POST `/v1/video-projects`
 
-Create a new Video Project. Accepts **exactly one** of `topicId` (commit an AI candidate) or `title` ("add your own idea"). Providing both or neither returns 400.
+Create a new Video Project. Accepts **exactly one** of `ideaId` (commit an AI candidate) or `title` ("add your own idea"). Providing both or neither returns 400.
 
 ### Request Body
 ```json
-{ "topicId": "string" }
+{ "ideaId": "string" }
 ```
 or
 ```json
@@ -44,11 +44,11 @@ or
 ```
 
 ### Server-Side Behavior
-1. Validate exactly one of `topicId` / `title` is present — 400 otherwise
-2. **`title` path:** create the topic (with embedding) via `createFromTitle`, then proceed with the new topic's id
-3. Fetch topic from `Collection.TOPICS` — 404 if not found
-4. Verify `topic.createdBy == req.userId` — 403 if not
-5. Use `topic.title` as the project `title`
+1. Validate exactly one of `ideaId` / `title` is present — 400 otherwise
+2. **`title` path:** create the idea (with embedding) via `createFromTitle`, then proceed with the new idea's id
+3. Fetch idea from `COLLECTIONS.IDEAS` — 404 if not found
+4. Verify `idea.createdBy == req.userId` — 403 if not
+5. Use `idea.title` as the project `title`
 6. Create `videoProjects` document with Firestore auto-ID
 7. Set all creation fields per schema in spec.md
 
@@ -59,7 +59,7 @@ or
   "data": {
     "id": "string",
     "title": "string",
-    "topicId": "string",
+    "ideaId": "string",
     "currentStep": "research",
     "overallStatus": "in_progress",
     "pipeline": {
@@ -77,9 +77,9 @@ or
 ### Error Cases
 | Status | Condition |
 |---|---|
-| `400` | Neither or both of `topicId` / `title` provided |
-| `403` | Topic belongs to a different user (`topicId` path) |
-| `404` | Topic not found (`topicId` path) |
+| `400` | Neither or both of `ideaId` / `title` provided |
+| `403` | Idea belongs to a different user (`ideaId` path) |
+| `404` | Idea not found (`ideaId` path) |
 | `500` | Firestore write failed |
 
 ---
@@ -139,13 +139,14 @@ Get a single Video Project with full pipeline state.
   "data": {
     "id": "string",
     "title": "string",
-    "topicId": "string",
+    "ideaId": "string",
     "scriptId": "string | null",
     "hooksId": "string | null",
     "selectedHookIndex": "number | null",
     "packagingId": "string | null",
     "currentStep": "script",
     "overallStatus": "in_progress",
+    "recommendedNextStep": "hooks",
     "pipeline": {
       "research": { "status": "completed", "startedAt": null, "completedAt": "<timestamp>" },
       "script":   { "status": "in_progress", "startedAt": "<timestamp>", "completedAt": null },
@@ -158,6 +159,8 @@ Get a single Video Project with full pipeline state.
   }
 }
 ```
+
+`recommendedNextStep` (6A.4) is the guided-CTA target: the first non-completed pipeline step (`research` | `script` | `hooks` | `packaging`), or `null` when all are complete. **Read-time computed, never persisted** — a stale step surfaces here as the next action. Only on this single-project read (not the list endpoint).
 
 ### Error Cases
 | Status | Condition |
@@ -191,7 +194,7 @@ At least one field required. Empty body returns 400. Empty string `title` return
 
 ## DELETE `/v1/video-projects/:projectId`
 
-Soft delete. Sets `isDeleted: true`. Linked documents (topics, scripts, hooks, packaging) are NOT deleted.
+Soft delete. Sets `isDeleted: true`. Linked documents (ideas, scripts, hooks, packaging) are NOT deleted.
 
 Idempotent — if already deleted, returns 200.
 

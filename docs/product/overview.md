@@ -2,7 +2,7 @@
 title: "Product Overview"
 description: "What MomentumX is, who it's for, and what it offers"
 date: 2026-02-26
-last_updated: 2026-03-17
+last_updated: 2026-07-12
 status: "final"
 tags: ["product", "positioning", "overview"]
 ---
@@ -34,7 +34,7 @@ Most creators juggle ideas across notes apps, docs, and DMs. There's no single p
 
 MomentumX combines project-based workflow management with deeply integrated AI — built specifically for the YouTube content creation process.
 
-Every video in MomentumX is a **project**. It starts the moment a creator picks a topic and moves through a structured pipeline until everything needed to publish is ready. The creator controls the flow — steps are flexible, not forced — and AI is available to generate, refine, or iterate at every stage.
+Every video in MomentumX is a **project**. It starts the moment a creator picks an idea and moves through a structured pipeline until everything needed to publish is ready. The creator controls the flow — steps are flexible, not forced — and AI is available to generate, refine, or iterate at every stage.
 
 ```
 Onboarding → Research → Script → Hooks → Packaging → Publish
@@ -42,10 +42,10 @@ Onboarding → Research → Script → Hooks → Packaging → Publish
 
 | Stage | What you get |
 |---|---|
-| **Research** | Competitor analysis, trend discovery, AI title ideas, keyword/SEO data |
+| **Idea** | AI-generated video concepts, competitor analysis, trend discovery, keyword/SEO data |
 | **Script** | A full ~10-minute retention-structured video script, streamed in real time |
 | **Hooks** | 5 attention-grabbing opening lines in varied styles |
-| **Packaging** | Title variations, SEO description, thumbnail brief, Shorts script |
+| **Title** | 3 title variations, SEO description, thumbnail brief, Shorts script |
 
 At every stage, the creator can give feedback, regenerate specific items, or refine output with a follow-up prompt. Nothing is one-shot.
 
@@ -72,16 +72,21 @@ Every AI generation — titles, scripts, packaging — is shaped by this data. T
 
 ## The Content Pipeline in Detail
 
-### 1. Topic Generation
+### 1. Idea Generation
 
-MomentumX generates 10 YouTube title ideas per session. These are:
+MomentumX generates 10 video ideas per session. Each idea includes:
+- A video concept (theme / angle)
+- A working title for the video
+- The idea type (evergreen, trendy, etc.)
+- Evidence grounded in live research (competitor videos, trending topics, keyword data)
 
-- Built around proven viral title frameworks (curiosity gaps, hook archetypes, psychological triggers)
+These are:
+- Built around proven viral frameworks (curiosity gaps, hook archetypes, psychological triggers)
 - Tailored to the creator's niche, audience, and competitors
 - Optimized for 2025 YouTube algorithm and audience behavior
-- Non-repetitive — the system tracks all previously generated titles and actively avoids similar ideas
+- Non-repetitive — the system tracks all previously generated ideas and actively avoids similar concepts
 
-**Output:** 10 title suggestions — 5 long-form (60–65 chars) and 5 Shorts titles (under 50 chars).
+**Output:** 10 idea suggestions with working titles and research grounding.
 
 ---
 
@@ -101,9 +106,13 @@ Scripts are written in a first-person, human tone — raw and lived-in, not corp
 
 ---
 
-### 3. Packaging
+### 3. Hooks
 
-With a script in hand, MomentumX generates all supporting content:
+With a script in hand, MomentumX generates 5 hook variations — attention-grabbing opening lines in varied styles (question, bold claim, story teaser, contrarian, pattern interrupt).
+
+### 4. Title & Packaging
+
+With a script and hook selected, MomentumX generates all supporting content for publishing:
 
 | Asset | Details |
 |---|---|

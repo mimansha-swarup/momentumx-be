@@ -20,7 +20,7 @@ Research → Script → Hooks → Packaging
 
 **Strictly sequential.** Each step depends on the data output of the previous:
 
-- Script requires: selected topic
+- Script requires: selected idea
 - Hooks requires: script
 - Packaging requires: script + title + selectedHook
 
@@ -65,19 +65,19 @@ What's happening inside an individual step. State machine per step — see schem
 |---|---|
 | `not_started` | No generation has run |
 | `in_progress` | AI generating or awaiting creator selection |
-| `completed` | Creator has selected a topic |
+| `completed` | Creator has selected a idea |
 | `stale` | Downstream change invalidated context |
 
 **Trigger table:**
 
 | Action | Transition |
 |---|---|
-| Creator initiates topic generation | `not_started` → `in_progress` |
-| Creator selects a topic | `in_progress` → `completed` |
+| Creator initiates idea generation | `not_started` → `in_progress` |
+| Creator selects a idea | `in_progress` → `completed` |
 | Creator regenerates (Regenerate All) | `completed` → `in_progress` |
 | Creator regenerates (Regenerate All) | `in_progress` → `in_progress` |
 
-**Note on stale:** If Script is regenerated, Research step itself is NOT marked stale. Research is upstream — Script being redone doesn't change the topic decision.
+**Note on stale:** If Script is regenerated, Research step itself is NOT marked stale. Research is upstream — Script being redone doesn't change the idea decision.
 
 ---
 
@@ -183,7 +183,7 @@ This means `status` can be `"not_started" | "in_progress" | "completed" | "stale
 |---|---|
 | Script regenerated | Hooks step, Packaging step |
 | Hook selection changes | Packaging step |
-| Research topic changes (Regenerate All) | Script step, Hooks step, Packaging step |
+| Research idea changes (Regenerate All) | Script step, Hooks step, Packaging step |
 
 ### Stale Resolution
 
@@ -205,7 +205,7 @@ Replaces the entire current batch of generated items. Old batch is **archived** 
 - Triggers: `any status` → `generating`
 - Old items: `archived: true` on all documents in the old batch
 - New batch gets a new `batchId`
-- Stale cascade fires on downstream steps of **every** project backed by each archived topic (looked up via `getProjectsByTopic` → `findByTopicId`), not just a single linked project
+- Stale cascade fires on downstream steps of **every** project backed by each archived idea (looked up via `getProjectsByIdea` → `findByIdeaId`), not just a single linked project
 
 ### Regenerate One
 
@@ -223,18 +223,18 @@ Replaces a single item in the current batch (slot-replace). The slot position is
 **Decision: Keep archived batches forever (no cleanup in Phase 0).**
 
 Rationale:
-1. **KMeans clustering actively benefits from archived batches.** `getAllTopicTitles()` queries all topic documents for a user — including archived ones. More historical titles = better clustering = less repetitive suggestions in future generations.
+1. **KMeans clustering actively benefits from archived batches.** `getAllIdeaTitles()` queries all idea documents for a user — including archived ones. More historical titles = better clustering = less repetitive suggestions in future generations.
 2. **No users yet.** Storage cost is not a real concern at current scale.
 3. **No cleanup logic needed.** Anything beyond "keep forever" requires TTLs, batch counters, or Cloud Functions — all out of scope for Phase 0.
-4. **Easily revisited.** Add `expiresAt` or a cleanup job when it becomes a real problem (thousands of users, tens of thousands of archived topics per user).
+4. **Easily revisited.** Add `expiresAt` or a cleanup job when it becomes a real problem (thousands of users, tens of thousands of archived ideas per user).
 
 ---
 
 ## Concurrent Video Projects
 
-A creator can have multiple video projects active simultaneously, **including multiple projects on the same topic** — each project owns its own script document (via the script's decoupled UUID id), so they never collide. Each video project is independent — status transitions on one do not affect any other. There is no cross-project KMeans context — clustering is already per-user globally.
+A creator can have multiple video projects active simultaneously, **including multiple projects on the same idea** — each project owns its own script document (via the script's decoupled UUID id), so they never collide. Each video project is independent — status transitions on one do not affect any other. There is no cross-project KMeans context — clustering is already per-user globally.
 
-When the source topic is regenerated (Regenerate All), the stale cascade fans out to **all** projects backed by that topic, not just one.
+When the source idea is regenerated (Regenerate All), the stale cascade fans out to **all** projects backed by that idea, not just one.
 
 ---
 
@@ -246,8 +246,8 @@ When the source topic is regenerated (Regenerate All), the stale cascade fans ou
 videoProjects/{videoProjectId}
   id: string                  // Firestore auto-generated doc ID
   userId: string              // owner — always filter by this first
-  title: string               // working title (from selected topic)
-  topicId: string             // ref to topics collection
+  title: string               // working title (from selected idea)
+  ideaId: string             // ref to ideas collection
   scriptId: string | null     // ref to scripts collection
   hooksId: string | null      // ref to hooks collection
   packagingId: string | null  // ref to packaging collection
@@ -286,31 +286,31 @@ hooks/{hookId}
   createdAt: Timestamp
 ```
 
-### Updated: `topics`
+### Updated: `ideas`
 
-Add to existing topic documents:
+Add to existing idea documents:
 ```
   archived: boolean          // true when batch superseded by Regenerate All
-  batchId: string            // groups topics from the same generation run
-  videoProjectId: string | null  // set when creator selects this topic
+  batchId: string            // groups ideas from the same generation run
+  videoProjectId: string | null  // set when creator selects this idea
 ```
 
 ### Updated: `scripts`
 
-A script document now has its **own** `randomUUID` document ID — it is no longer the source topic's ID. The script links back to its topic and project via foreign-key fields:
+A script document now has its **own** `randomUUID` document ID — it is no longer the source idea's ID. The script links back to its idea and project via foreign-key fields:
 
 ```
 scripts/{scriptId}
-  id: string                 // own randomUUID — NOT the topicId
-  title: string              // title of the source topic
+  id: string                 // own randomUUID — NOT the ideaId
+  title: string              // title of the source idea
   createdBy: string          // userId of the owner
   createdAt: Timestamp       // server-side
   script: string             // full script text
-  topicId: string            // FK → topics collection (source topic)
+  ideaId: string            // FK → ideas collection (source idea)
   videoProjectId: string     // FK → videoProjects collection (owning project)
 ```
 
-Because each project mints its own script doc, multiple projects can share one topic while each owns an independent script.
+Because each project mints its own script doc, multiple projects can share one idea while each owns an independent script.
 
 ### Updated: `packaging`
 
@@ -340,7 +340,7 @@ All Phase 0 infrastructure is built and live:
 4. ✅ `HooksRepository` — full CRUD for `hooks`
 5. ✅ `VideoProjectService` — status transitions, stale cascade, `startStep` / `completeStep` / `linkResource` / `markStale`
 6. ✅ `HooksService` — hook generation, selection, regeneration, feedback, export
-7. ✅ `videoProjectId`, `archived`, `batchId` fields on `topics` and `scripts`
+7. ✅ `videoProjectId`, `archived`, `batchId` fields on `ideas` and `scripts`
 8. ✅ `videoProjectId`, `itemStatuses`, `isStale`, `staleReason`, `staleSince` fields on `packaging`
 9. ✅ Routes registered: `/v1/video-projects`, `/v1/hooks`
 

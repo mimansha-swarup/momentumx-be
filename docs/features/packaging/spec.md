@@ -135,7 +135,7 @@ Firestore auto-generates the document ID.
 
 When `videoProjectId` is passed to `POST /save`, the service checks if a packaging document already exists for that project. If it does, the existing document is updated (upsert). If not, a new document is created. This prevents duplicate packaging documents per video project.
 
-After save, `linkResource` is called fire-and-forget on the video project. Direct `scriptId` or `topicId` foreign keys still do not exist on packaging documents.
+After save, `linkResource` is called fire-and-forget on the video project. Direct `scriptId` or `ideaId` foreign keys still do not exist on packaging documents.
 
 ---
 
@@ -193,13 +193,14 @@ After any `regenerateItem` completes, the service checks all `itemStatuses`. If 
 | `videoProjectId` linkage on save | ✅ Built |
 | Ownership check on get/save | ✅ Built |
 | Regenerate per item (`POST /:packagingId/regenerate/:item`) | ✅ Built |
-| Per-item feedback (`PATCH /:packagingId/feedback`) | ✅ Built |
 | Export packaging (`GET /:packagingId/export`) | ✅ Built |
+| Select and finalize a title (`POST /:packagingId/select-title`) | ✅ Built (P6A) |
 | Stale detection (`isStale` + `staleReason` + `staleSince`) | ✅ Built |
 | Per-item status tracking (`itemStatuses` map) | ✅ Built |
 | Stale cascade from script/hooks regeneration | ✅ Built |
 | Upsert by `videoProjectId` (prevents duplicates) | ✅ Built |
-| Direct `scriptId` / `topicId` foreign keys | ❌ Not built |
+| Implicit signal capture on select/regenerate/export | ✅ Built (P6A: `TITLE_SELECTED`, `REGENERATE`, `EXPORT` events) |
+| Direct `scriptId` / `ideaId` foreign keys | ❌ Not built |
 
 ---
 

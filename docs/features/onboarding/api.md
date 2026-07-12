@@ -75,7 +75,7 @@ Idempotent — re-submitting overwrites previous onboarding data and re-runs all
         }
       ],
       "websiteContent": "string",
-      "stats": { "topics": 0, "scripts": 0 }
+      "stats": { "ideas": 0, "scripts": 0 }
     }
   }
 }
@@ -125,7 +125,7 @@ Returns the authenticated user's full profile document from Firestore.
       { "url": "string", "id": "string", "titles": ["string"] }
     ],
     "websiteContent": "string",
-    "stats": { "topics": 0, "scripts": 0 }
+    "stats": { "ideas": 0, "scripts": 0 }
   }
 }
 ```
@@ -191,7 +191,7 @@ Stored in `users` Firestore collection. Document ID = Firebase UID.
 | `userTitle` | `string[]` | Creator's top 10 video titles — empty if lookup failed |
 | `competitors` | `{ url, id, titles[] }[]` | Per-competitor data — `id`/`titles` empty if lookup failed |
 | `websiteContent` | `string` | Scraped website text — empty string if scraping failed |
-| `stats.topics` | `number` | Count of topics generated |
+| `stats.ideas` | `number` | Count of ideas generated |
 | `stats.scripts` | `number` | Count of scripts generated |
 
 ---

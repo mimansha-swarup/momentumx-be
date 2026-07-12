@@ -17,12 +17,12 @@ REST conventions and response standards for the MomentumX API. All endpoints —
 - No trailing slashes
 
 ```
-✅ /v1/topics
+✅ /v1/ideas
 ✅ /v1/scripts/stream/:projectId
 ✅ /v1/packaging/generate-title
 ✅ /v1/user/profile
 
-❌ /v1/content/topics
+❌ /v1/content/ideas
 ❌ /v1/packaging/generateTitle
 ❌ /v1/user/profile/
 ```
@@ -48,7 +48,7 @@ All routes protected with `authMiddleware` at router level:
 // ✅ Every new router
 const router = express.Router();
 router.use(authMiddleware);
-router.get('/topics', controller.getTopics);
+router.get('/ideas', controller.getIdeas);
 ```
 
 **SSE exception:** `GET /v1/scripts/stream/:projectId` uses `?token=` query param.
@@ -141,10 +141,10 @@ Only accept these IDs in the body for **create/generate** operations, where the 
 
 ```typescript
 // ✅ Always use enum
-db.collection(COLLECTIONS.TOPICS)
+db.collection(COLLECTIONS.IDEAS)
 
 // ❌ Never hardcode
-db.collection('topics')
+db.collection('ideas')
 ```
 
 All collection names live in `src/constants/collection.ts`. Add new names there — never inline strings.

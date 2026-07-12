@@ -24,24 +24,24 @@ This is the foundational data model for Phase 0. Research, Script, Hooks, and Pa
 
 ## Key Design Decisions
 
-### A. Creation Trigger — On Topic Selection or Own Idea
+### A. Creation Trigger — On Idea Selection or Own Idea
 
-A Video Project is created either when the creator commits an AI-generated topic candidate, or when the creator brings their own idea. `POST /v1/video-projects` accepts **exactly one** of:
+A Video Project is created either when the creator commits an AI-generated idea candidate, or when the creator brings their own idea. `POST /v1/video-projects` accepts **exactly one** of:
 
-- `{ topicId }` — commit an existing AI candidate topic.
-- `{ title }` — "add your own idea": the server creates the topic (with embedding) via `createFromTitle`, then creates the project from it.
+- `{ ideaId }` — commit an existing AI candidate idea.
+- `{ title }` — "add your own idea": the server creates the idea (with embedding) via `createFromTitle`, then creates the project from it.
 
 Providing both or neither returns 400.
 
-**Reasoning:** Committing a topic (whether AI-suggested or the creator's own) expresses intent. Creating the project at that moment captures intent immediately and ensures no orphaned topics exist without project context.
+**Reasoning:** Committing a idea (whether AI-suggested or the creator's own) expresses intent. Creating the project at that moment captures intent immediately and ensures no orphaned ideas exist without project context.
 
-**Implication:** The frontend calls `POST /v1/video-projects` with `{ topicId }` or `{ title }`. The backend creates the project and returns its `id`. All subsequent calls (Script, Hooks, Packaging) pass that value as the `:projectId` path param.
+**Implication:** The frontend calls `POST /v1/video-projects` with `{ ideaId }` or `{ title }`. The backend creates the project and returns its `id`. All subsequent calls (Script, Hooks, Packaging) pass that value as the `:projectId` path param.
 
 ### B. No Blank Project State
 
-Topic selection is always Step 1. A project cannot exist without a topic. The project's `title` is set from the selected topic's title at creation.
+Idea selection is always Step 1. A project cannot exist without a idea. The project's `title` is set from the selected idea's title at creation.
 
-**Conflict with pipeline-spec flag:** `pipeline-spec.md` describes Research as a step with `not_started` status, implying Research could happen inside a project created before topic selection. This spec overrides that. The project is created only after a topic is selected. Research-inside-a-project (to replace the topic) is a future feature, not Phase 0.
+**Conflict with pipeline-spec flag:** `pipeline-spec.md` describes Research as a step with `not_started` status, implying Research could happen inside a project created before idea selection. This spec overrides that. The project is created only after a idea is selected. Research-inside-a-project (to replace the idea) is a future feature, not Phase 0.
 
 ### C. Dashboard Fields — Minimal but Scannable
 
@@ -59,22 +59,22 @@ The creator can jump to any step at any time, including completed steps. Viewing
 
 ### E. Project Deletion — Soft Delete Only
 
-`isDeleted: true` + `deletedAt`. Linked topic, script, hooks, and packaging documents are NOT deleted. Dashboard list filters `isDeleted == false`. Recoverable.
+`isDeleted: true` + `deletedAt`. Linked idea, script, hooks, and packaging documents are NOT deleted. Dashboard list filters `isDeleted == false`. Recoverable.
 
 ### F. Step Completion Mechanics
 
 Each step completes by its own mechanic:
 
-- **Research:** auto-completed at project creation — already done when you pick a topic.
+- **Research:** auto-completed at project creation — already done when you pick a idea.
 - **Script:** auto-completed server-side as soon as the generated script is saved (no explicit "approve" action). The creator can still edit the saved script afterward.
 - **Hooks:** completed when the creator selects a hook (`POST /v1/hooks/:hooksId/select`).
 - **Packaging:** items complete as they are saved/regenerated on the packaging document.
 
 The generic `PATCH /v1/video-projects/:projectId/step/:stepName/complete` endpoint remains available (idempotent), but for the Script step completion is fired automatically by the backend after save.
 
-### G. Multiple Projects Per Topic — Supported
+### G. Multiple Projects Per Idea — Supported
 
-A creator can start multiple Video Projects on the same topic. No lock on topics — they are references only, not consumed by project creation. Each project owns its **own** script document (the script's id is a per-project `randomUUID`, not the topic id), so projects on the same topic never collide on their script. When the topic is regenerated, the stale cascade fans out to **all** projects backed by it (see Stale Cascade Rules).
+A creator can start multiple Video Projects on the same idea. No lock on ideas — they are references only, not consumed by project creation. Each project owns its **own** script document (the script's id is a per-project `randomUUID`, not the idea id), so projects on the same idea never collide on their script. When the idea is regenerated, the stale cascade fans out to **all** projects backed by it (see Stale Cascade Rules).
 
 ---
 
@@ -90,16 +90,16 @@ A creator can start multiple Video Projects on the same topic. No lock on topics
 5. Creator is taken to the current active step.
 ```
 
-### Creating a New Project (Topic Selection or Own Idea)
+### Creating a New Project (Idea Selection or Own Idea)
 
 ```
-1a. Creator runs Research (POST /v1/topics/generate), then selects a topic — existing flow.
-    Frontend calls POST /v1/video-projects with { topicId }.
+1a. Creator runs Research (POST /v1/ideas/generate), then selects a idea — existing flow.
+    Frontend calls POST /v1/video-projects with { ideaId }.
 1b. OR the creator brings their own idea.
     Frontend calls POST /v1/video-projects with { title }.
-    Backend creates the topic (with embedding) via createFromTitle, then the project.
+    Backend creates the idea (with embedding) via createFromTitle, then the project.
 2. Backend creates the project:
-   - title = topic.title
+   - title = idea.title
    - pipeline.research.status = "completed"
    - all other steps = "not_started"
 3. Backend returns { id, title, pipeline }.
@@ -111,7 +111,7 @@ A creator can start multiple Video Projects on the same topic. No lock on topics
 ```
 1. Creator opens Script step.
 2. Frontend calls PATCH /video-projects/:projectId/step/script/start → status = "in_progress".
-3. Creator generates script via GET /v1/scripts/stream/:projectId (project-scoped; topic derived from project.topicId).
+3. Creator generates script via GET /v1/scripts/stream/:projectId (project-scoped; idea derived from project.ideaId).
 4. Script saves under its own UUID → backend sets project.scriptId AND auto-completes the Script step.
 5. Script step = "completed". Frontend shows "Next: Hooks".
 6. Creator may still edit the saved script (PATCH /scripts/edit/:scriptId) without changing step status.
@@ -176,9 +176,9 @@ Document ID: Firestore auto-generated.
 interface VideoProject {
   id: string;                     // Firestore auto-generated doc ID
   createdBy: string;              // from req.userId
-  title: string;           // from topic.title at creation; can be renamed
+  title: string;           // from idea.title at creation; can be renamed
 
-  topicId: string;                // always set — required for creation
+  ideaId: string;                // always set — required for creation
   scriptId: string | null;        // set when script is saved
   hooksId: string | null;         // set when hooks are saved
   selectedHookIndex: number | null; // set when creator selects a hook via POST /v1/hooks/:hooksId/select
@@ -213,8 +213,8 @@ interface StepState {
 ```
 id                auto-id
 createdBy         req.userId
-title      from topic.title
-topicId           from request body
+title      from idea.title
+ideaId           from request body
 scriptId             null
 hooksId              null
 selectedHookIndex    null
@@ -243,11 +243,11 @@ Composite index 2: isDeleted ASC, createdBy ASC, overallStatus ASC, updatedAt DE
 
 ### Changes to Existing Collections
 
-**`topics`** — no change. Project holds `topicId` as a reference. Topics remain reusable across projects.
+**`ideas`** — no change. Project holds `ideaId` as a reference. Ideas remain reusable across projects.
 
-**`scripts`** — the script document id is its own `randomUUID` (no longer the topic id). It stores `topicId` and `videoProjectId` foreign keys, both set when the script is saved for a project. Older documents may use the legacy `id == topicId` scheme and lack these FKs; do not backfill.
+**`scripts`** — the script document id is its own `randomUUID` (no longer the idea id). It stores `ideaId` and `videoProjectId` foreign keys, both set when the script is saved for a project. Older documents may use the legacy `id == ideaId` scheme and lack these FKs; do not backfill.
 
-**`packaging`** — add `videoProjectId: string | null`. Resolves the long-standing data model gap (packaging disconnected from topics/scripts). `null` on pre-existing documents. Do not backfill.
+**`packaging`** — add `videoProjectId: string | null`. Resolves the long-standing data model gap (packaging disconnected from ideas/scripts). `null` on pre-existing documents. Do not backfill.
 
 ---
 
@@ -257,20 +257,20 @@ Applied server-side. Frontend reads stale state from the project's pipeline obje
 
 | Step regenerated | Steps that become stale |
 |---|---|
-| Research (topic changed, Regenerate All) | script, hooks, packaging — on **every** project backed by the topic |
+| Research (idea changed, Regenerate All) | script, hooks, packaging — on **every** project backed by the idea |
 | Script | hooks, packaging |
 | Hooks | packaging |
 | Packaging | none (leaf node) |
 
 Only update steps that are NOT `not_started` — stale is meaningless on unvisited steps.
 
-For Research (Regenerate All), the cascade fans out to all projects on each archived topic: `ContentService.regenerateAll` → `getProjectsByTopic(topic.id)` → `findByTopicId`, then `markStale` + `markPackagingDocumentStale` per project. A topic can back multiple projects, so keying off a single `topic.videoProjectId` would miss the others.
+For Research (Regenerate All), the cascade fans out to all projects on each archived idea: `ContentService.regenerateAll` → `getProjectsByIdea(idea.id)` → `findByIdeaId`, then `markStale` + `markPackagingDocumentStale` per project. A idea can back multiple projects, so keying off a single `idea.videoProjectId` would miss the others.
 
 ---
 
 ## Out of Scope (Phase 0)
 
-- Replacing the topic on an existing project
+- Replacing the idea on an existing project
 - Collaborator access / multi-user projects
 - Project archiving (distinct from soft delete)
 - Project templates

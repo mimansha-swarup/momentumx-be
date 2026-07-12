@@ -23,12 +23,12 @@ Routes → Controllers → Services → Repositories
 **Violation examples to catch and reject:**
 ```typescript
 // ❌ Firestore in a service
-async getTopics(userId: string) {
-  const snap = await db.collection('topics').where('userId', '==', userId).get(); // WRONG
+async getIdeas(userId: string) {
+  const snap = await db.collection('ideas').where('userId', '==', userId).get(); // WRONG
 }
 
 // ❌ Business logic in a controller
-async generateTopics(req: Request, res: Response) {
+async generateIdeas(req: Request, res: Response) {
   const user = await this.repo.getUser(req.userId);
   const clusters = kmeans(user.embeddings, 8); // WRONG — belongs in service
   res.sendSuccess({ data: clusters });
@@ -70,7 +70,7 @@ Route files: `src/routes/v1/{resource}.route.ts`, registered in `src/routes/v1/i
 
 ```typescript
 // ✅ Typed request body
-interface GenerateTopicsBody {
+interface GenerateIdeasBody {
   // no body required for this endpoint
 }
 

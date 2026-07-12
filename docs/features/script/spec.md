@@ -11,9 +11,9 @@ tags: ["feature", "script", "spec"]
 
 ## Overview
 
-Script is step 2 of 4 in the MomentumX content pipeline. Generation is always scoped to a video project: it loads the project, derives the source topic from `project.topicId`, and generates a full ~10-minute YouTube video script via a streaming AI response.
+Script is step 2 of 4 in the MomentumX content pipeline. Generation is always scoped to a video project: it loads the project, derives the source idea from `project.ideaId`, and generates a full ~10-minute YouTube video script via a streaming AI response.
 
-The script is streamed to the client over SSE as it generates, then saved to Firestore when the stream completes. The topic document is updated to mark `isScriptGenerated: true` after saving.
+The script is streamed to the client over SSE as it generates, then saved to Firestore when the stream completes. The idea document is updated to mark `isScriptGenerated: true` after saving.
 
 Pipeline position: Research → **Script** → Hooks → Packaging
 
@@ -24,7 +24,7 @@ Pipeline position: Research → **Script** → Hooks → Packaging
 | Attribute | Value |
 |---|---|
 | Step | 2 of 4 |
-| Requires | A video project (the topic is derived from `project.topicId`) |
+| Requires | A video project (the idea is derived from `project.ideaId`) |
 | Unlocks | Hooks step |
 | Completion mechanic | Automatic — the Script step is completed server-side as soon as the generated script is saved |
 
@@ -36,20 +36,20 @@ Pipeline position: Research → **Script** → Hooks → Packaging
 
 `GET /v1/scripts/stream/:projectId`
 
-Streams a full video script for the given **video project**. The `:projectId` URL parameter is the video project ID — the script is generated for the topic referenced by `project.topicId`. The script document is stored in Firestore under its **own** `randomUUID` id (reused across regenerations via `project.scriptId`), not the topic's id.
+Streams a full video script for the given **video project**. The `:projectId` URL parameter is the video project ID — the script is generated for the idea referenced by `project.ideaId`. The script document is stored in Firestore under its **own** `randomUUID` id (reused across regenerations via `project.scriptId`), not the idea's id.
 
 **Auth exception:** This endpoint does not use the `Authorization: Bearer` header. It accepts a `?token=` query parameter instead, verified by `sseAuthMiddleware`. The browser `EventSource` API cannot send custom headers, so the token is passed in the URL.
 
 **Generation flow:**
 1. `sseAuthMiddleware` verifies the `?token=` query param using Firebase Admin SDK and sets `req.userId`
 2. The project is loaded and ownership-checked (throws 404 if missing, 403 if not owner)
-3. User profile and the topic (from `project.topicId`) are fetched in parallel — 404 if the topic is missing
+3. User profile and the idea (from `project.ideaId`) are fetched in parallel — 404 if the idea is missing
 4. The script id is `project.scriptId ?? randomUUID()` — an existing script id is reused on regenerate so the old doc is not orphaned
-5. The script prompt is built by injecting the topic title and user context into `SCRIPT_USER_PROMPT`
+5. The script prompt is built by injecting the idea title and user context into `SCRIPT_USER_PROMPT`
 6. Gemini (`gemini-3.5-flash`) streams the response using `GENERATION_CONFIG_SCRIPTS`
 7. Each chunk is forwarded to the client as an SSE event
-8. After the stream ends, the full accumulated text is formatted via `formatGeneratedScript` (storing `topicId` and `videoProjectId` FKs) and saved to Firestore
-9. The topic document is updated: `isScriptGenerated: true`, and the script is linked to the project via `linkResource` + `completeStep`
+8. After the stream ends, the full accumulated text is formatted via `formatGeneratedScript` (storing `ideaId` and `videoProjectId` FKs) and saved to Firestore
+9. The idea document is updated: `isScriptGenerated: true`, and the script is linked to the project via `linkResource` + `completeStep`
 
 **SSE chunk format** (chunk text is JSON-stringified via `JSON.stringify`):
 ```
@@ -85,37 +85,37 @@ Accepts fields in the request body and merges them onto the script document. Man
 
 ## Script Document Shape
 
-Stored in the `scripts` Firestore collection. The document has its own `randomUUID` id and stores `topicId` + `videoProjectId` foreign keys.
+Stored in the `scripts` Firestore collection. The document has its own `randomUUID` id and stores `ideaId` + `videoProjectId` foreign keys.
 
 | Field | Type | Description |
 |---|---|---|
-| `id` | `string` | Own `randomUUID` — NOT the topicId |
-| `title` | `string` | Title of the topic this script was generated for |
+| `id` | `string` | Own `randomUUID` — NOT the ideaId |
+| `title` | `string` | Title of the idea this script was generated for |
 | `createdBy` | `string` | `userId` of the owner |
 | `createdAt` | `Timestamp` | Server-side Firestore timestamp |
 | `script` | `string` | Full script text |
-| `topicId` | `string` | FK → source topic |
+| `ideaId` | `string` | FK → source idea |
 | `videoProjectId` | `string` | FK → owning video project |
 
 ---
 
-## Topic Document Side Effect
+## Idea Document Side Effect
 
-After a script is saved, the source topic document is updated:
+After a script is saved, the source idea document is updated:
 
 ```
 isScriptGenerated: true
 ```
 
-This is one of two cross-document side effects of script generation. Because generation is always scoped to a video project, the Script step also transitions via `startStep` (before streaming) and `linkResource` + `completeStep` (after saving). `isScriptGenerated` remains as a lightweight proxy on the topic for clients that read it directly.
+This is one of two cross-document side effects of script generation. Because generation is always scoped to a video project, the Script step also transitions via `startStep` (before streaming) and `linkResource` + `completeStep` (after saving). `isScriptGenerated` remains as a lightweight proxy on the idea for clients that read it directly.
 
 ---
 
 ## Architectural Decisions
 
-### Script Identity Decoupled From Topic
+### Script Identity Decoupled From Idea
 
-The script document has its own `randomUUID` id and links back to its source topic and project via `topicId` + `videoProjectId` foreign-key fields. The script id is no longer the topic id. This lets multiple projects share a single topic while each owns an independent script, which a deterministic `id == topicId` scheme could not support. The id is minted once per project and reused on regenerate (via `project.scriptId`) so regeneration overwrites the same document rather than orphaning it.
+The script document has its own `randomUUID` id and links back to its source idea and project via `ideaId` + `videoProjectId` foreign-key fields. The script id is no longer the idea id. This lets multiple projects share a single idea while each owns an independent script, which a deterministic `id == ideaId` scheme could not support. The id is minted once per project and reused on regenerate (via `project.scriptId`) so regeneration overwrites the same document rather than orphaning it.
 
 Tradeoff: when a script is regenerated, the `script` field on the existing document is overwritten in place. No version history is kept.
 
@@ -133,12 +133,11 @@ The script prompt uses `GENERATION_CONFIG_SCRIPTS` (`responseMimeType: "text/pla
 
 | Endpoint | Auth method | Ownership check |
 |---|---|---|
-| `GET /scripts/stream/:projectId` | `?token=` query param (`sseAuthMiddleware`) | Yes — project is loaded and ownership-checked before the stream starts (403 if not owner, 404 if no project/topic) |
+| `GET /scripts/stream/:projectId` | `?token=` query param (`sseAuthMiddleware`) | Yes — project is loaded and ownership-checked before the stream starts (403 if not owner, 404 if no project/idea) |
 | `GET /scripts` | Bearer token via `authMiddleware` | Yes — filters by `createdBy == userId` |
 | `GET /script/:scriptId` | Bearer token via `authMiddleware` | Yes — throws 403 if `createdBy !== userId` |
 | `PATCH /script/edit/:scriptId` | Bearer token via `authMiddleware` | Yes — throws 403 if `createdBy !== userId` |
 | `POST /scripts/:scriptId/regenerate` | Bearer token via `authMiddleware` | Yes — throws 403 if `createdBy !== userId` |
-| `PATCH /scripts/:scriptId/feedback` | Bearer token via `authMiddleware` | Yes — throws 403 if `createdBy !== userId` |
 | `GET /scripts/:scriptId/export` | Bearer token via `authMiddleware` | Yes — throws 403 if `createdBy !== userId` |
 
 ---
@@ -152,12 +151,12 @@ The script prompt uses `GENERATION_CONFIG_SCRIPTS` (`responseMimeType: "text/pla
 | Get single script (with ownership check) | ✅ Built |
 | Edit script (with ownership check) | ✅ Built |
 | Regenerate script (`POST /scripts/:scriptId/regenerate`) | ✅ Built |
-| Script feedback (`PATCH /scripts/:scriptId/feedback`) | ✅ Built |
 | Export script (`GET /scripts/:scriptId/export`) | ✅ Built |
 | Stale cascade on regen → Hooks + Packaging stale | ✅ Built (fire-and-forget) |
 | Script step state tracking on video project | ✅ Built (startStep / completeStep wired) |
 | Server-side `createdAt` timestamp | ✅ Built (`serverTimestamp()`) |
 | AI-assisted script editing | ❌ Not built — only manual text overwrite |
+| Implicit signal capture on regenerate | ✅ Built (P6A: `REGENERATE` event) |
 
 ---
 

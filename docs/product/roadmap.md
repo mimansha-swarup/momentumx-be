@@ -2,7 +2,7 @@
 title: "Product Roadmap & Status"
 description: "Current build state, planned E2E flow, and identified gaps"
 date: 2026-02-26
-last_updated: 2026-03-17
+last_updated: 2026-07-12
 status: "final"
 tags: ["product", "roadmap", "status", "gaps"]
 ---
@@ -21,7 +21,7 @@ All core features have been built as independent modules. **Nothing is integrate
 |---|---|---|---|
 | Onboarding | ✅ | ❌ | Brand setup, website scraping, YouTube + competitor ingestion |
 | Video Projects | ✅ | ❌ | CRUD + pipeline state machine (Sprint 2). Foundation for integration. |
-| Topic / Title Generation | ✅ | ❌ | AI-generated titles with KMeans clustering to avoid repetition |
+| Idea / Title Generation | ✅ | ❌ | AI-generated ideas with KMeans clustering to avoid repetition (step 1); title variations at step 4 |
 | Script Generation | ✅ | ❌ | Full ~10-min script, streamed via SSE |
 | Hooks | ✅ | ❌ | Standalone pipeline step — `POST /v1/hooks/generate` + `POST /v1/hooks/:hooksId/select` |
 | Packaging | ✅ | ❌ | Title variations, description, thumbnail brief, shorts script |
@@ -37,7 +37,7 @@ Onboarding → Research → Script → Hooks → Packaging
 ```
 
 ### Video Projects
-When a creator commits a topic from Research — or brings their own idea (`POST /v1/video-projects` accepts either `{ topicId }` or `{ title }`) — a **video project** is created. All subsequent work — script, hooks, packaging — is tied to that project. Script generation is project-scoped (`GET /v1/scripts/stream/:projectId`), and each project owns its own script document, so multiple projects can share a topic. This gives creators a structured workspace per video rather than a disconnected collection of generated assets.
+When a creator commits an idea from Research — or brings their own idea (`POST /v1/video-projects` accepts either `{ ideaId }` or `{ title }`) — a **video project** is created. All subsequent work — script, hooks, packaging — is tied to that project. Script generation is project-scoped (`GET /v1/scripts/stream/:projectId`), and each project owns its own script document, so multiple projects can share an idea. This gives creators a structured workspace per video rather than a disconnected collection of generated assets.
 
 The Video Project entity is now built (Sprint 2). It holds the pipeline state machine (research → script → hooks → packaging), tracks `currentStep` and `overallStatus`, and links resources (`scriptId`, `hooksId`, `packagingId`) to the project. Integration with Research, Script, Hooks, and Packaging endpoints is the next step. See [Video Project Spec](../features/video-project/spec.md) for full schema and decisions.
 
@@ -56,17 +56,17 @@ This context persists and personalizes every subsequent generation.
 The discovery and ideation phase. The creator uses Research to figure out what video to make next.
 
 **Planned scope:**
-- **Title ideas** — AI-generated YouTube title suggestions personalized to niche, audience, and competitive landscape
+- **Video ideas** — AI-generated video concepts personalized to niche, audience, and competitive landscape
 - **Competitor analysis** — surface what competitors are publishing and what's performing well
 - **Trend discovery** — what's trending in the creator's niche right now
-- **Keyword / SEO data** — search volume and keyword signals to inform topic selection
+- **Keyword / SEO data** — search volume and keyword signals to inform idea selection
 
-**Current build:** Fully built. Title ideas (`GET /v1/topics`), trend discovery (`GET /v1/research/trending`), competitor analysis (`GET /v1/research/competitors`), and keyword signals (`GET /v1/research/keywords`) are all live. Research data is fetched fresh from the YouTube Data API on every call — not static onboarding data.
+**Current build:** Fully built. Video ideas (`GET /v1/ideas`), trend discovery (`GET /v1/research/trending`), competitor analysis (`GET /v1/research/competitors`), and keyword signals (`GET /v1/research/keywords`) are all live. Research data is fetched fresh from the YouTube Data API on every call — not static onboarding data.
 
 ---
 
 ### Step 3: Script
-Creator selects a title from Research and generates a full video script.
+Creator selects an idea from Research and generates a full video script.
 
 - ~10 minutes in length
 - Structured for retention: Hook → Setup → Tension → Twist → Payoff → Resolution
@@ -110,26 +110,29 @@ These are not phase-specific features. They ship **with every phase** and are pr
 
 Every step supports two modes of iteration:
 
-**Feedback signals** — low friction, no typing required:
-- Thumbs up / thumbs down on individual generated items
-- Save / favourite specific outputs
+**Implicit signal capture** — fire-and-forget telemetry:
+- Project creation (`PROJECT_CREATED`)
+- Hook selection (`HOOK_SELECTED`)
+- Title finalization (`TITLE_SELECTED`)
+- Every export (`EXPORT`)
+- Every regeneration (`REGENERATE`)
 
 **Regeneration** — creator-directed:
 - Regenerate a specific item (e.g. one title out of ten)
 - Regenerate all items in the current step
 - Directional refinement via follow-up prompt (e.g. "make this more aggressive", "shorter", "different angle")
 
-**Current build:** Fully built across all four pipeline steps. Research, Script, Hooks, and Packaging all support regeneration, like/dislike feedback, and export. Directional AI refinement (follow-up prompt — "make this shorter", "more aggressive") is not built at any step.
+**Current build:** Fully built across all pipeline steps. Implicit signal capture is live; explicit like/dislike feedback has been replaced. Regeneration and export are available at all steps. Directional AI refinement (follow-up prompt — "make this shorter", "more aggressive") is not built at any step.
 
 ---
 
 ### Export
 
-Export is available at every step — not just at the end of the pipeline. The creator can export their Research topics, their script, their hooks, or their full packaging at any point.
+Export is available at every step — not just at the end of the pipeline. The creator can export their Research ideas, their script, their hooks, or their full packaging at any point. Export events are captured for telemetry.
 
 Export targets to be defined (Google Docs, copy-paste formatted output, YouTube Studio are candidates).
 
-**Current build:** Fully built across all four pipeline steps. Research, Script, Hooks, and Packaging all have export endpoints live. Export targets (Google Docs, YouTube Studio integration) are not yet defined.
+**Current build:** Fully built across all pipeline steps. Ideas, Script, Hooks, and Packaging all have export endpoints live and capture export events. Export targets (Google Docs, YouTube Studio integration) are not yet defined.
 
 ---
 
@@ -138,18 +141,18 @@ Export targets to be defined (Google Docs, copy-paste formatted output, YouTube 
 Each phase ships as a complete, self-contained flow. A phase is not done until iteration and export are working within it.
 
 ### Phase 1: Research
-**Goal:** Creator can go from onboarding to a shortlist of title ideas they're confident in.
+**Goal:** Creator can go from onboarding to a shortlist of ideas they're confident in.
 
 Includes:
 - Competitor analysis — what competitors are publishing and what's performing
 - Trend discovery — what's trending in the creator's niche right now
-- Title ideas — AI-generated suggestions personalized to niche, audience, and competitive landscape
-- Keyword / SEO data — search volume and keyword signals to inform topic selection
-- Iteration — feedback signals + regenerate specific or all topics
-- Export — export selected topics
+- Video ideas — AI-generated suggestions personalized to niche, audience, and competitive landscape
+- Keyword / SEO data — search volume and keyword signals to inform idea selection
+- Iteration — regenerate specific or all ideas
+- Export — export selected ideas
 
 **Build status:** Backend complete. All components are built and live:
-- Title ideas — batch lifecycle (batchId, archived), regenerate-all, regenerate-one, like/dislike feedback, export
+- Video ideas — batch lifecycle (batchId, archived), regenerate-all, regenerate-one, export, implicit signal capture
 - Competitor analysis — `GET /v1/research/competitors` (fresh YouTube Data API, not static onboarding data)
 - Trend discovery — `GET /v1/research/trending`
 - Keyword / SEO signals — `GET /v1/research/keywords`
@@ -159,15 +162,15 @@ Phase 1 is ready for front-end integration.
 ---
 
 ### Phase 2: Script
-**Goal:** Creator can take a selected topic and generate a full, publish-ready video script.
+**Goal:** Creator can take a selected idea and generate a full, publish-ready video script.
 
 Includes:
 - Full ~10-min script structured for retention
 - Real-time streaming via SSE
-- Iteration — feedback signals + regenerate specific sections or full script
+- Iteration — regenerate specific sections or full script
 - Export — export script
 
-**Build status:** Backend complete. Script generation, iteration (regenerate, feedback), export, and pipeline step auto-advancement are all built and live.
+**Build status:** Backend complete. Script generation, iteration (regenerate), export, and pipeline step auto-advancement are all built and live. Explicit feedback has been replaced by implicit signal capture.
 
 ---
 
@@ -177,14 +180,13 @@ Includes:
 Includes:
 - 5 hook variations per generation
 - Varied styles: question, bold claim, story teaser, contrarian, pattern interrupt
-- Iteration — feedback signals + regenerate specific or all hooks
+- Iteration — regenerate hooks, select/finalize the chosen hook
 - Export — export selected hooks
 
 **Build status:** Backend complete. All components are built and live:
 - `POST /v1/hooks/generate` — generates a 5-hook batch tied to a video project
-- `POST /v1/hooks/:hooksId/select` — records selected hook index on the video project
+- `POST /v1/hooks/:hooksId/select` — records selected hook index on the video project, captures implicit signal
 - `POST /v1/hooks/:hooksId/regenerate` — regenerates hooks, cascades stale to packaging
-- `PATCH /v1/hooks/:hooksId/feedback` — per-hook like/dislike feedback
 - `GET /v1/hooks/:hooksId/export` — export hooks as plain text
 
 ---
@@ -197,10 +199,10 @@ Includes:
 - SEO-optimized description
 - Thumbnail brief (3 visual concepts)
 - Shorts script (segmented with timestamps)
-- Iteration — feedback signals + regenerate specific or all assets
+- Iteration — regenerate specific or all assets, select/finalize chosen title
 - Export — export full package
 
-**Build status:** Backend complete. Per-item generation, regeneration, feedback, export, per-item status tracking (`itemStatuses`), stale detection (`isStale`, `staleReason`, `staleSince`), stale cascade from script/hooks regeneration, and upsert-by-videoProjectId are all built and live.
+**Build status:** Backend complete. Per-item generation, regeneration, export, per-item status tracking (`itemStatuses`), stale detection (`isStale`, `staleReason`, `staleSince`), stale cascade from script/hooks regeneration, title selection/finalization (`select-title`), and upsert-by-videoProjectId are all built and live. Explicit feedback has been replaced by implicit signal capture.
 
 ---
 
@@ -229,8 +231,8 @@ The thumbnail step generates design instructions, not an actual image. Creators 
 **No content calendar or pipeline view**
 No way to plan ahead, assign topics to dates, or track video status (idea → scripted → packaged → published). Important for creators publishing consistently.
 
-**Packaging disconnected from script/topic** *(Partially resolved — Sprint 2/3)*
-The Video Project entity holds `scriptId`, `hooksId`, and `packagingId` references, and scripts now carry `topicId` + `videoProjectId` foreign keys (the script doc id is its own UUID, decoupled from the topic id). Packaging endpoints now resolve the selected hook server-side from the project rather than the client body. Direct `packaging → script` foreign key still does not exist — that Firestore data model gap remains.
+**Packaging disconnected from script/idea** *(Partially resolved — Sprint 2/3)*
+The Video Project entity holds `scriptId`, `hooksId`, and `packagingId` references, and scripts now carry `ideaId` + `videoProjectId` foreign keys (the script doc id is its own UUID, decoupled from the idea id). Packaging endpoints now resolve the selected hook server-side from the project rather than the client body. Direct `packaging → script` foreign key still does not exist — that Firestore data model gap remains.
 
 **No hook or asset library**
 Generated hooks, titles, and CTAs are not saved as reusable assets. No personal swipe file or pattern library builds over time.
@@ -249,6 +251,10 @@ Generated hooks, titles, and CTAs are not saved as reusable assets. No personal 
 | Packaging item count | ✅ Resolved | 4 items: title, description, thumbnail, shorts (hooks moved to own step) |
 | Hook selection → step completion | ✅ Resolved | Selecting a hook = completing the hooks step, stores `selectedHookIndex` (number) on the video project |
 | Shorts script ownership | ✅ Resolved | Stays in Packaging permanently, no plans to separate |
+| Entity naming (topic → idea) | ✅ Resolved | Step 1 = **Idea** generation; step 4 = **Title** variations. Routes, collections, types all renamed (P6A). |
+| Feedback mechanism | ✅ Resolved | Explicit like/dislike endpoints removed (P6A). Replaced by implicit signal capture (events collection). |
+| Packaging door | ✅ Resolved | `POST /v1/packaging/save` without `videoProjectId` lazily creates shallow project (P6A). |
+| Title finalization | ✅ Resolved | New `POST /v1/packaging/:packagingId/select-title` endpoint persists selection + updates project title (P6A). |
 
 ---
 

@@ -104,7 +104,7 @@ Stored in the `users` Firestore collection. Document ID = Firebase UID (`req.use
 | `channelId` | `string` | Enriched — from YouTube Data API |
 | `userTitle` | `string[]` | Enriched — creator's top 10 video titles |
 | `websiteContent` | `string` | Enriched — scraped + stripped plain text |
-| `stats.topics` | `number` | Incremented each time topics are generated |
+| `stats.ideas` | `number` | Incremented each time ideas are generated |
 | `stats.scripts` | `number` | Incremented each time a script is generated |
 
 ---
