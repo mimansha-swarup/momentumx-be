@@ -179,6 +179,23 @@ describe("ContextService.assemble — degradation matrix", () => {
     expect(ctx.sessionContext.script).toBeNull();
   });
 
+  it("dangling hooksId (batch not found) degrades selectedHook to null", async () => {
+    hooksRepo.findById = jest.fn().mockResolvedValue(null);
+
+    const ctx = await service.assemble(USER_ID, { videoProjectId: "proj-1" });
+
+    expect(ctx.sessionContext.selectedHook).toBeNull();
+  });
+
+  it("selectedHookIndex out of range degrades selectedHook to null", async () => {
+    // Project selects index 1, but the stored batch has fewer hooks.
+    hooksRepo.findById = jest.fn().mockResolvedValue({ id: "hooks-1", hooks: [] });
+
+    const ctx = await service.assemble(USER_ID, { videoProjectId: "proj-1" });
+
+    expect(ctx.sessionContext.selectedHook).toBeNull();
+  });
+
   it("sparse user doc yields nulls/empties, never throws", async () => {
     userRepo.get = jest.fn().mockResolvedValue({ niche: "finance" });
 
@@ -190,6 +207,34 @@ describe("ContextService.assemble — degradation matrix", () => {
     expect(ctx.channelContext.competitorUrls).toEqual([]);
     expect(ctx.channelContext.competitorTitles).toEqual([]);
     expect(ctx.channelContext.format).toBe("talking_head");
+  });
+
+  it("competitor mapping tolerates malformed entries (missing url/titles)", async () => {
+    userRepo.get = jest.fn().mockResolvedValue({
+      ...userDoc,
+      competitors: [
+        { url: "https://youtube.com/@a", titles: ["A1", "A2"] },
+        { id: "no-url-here" }, // no url → dropped from urls; no titles → contributes none
+        { url: "https://youtube.com/@c" }, // url but no titles
+      ],
+    });
+
+    const { channelContext } = await service.assemble(USER_ID);
+
+    expect(channelContext.competitorUrls).toEqual([
+      "https://youtube.com/@a",
+      "https://youtube.com/@c",
+    ]);
+    expect(channelContext.competitorTitles).toEqual(["A1", "A2"]);
+  });
+
+  it("non-array competitors field degrades to empty lists", async () => {
+    userRepo.get = jest.fn().mockResolvedValue({ ...userDoc, competitors: "oops" });
+
+    const { channelContext } = await service.assemble(USER_ID);
+
+    expect(channelContext.competitorUrls).toEqual([]);
+    expect(channelContext.competitorTitles).toEqual([]);
   });
 
   it("respects a stored faceless format; unknown values default to talking_head", async () => {
