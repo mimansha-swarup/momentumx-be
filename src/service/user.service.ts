@@ -28,12 +28,16 @@ class UserService {
   }
 
   createOnboardingData = async (userId: string, data: IOnboardingPayload) => {
-    // `stats` is seeded at user creation by the auth trigger (functions/) and
-    // maintained via FieldValue.increment, so onboarding no longer writes it —
-    // re-onboarding must not reset accumulated counters.
-    const record = await formatUserData(data, this.extractService);
-    await this.repo.add(userId, record);
-    return record;
+    // Value-first: persist the user-provided minimum IMMEDIATELY so the onboarding
+    // gate clears without blocking on YouTube/website enrichment (a multi-second
+    // network call). Enrichment — channel titles/description, website content,
+    // competitor resolution — runs as a SEPARATE request via refresh-context,
+    // which the FE fires in the background right after onboarding. (Serverless
+    // can't reliably run post-response work, so it's a separate request, not a
+    // deferred inline job.) `stats` is seeded at user creation by the auth trigger
+    // and maintained via FieldValue.increment, so onboarding never writes it.
+    await this.repo.add(userId, data);
+    return data;
   };
 
   // Onboarding prefill (3.2): resolve a channel URL and infer onboarding fields
@@ -102,8 +106,10 @@ class UserService {
   };
 
   // Refresh context (3.7): re-run channel/website enrichment from the STORED
-  // onboarding inputs — no form fields needed. Competitors are stored as
-  // objects, so map them back to their URLs for re-resolution.
+  // onboarding inputs — no form fields needed. This is also the path that
+  // enriches after the fast onboarding save. Competitors may be stored as raw
+  // URL strings (fresh onboarding, pre-enrichment) OR as enriched {url,...}
+  // objects (already refreshed) — map both back to their URLs for re-resolution.
   refreshContext = async (userId: string) => {
     const record = await this.repo.get(userId);
     if (!record) throw NotFound("User not found");
@@ -119,7 +125,11 @@ class UserService {
       format: record.format,
       competitors: Array.isArray(record.competitors)
         ? record.competitors
-            .map((competitor: { url?: string }) => competitor?.url)
+            .map((competitor: unknown) =>
+              typeof competitor === "string"
+                ? competitor
+                : (competitor as { url?: string })?.url
+            )
             .filter((url: unknown): url is string => Boolean(url))
         : [],
     } as IOnboardingPayload;

@@ -91,4 +91,44 @@ describe("UserService.refreshContext", () => {
       statusCode: 404,
     });
   });
+
+  it("tolerates competitors stored as raw URL strings (fresh, pre-enrichment)", async () => {
+    repo.get = jest.fn().mockResolvedValue({
+      userName: "https://youtube.com/@me",
+      competitors: ["https://youtube.com/@a", "https://youtube.com/@b"],
+    });
+    repo.update = jest.fn().mockResolvedValue(undefined);
+    mockFormat.mockResolvedValue({ userName: "https://youtube.com/@me" });
+
+    await service.refreshContext("user-1");
+
+    const input = mockFormat.mock.calls[0][0];
+    expect(input.competitors).toEqual([
+      "https://youtube.com/@a",
+      "https://youtube.com/@b",
+    ]);
+  });
+});
+
+describe("UserService.createOnboardingData (fast save)", () => {
+  let service: UserService;
+  let repo: jest.Mocked<UserRepository>;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    repo = new UserRepository() as jest.Mocked<UserRepository>;
+    service = new UserService(repo as never);
+  });
+
+  it("persists the raw minimum immediately WITHOUT inline enrichment", async () => {
+    repo.add = jest.fn().mockResolvedValue(undefined);
+    const data = { userName: "https://youtube.com/@me" } as never;
+
+    const result = await service.createOnboardingData("user-1", data);
+
+    // Fast path: saves the provided fields, never calls the (slow) enrichment.
+    expect(repo.add).toHaveBeenCalledWith("user-1", data);
+    expect(mockFormat).not.toHaveBeenCalled();
+    expect(result).toBe(data);
+  });
 });

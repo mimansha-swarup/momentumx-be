@@ -13,13 +13,14 @@ class UserController {
   // (required fields, URL formats, trimming, unknown-key stripping) — the
   // controller stays thin and trusts req.body.
   saveOnboarding = asyncHandler(async (req: Request, res: Response) => {
+    // Fast save — persists the provided fields only. Enrichment (channel titles,
+    // website content, competitors) runs separately via refresh-context, which the
+    // FE fires in the background, so there is no website-parsed status to report here.
     const payload = await this.service.createOnboardingData(
       req.userId,
       req.body
     );
-    const isWebsiteParsed = !!payload?.websiteContent;
     res.sendSuccess({
-      warning: !isWebsiteParsed ? "Website content is not parsed" : "",
       message: "Onboarded successfully",
       data: { payload },
     });
