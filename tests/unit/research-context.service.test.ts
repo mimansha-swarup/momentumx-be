@@ -125,7 +125,7 @@ describe("ResearchContextService", () => {
 
       expect(repo.getTrendingVideos).toHaveBeenCalledWith("x".repeat(120));
       expect(block).toContain("Live competitive title research");
-      expect(block).toContain("Top-performing titles on this topic:");
+      expect(block).toContain("Top-performing titles on this subject:");
     });
 
     it("survives a stats fetch failure (titles without view counts)", async () => {

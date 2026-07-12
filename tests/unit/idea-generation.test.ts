@@ -31,7 +31,7 @@ jest.mock("../../src/utlils/content", () => ({
   getClusteredTitles: jest.fn().mockResolvedValue([]),
   formatCreatorsData: jest.fn().mockReturnValue("creators-data"),
   formatGeneratedIdea: jest.fn(async (idea, userId, batchId) => ({
-    id: "topic-new",
+    id: "idea-new",
     title: idea.workingTitle,
     concept: idea.concept,
     ideaType: idea.type,
@@ -128,10 +128,10 @@ describe("ContentService.generateIdeas", () => {
     );
   });
 
-  it("increments stats.topics by batch size only when counting is on", async () => {
+  it("increments stats.ideas by batch size only when counting is on", async () => {
     await service.generateIdeas("user-1");
     expect(userRepo.update).toHaveBeenCalledWith("user-1", {
-      "stats.topics": 2,
+      "stats.ideas": 2,
     });
 
     userRepo.update.mockClear();

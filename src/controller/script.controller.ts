@@ -1,7 +1,8 @@
 import { Request, Response } from "express";
 import ContentService from "../service/content.service.js";
 import { asyncHandler } from "../middleware/async_handler.js";
-import { BadRequest } from "../utlils/errors.js";
+import { eventService } from "../service/event.service.js";
+import { EventType } from "../types/routes/event.js";
 
 class ScriptController {
   private service: ContentService;
@@ -57,22 +58,14 @@ class ScriptController {
   regenerateScript = asyncHandler(async (req: Request, res: Response) => {
     const { scriptId } = req.params;
     const data = await this.service.regenerateScript(req.userId, scriptId);
+    eventService.capture(req.userId, EventType.REGENERATE, { resource: "script", scriptId });
     res.sendSuccess({ message: "Script regenerated successfully", data });
-  });
-
-  updateScriptFeedback = asyncHandler(async (req: Request, res: Response) => {
-    const { scriptId } = req.params;
-    const { feedback } = req.body as { feedback: "like" | "dislike" | null };
-    if (feedback === undefined) {
-      throw BadRequest("feedback is required");
-    }
-    const data = await this.service.updateScriptFeedback(req.userId, scriptId, feedback);
-    res.sendSuccess({ message: "Script feedback updated", data });
   });
 
   exportScript = asyncHandler(async (req: Request, res: Response) => {
     const { scriptId } = req.params;
     const data = await this.service.exportScript(req.userId, scriptId);
+    eventService.capture(req.userId, EventType.EXPORT, { resource: "script", scriptId });
     res.sendSuccess({ message: "Script exported successfully", data });
   });
 }

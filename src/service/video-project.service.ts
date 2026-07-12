@@ -44,20 +44,20 @@ class VideoProjectService {
     private packagingRepo: PackagingRepository
   ) {}
 
-  create = async (userId: string, topicId: string): Promise<IVideoProject> => {
-    const topic = await this.contentRepo.getTopic(topicId);
-    if (!topic) {
-      throw NotFound("Topic not found");
+  create = async (userId: string, ideaId: string): Promise<IVideoProject> => {
+    const idea = await this.contentRepo.getIdea(ideaId);
+    if (!idea) {
+      throw NotFound("Idea not found");
     }
-    if (topic.createdBy !== userId) {
+    if (idea.createdBy !== userId) {
       throw Forbidden();
     }
 
     const now = firebase.firestore.FieldValue.serverTimestamp();
     const projectData = {
       createdBy: userId,
-      title: topic.title,
-      topicId,
+      title: idea.title,
+      ideaId,
       scriptId: null,
       hooksId: null,
       selectedHookIndex: null,
@@ -82,7 +82,7 @@ class VideoProjectService {
     };
 
     const project = await this.repo.create(projectData);
-    await this.contentRepo.updateTopic(topicId, { videoProjectId: project.id });
+    await this.contentRepo.updateIdea(ideaId, { videoProjectId: project.id });
     return project;
   };
 
@@ -91,12 +91,12 @@ class VideoProjectService {
       throw BadRequest("title is required");
     }
     const formatted = await formatGeneratedTitle(title.trim(), userId);
-    const [saved] = await this.contentRepo.batchSaveTopics([formatted]);
+    const [saved] = await this.contentRepo.batchSaveIdeas([formatted]);
     return this.create(userId, saved.id);
   };
 
-  getProjectsByTopic = async (topicId: string, userId: string): Promise<IVideoProject[]> => {
-    return this.repo.findByTopicId(topicId, userId);
+  getProjectsByIdea = async (ideaId: string, userId: string): Promise<IVideoProject[]> => {
+    return this.repo.findByIdeaId(ideaId, userId);
   };
 
   list = async (
@@ -157,7 +157,18 @@ class VideoProjectService {
         pipeline[step] = { ...s, status: "completed" };
       }
     });
-    return { ...project, pipeline, overallStatus: computeOverallStatus(pipeline) };
+    // Guided next-step CTA (6A.4 / §5): the first step not yet completed — covers
+    // jumping (finds the real gap), stale (stale ≠ completed → surface it), and the
+    // terminal case (all completed → null). FE renders the "continue" CTA from this
+    // instead of re-deriving the pipeline order.
+    const recommendedNextStep =
+      STEP_ORDER.find((s) => pipeline[s].status !== "completed") ?? null;
+    return {
+      ...project,
+      pipeline,
+      overallStatus: computeOverallStatus(pipeline),
+      recommendedNextStep,
+    };
   };
 
   getReconciledById = async (projectId: string, userId: string): Promise<IVideoProject> => {

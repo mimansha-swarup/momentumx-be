@@ -23,8 +23,3 @@ export interface IRegenerateHooksBody {
   // Optional since 1D — resolved server-side from the stored batch's project.
   script?: string;
 }
-
-export interface IHooksFeedbackBody {
-  hookIndex: number;
-  feedback: "like" | "dislike" | null;
-}

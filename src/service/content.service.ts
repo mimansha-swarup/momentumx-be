@@ -24,7 +24,7 @@ import {
   GENERATION_CONFIG_SCRIPTS,
   GENERATION_CONFIG_IDEAS,
 } from "../constants/firebase.js";
-import { IGetTopicByUserIdArgs } from "../types/repository/content.js";
+import { IGetIdeaByUserIdArgs } from "../types/repository/content.js";
 import { IGeneratedIdea, IIdeaContextOverride } from "../types/routes/content.js";
 import { firebase } from "../config/firebase.js";
 import { BadRequest, Forbidden, NotFound } from "../utlils/errors.js";
@@ -67,13 +67,13 @@ class ContentService {
       "{title}": title,
     });
 
-  getPaginatedUsersTopics = async ({
+  getPaginatedUsersIdeas = async ({
     userId,
     limit,
     cursor,
     filters,
-  }: IGetTopicByUserIdArgs) => {
-    const docs = await this.repo.getTopics({
+  }: IGetIdeaByUserIdArgs) => {
+    const docs = await this.repo.getIdeas({
       userId,
       limit,
       cursor,
@@ -175,24 +175,23 @@ class ContentService {
     }
 
     if (countTowardStats) {
-      // Keyed as stats.topics for continuity — existing lifetime tallies and
-      // the P5 metering plan build on this field.
+      // Lifetime idea counter (stats.ideas); the P5 metering plan builds on it.
       this.userRepo.update(userId, {
-        "stats.topics": firebase.firestore.FieldValue.increment(ideas.length),
+        "stats.ideas": firebase.firestore.FieldValue.increment(ideas.length),
       });
     }
 
     return ideas;
   };
 
-  saveBatchTopics = async (data: unknown[]) => {
-    return this.repo.batchSaveTopics(data);
+  saveBatchIdeas = async (data: unknown[]) => {
+    return this.repo.batchSaveIdeas(data);
   };
 
-  editTopics = async (titleId: string, userId: string, resBody: Record<string, string>) => {
-    const topic = await this.repo.getTopic(titleId);
-    if (!topic) throw NotFound("Topic not found");
-    if (topic.createdBy !== userId) throw Forbidden();
+  editIdeas = async (titleId: string, userId: string, resBody: Record<string, string>) => {
+    const idea = await this.repo.getIdea(titleId);
+    if (!idea) throw NotFound("Idea not found");
+    if (idea.createdBy !== userId) throw Forbidden();
     // Whitelist: only `title` is client-editable. Never let the client touch
     // server-owned fields (archived, videoProjectId, embedding, isScriptGenerated, createdBy, batchId).
     const updates: Record<string, string> = {};
@@ -200,7 +199,7 @@ class ContentService {
     if (Object.keys(updates).length === 0) {
       throw BadRequest("No editable fields provided (allowed: title)");
     }
-    await this.repo.updateTopic(titleId, updates);
+    await this.repo.updateIdea(titleId, updates);
     return updates;
   };
 
@@ -225,20 +224,20 @@ class ContentService {
       const vps = this.videoProjectService;
       const project = await vps.getById(projectId, userId);
 
-      const [userRecord, topic] = await Promise.all([
+      const [userRecord, idea] = await Promise.all([
         this.userRepo.get(userId),
-        this.repo.getTopic(project.topicId),
+        this.repo.getIdea(project.ideaId),
       ]);
 
-      if (!topic) {
-        throw NotFound("Topic not found");
+      if (!idea) {
+        throw NotFound("Idea not found");
       }
 
       // Reuse the existing script id on regenerate — minting a new uuid when
       // project.scriptId is set would orphan the old script doc.
       const scriptId = project.scriptId ?? randomUUID();
 
-      const userPrompt = this.buildScriptUserPrompt(userRecord, topic.title);
+      const userPrompt = this.buildScriptUserPrompt(userRecord, idea.title);
       const systemPrompt = SCRIPT_SYSTEM_PROMPT.replace(
         "{videoFormatStyle}",
         SCRIPT_FORMAT_STYLE[resolveVideoFormat(userRecord?.format)]
@@ -280,15 +279,15 @@ class ContentService {
 
       try {
         const formattedData = formatGeneratedScript(
-          topic.title,
+          idea.title,
           scriptId,
-          project.topicId,
+          project.ideaId,
           projectId,
           accumulatedRes,
           userId,
         );
         await this.repo.saveScript(scriptId, formattedData);
-        await this.repo.updateTopic(project.topicId, {
+        await this.repo.updateIdea(project.ideaId, {
           isScriptGenerated: true,
         });
 
@@ -329,17 +328,17 @@ class ContentService {
   };
 
   regenerateAll = async (userId: string) => {
-    const activeTopics = await this.repo.getActiveBatch(userId);
+    const activeIdeas = await this.repo.getActiveBatch(userId);
 
-    // Fan out the stale cascade to ALL projects on each active topic — a topic
-    // can back multiple video projects, so keying off topic.videoProjectId alone
+    // Fan out the stale cascade to ALL projects on each active idea — a idea
+    // can back multiple video projects, so keying off idea.videoProjectId alone
     // would only reach one of them.
-    for (const topic of activeTopics) {
-      let projects: Awaited<ReturnType<VideoProjectService["getProjectsByTopic"]>> = [];
+    for (const idea of activeIdeas) {
+      let projects: Awaited<ReturnType<VideoProjectService["getProjectsByIdea"]>> = [];
       try {
-        projects = await this.videoProjectService.getProjectsByTopic(topic.id, userId);
+        projects = await this.videoProjectService.getProjectsByIdea(idea.id, userId);
       } catch (err) {
-        console.error(JSON.stringify({ event: "stale_cascade_lookup_failed", from: "research", topicId: topic.id, userId, message: (err as Error)?.message }));
+        console.error(JSON.stringify({ event: "stale_cascade_lookup_failed", from: "research", ideaId: idea.id, userId, message: (err as Error)?.message }));
         continue;
       }
       for (const project of projects) {
@@ -353,7 +352,7 @@ class ContentService {
     }
 
     // Archive current active batch
-    await this.repo.archiveUserTopics(userId);
+    await this.repo.archiveUserIdeas(userId);
 
     // Generate a fresh idea batch
     const ideas = await this.generateIdeas(userId);
@@ -366,30 +365,30 @@ class ContentService {
       .filter((r) => r.status === "fulfilled")
       .map((r) => (r as PromiseFulfilledResult<Awaited<ReturnType<typeof formatGeneratedIdea>>>).value);
 
-    return this.saveBatchTopics(formatted);
+    return this.saveBatchIdeas(formatted);
   };
 
-  regenerateOne = async (userId: string, topicId: string) => {
-    const topic = await this.repo.getTopic(topicId);
-    if (!topic) {
-      throw NotFound("Topic not found");
+  regenerateOne = async (userId: string, ideaId: string) => {
+    const idea = await this.repo.getIdea(ideaId);
+    if (!idea) {
+      throw NotFound("Idea not found");
     }
-    if (topic.createdBy !== userId) {
+    if (idea.createdBy !== userId) {
       throw Forbidden();
     }
 
     // Suppress the batch-length stats increment — regenerating a single slot
-    // keeps only ideas[0], so a full +batch.length here would 10x-inflate stats.topics.
+    // keeps only ideas[0], so a full +batch.length here would 10x-inflate stats.ideas.
     const ideas = await this.generateIdeas(userId, false);
 
     // Regenerate into the same slot type when the old doc had one.
-    const preferredType = topic.ideaType;
+    const preferredType = idea.ideaType;
     const newIdea =
       (preferredType && ideas.find((idea) => idea.type === preferredType)) ||
       ideas[0];
-    const formatted = await formatGeneratedIdea(newIdea, userId, topic.batchId ?? undefined);
+    const formatted = await formatGeneratedIdea(newIdea, userId, idea.batchId ?? undefined);
 
-    await this.repo.updateTopic(topicId, {
+    await this.repo.updateIdea(ideaId, {
       title: formatted.title,
       concept: formatted.concept,
       ideaType: formatted.ideaType,
@@ -400,54 +399,12 @@ class ContentService {
       userFeedback: null,
     });
 
-    // One topic regenerated -> count exactly one toward stats.
+    // One idea regenerated -> count exactly one toward stats.
     await this.userRepo.update(userId, {
-      "stats.topics": firebase.firestore.FieldValue.increment(1),
+      "stats.ideas": firebase.firestore.FieldValue.increment(1),
     });
 
-    return { ...formatted, id: topicId };
-  };
-
-  updateFeedback = async (
-    userId: string,
-    topicId: string,
-    feedback: "like" | "dislike" | null,
-  ) => {
-    const topic = await this.repo.getTopic(topicId);
-    if (!topic) {
-      throw NotFound("Topic not found");
-    }
-    if (topic.createdBy !== userId) {
-      throw Forbidden();
-    }
-
-    const validFeedback = ["like", "dislike", null];
-    if (!validFeedback.includes(feedback)) {
-      throw BadRequest('feedback must be "like", "dislike", or null');
-    }
-
-    await this.repo.updateTopic(topicId, { userFeedback: feedback });
-    return { id: topicId, userFeedback: feedback };
-  };
-
-  updateScriptFeedback = async (
-    userId: string,
-    scriptId: string,
-    feedback: "like" | "dislike" | null,
-  ) => {
-    const script = await this.repo.getScriptById(scriptId);
-    if (!script) {
-      throw NotFound("Script not found");
-    }
-    if (script.createdBy !== userId) {
-      throw Forbidden();
-    }
-    const validFeedback = ["like", "dislike", null];
-    if (!validFeedback.includes(feedback)) {
-      throw BadRequest('feedback must be "like", "dislike", or null');
-    }
-    await this.repo.editScript(scriptId, { userFeedback: feedback });
-    return { id: scriptId, userFeedback: feedback };
+    return { ...formatted, id: ideaId };
   };
 
   exportScript = async (userId: string, scriptId: string) => {
@@ -506,10 +463,10 @@ class ContentService {
     return { id: scriptId, title: scriptDoc.title, script: accumulatedRes };
   };
 
-  exportTopics = async (userId: string) => {
-    const activeTopics = await this.repo.getActiveBatch(userId);
+  exportIdeas = async (userId: string) => {
+    const activeIdeas = await this.repo.getActiveBatch(userId);
 
-    const sorted = [...activeTopics].sort((a, b) => {
+    const sorted = [...activeIdeas].sort((a, b) => {
       const aTime = a.createdAt?.toDate?.()?.getTime?.() ?? 0;
       const bTime = b.createdAt?.toDate?.()?.getTime?.() ?? 0;
       return aTime - bTime;

@@ -1,16 +1,22 @@
 import { asyncHandler } from "../middleware/async_handler.js";
 import { BadRequest } from "../utlils/errors.js";
+import { eventService } from "../service/event.service.js";
 class VideoProjectController {
     constructor(service) {
         this.service = service;
         this.create = asyncHandler(async (req, res) => {
-            const { topicId, title } = req.body;
-            if (Boolean(topicId) === Boolean(title)) {
-                throw BadRequest("Provide exactly one of topicId or title");
+            const { ideaId, title } = req.body;
+            if (Boolean(ideaId) === Boolean(title)) {
+                throw BadRequest("Provide exactly one of ideaId or title");
             }
-            const data = topicId
-                ? await this.service.create(req.userId, topicId)
+            const data = ideaId
+                ? await this.service.create(req.userId, ideaId)
                 : await this.service.createFromTitle(req.userId, title);
+            eventService.capture(req.userId, "project_created" /* EventType.PROJECT_CREATED */, {
+                projectId: data.id,
+                ideaId,
+                title,
+            });
             res.sendSuccess({ data, message: "Video project created successfully", statusCode: 201 });
         });
         this.list = asyncHandler(async (req, res) => {

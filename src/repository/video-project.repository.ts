@@ -83,11 +83,11 @@ class VideoProjectRepository {
       });
   };
 
-  findByTopicId = async (topicId: string, userId: string): Promise<IVideoProject[]> => {
+  findByIdeaId = async (ideaId: string, userId: string): Promise<IVideoProject[]> => {
     // Equality-only filters (no orderBy) so no composite index is required.
     const snap = await this.db.collection(this.collection)
       .where("createdBy", "==", userId)
-      .where("topicId", "==", topicId)
+      .where("ideaId", "==", ideaId)
       .where("isDeleted", "==", false)
       .get();
     return snap.docs.map((doc) => doc.data() as IVideoProject);

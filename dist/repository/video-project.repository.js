@@ -52,11 +52,11 @@ class VideoProjectRepository {
                 updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
             });
         };
-        this.findByTopicId = async (topicId, userId) => {
+        this.findByIdeaId = async (ideaId, userId) => {
             // Equality-only filters (no orderBy) so no composite index is required.
             const snap = await this.db.collection(this.collection)
                 .where("createdBy", "==", userId)
-                .where("topicId", "==", topicId)
+                .where("ideaId", "==", ideaId)
                 .where("isDeleted", "==", false)
                 .get();
             return snap.docs.map((doc) => doc.data());

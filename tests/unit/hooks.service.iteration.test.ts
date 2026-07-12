@@ -181,66 +181,6 @@ describe("HooksService — select", () => {
   });
 });
 
-describe("HooksService — updateFeedback", () => {
-  let service: HooksService;
-  let mockRepo: jest.Mocked<HooksRepository>;
-  let mockVpService: jest.Mocked<VideoProjectService>;
-
-  beforeEach(() => {
-    mockRepo = new MockHooksRepo() as jest.Mocked<HooksRepository>;
-    mockVpService = new MockVideoProjectService(null as any, null as any, null as any) as jest.Mocked<VideoProjectService>;
-    service = new HooksService(mockRepo, mockVpService);
-  });
-
-  it("throws 404 if batch not found", async () => {
-    mockRepo.findById = jest.fn().mockResolvedValue(null);
-    const err = await service.updateFeedback("user-1", "hooks-1", 0, "like").catch(e => e);
-    expect(err.statusCode).toBe(404);
-  });
-
-  it("throws 403 if not owner", async () => {
-    mockRepo.findById = jest.fn().mockResolvedValue({ ...mockBatch, createdBy: "other" });
-    const err = await service.updateFeedback("user-1", "hooks-1", 0, "like").catch(e => e);
-    expect(err.statusCode).toBe(403);
-  });
-
-  it("throws 400 if hookIndex is negative", async () => {
-    mockRepo.findById = jest.fn().mockResolvedValue(mockBatch);
-    const err = await service.updateFeedback("user-1", "hooks-1", -1, "like").catch(e => e);
-    expect(err.statusCode).toBe(400);
-  });
-
-  it("throws 400 if hookIndex is >= hooks.length", async () => {
-    mockRepo.findById = jest.fn().mockResolvedValue(mockBatch);
-    const err = await service.updateFeedback("user-1", "hooks-1", 5, "like").catch(e => e);
-    expect(err.statusCode).toBe(400);
-  });
-
-  it("throws 400 if feedback is invalid", async () => {
-    mockRepo.findById = jest.fn().mockResolvedValue(mockBatch);
-    const err = await service.updateFeedback("user-1", "hooks-1", 0, "invalid" as any).catch(e => e);
-    expect(err.statusCode).toBe(400);
-  });
-
-  it("happy path: updates hookFeedback map and returns { id, hookIndex, feedback }", async () => {
-    mockRepo.findById = jest.fn().mockResolvedValue(mockBatch);
-    mockRepo.update = jest.fn().mockResolvedValue(undefined);
-
-    const result = await service.updateFeedback("user-1", "hooks-1", 2, "like");
-
-    expect(mockRepo.update).toHaveBeenCalledWith("hooks-1", { "hookFeedback.2": "like" });
-    expect(result).toEqual({ id: "hooks-1", hookIndex: 2, feedback: "like" });
-  });
-
-  it("happy path: hookIndex 0 and null feedback both work", async () => {
-    mockRepo.findById = jest.fn().mockResolvedValue(mockBatch);
-    mockRepo.update = jest.fn().mockResolvedValue(undefined);
-
-    const result = await service.updateFeedback("user-1", "hooks-1", 0, null);
-    expect(result).toEqual({ id: "hooks-1", hookIndex: 0, feedback: null });
-  });
-});
-
 describe("HooksService — exportHooks", () => {
   let service: HooksService;
   let mockRepo: jest.Mocked<HooksRepository>;

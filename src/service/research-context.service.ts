@@ -140,7 +140,7 @@ class ResearchContextService {
     this.buildSignalsBlock(
       query.trim().slice(0, 120),
       "Live competitive title research (learn from the structures that earned clicks — do not copy titles):",
-      "Top-performing titles on this topic:",
+      "Top-performing titles on this subject:",
       "Titles ranking for related searches:"
     );
 }

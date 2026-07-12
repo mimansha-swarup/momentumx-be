@@ -1,14 +1,15 @@
 export const enum COLLECTIONS {
   USERS = "users",
   SCRIPTS = "scripts",
-  TOPICS = "topics",
+  IDEAS = "ideas",
   PACKAGING = "packaging",
   VIDEO_PROJECTS = "videoProjects",
   HOOKS = "hooks",
+  EVENTS = "events",
 }
 
 export const stats = {
-  topics: 0,
+  ideas: 0,
   scripts: 0,
   credits: 0,
 };

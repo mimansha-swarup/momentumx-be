@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import userRouter from "./user.route.js";
-import topicsRouter from "./topics.route.js";
+import ideasRouter from "./ideas.route.js";
 import scriptsRouter from "./scripts.route.js";
 import packagingRouter from "./packaging.route.js";
 import videoProjectRouter from "./video-project.route.js";
@@ -10,7 +10,7 @@ import hooksRouter from "./hooks.route.js";
 const router = Router();
 
 router.use("/user", userRouter);
-router.use("/topics", topicsRouter);
+router.use("/ideas", ideasRouter);
 router.use("/scripts", scriptsRouter);
 router.use("/packaging", packagingRouter);
 router.use("/video-projects", videoProjectRouter);

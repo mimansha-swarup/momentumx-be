@@ -165,14 +165,13 @@ Snapshot of the API surface. When exact behavior matters, verify against `src/ro
   GET   /profile               — get user profile (+ completeness score)
   PATCH /profile               — update profile
 
-/v1/topics
-  POST  /generate              — generate 10 topic ideas
-  GET   /                      — list saved topics
+/v1/ideas
+  POST  /generate              — generate 10 ideas
+  GET   /                      — list saved ideas
   GET   /export                — export active batch as text
   POST  /regenerate-all        — archive + regenerate full batch
-  PATCH /edit/:topicId         — update topic title
-  POST  /:topicId/regenerate   — regenerate single topic slot
-  PATCH /:topicId/feedback     — like/dislike on a topic
+  PATCH /edit/:ideaId          — update idea working title
+  POST  /:ideaId/regenerate    — regenerate single idea slot
 
 /v1/scripts
   GET   /stream/:projectId     — SSE: generate + stream script (?token= auth)
@@ -180,14 +179,12 @@ Snapshot of the API surface. When exact behavior matters, verify against `src/ro
   GET   /:scriptId             — get single script
   PATCH /edit/:scriptId        — update script content
   POST  /:scriptId/regenerate  — regenerate script (non-SSE)
-  PATCH /:scriptId/feedback    — like/dislike on a script
   GET   /:scriptId/export      — export script as plain text
 
 /v1/hooks
   POST  /generate              — generate 5-hook batch tied to video project
   POST  /:hooksId/select       — select a hook, completes hooks step
   POST  /:hooksId/regenerate   — regenerate hooks, cascades stale to packaging
-  PATCH /:hooksId/feedback     — per-hook like/dislike
   GET   /:hooksId/export       — export hooks as plain text
 
 /v1/packaging
@@ -199,7 +196,7 @@ Snapshot of the API surface. When exact behavior matters, verify against `src/ro
   GET   /list                  — list user's packaging
   GET   /:packagingId          — get single packaging
   POST  /:packagingId/regenerate/:item — regenerate one packaging item
-  PATCH /:packagingId/feedback — per-item like/dislike
+  POST  /:packagingId/select-title — finalize a title → updates the project's display title
   GET   /:packagingId/export   — export full package as text
 
 /v1/research
@@ -215,7 +212,7 @@ Snapshot of the API surface. When exact behavior matters, verify against `src/ro
   DELETE /:projectId           — soft delete project
   PATCH /:projectId/step/:stepName/start    — mark a pipeline step in progress
   PATCH /:projectId/step/:stepName/complete — mark a pipeline step complete
-  PATCH /:projectId/link/:resourceType      — link a resource (topic/script/hooks/packaging) to the project
+  PATCH /:projectId/link/:resourceType      — link a resource (script/hooks/packaging) to the project
 ```
 
-Note: `/v1/topics` generates **ideas** (video concepts with `concept`/`workingTitle`/`ideaType`/`evidence`), grounded in live trending + keyword research. The route path keeps the legacy "topics" name for FE compatibility (rename decision tracked for P6A). The former `/v1/title-intelligence` routes were retired in phase 2 — `title-intelligence.service.ts` remains as the engine reserved for the post-script Title step; the research half lives in `research-context.service.ts`.
+Note: `/v1/ideas` generates **ideas** (video concepts with `concept`/`workingTitle`/`ideaType`/`evidence`), grounded in live trending + keyword research. (The legacy `/v1/topics` path + all "topic" naming were renamed to "idea" in P6A — step 1 is **Idea**, the post-script step 4 is **Title**; "topic" is retired.) The former `/v1/title-intelligence` routes were retired in phase 2 — `title-intelligence.service.ts` remains as the engine reserved for the post-script Title step; the research half lives in `research-context.service.ts`.

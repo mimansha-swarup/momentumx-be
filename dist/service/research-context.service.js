@@ -99,7 +99,7 @@ class ResearchContextService {
          * working title (a far more specific query than the niche). Same
          * degradation contract as getIdeaSignals.
          */
-        this.getTitleSignals = async (query) => this.buildSignalsBlock(query.trim().slice(0, 120), "Live competitive title research (learn from the structures that earned clicks — do not copy titles):", "Top-performing titles on this topic:", "Titles ranking for related searches:");
+        this.getTitleSignals = async (query) => this.buildSignalsBlock(query.trim().slice(0, 120), "Live competitive title research (learn from the structures that earned clicks — do not copy titles):", "Top-performing titles on this subject:", "Titles ranking for related searches:");
     }
 }
 export default ResearchContextService;

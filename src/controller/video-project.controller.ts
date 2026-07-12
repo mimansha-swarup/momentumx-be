@@ -3,18 +3,25 @@ import VideoProjectService from "../service/video-project.service.js";
 import { ICreateVideoProjectBody, ILinkResourceBody, IUpdateVideoProjectBody } from "../types/routes/video-project.js";
 import { asyncHandler } from "../middleware/async_handler.js";
 import { BadRequest } from "../utlils/errors.js";
+import { eventService } from "../service/event.service.js";
+import { EventType } from "../types/routes/event.js";
 
 class VideoProjectController {
   constructor(private service: VideoProjectService) {}
 
   create = asyncHandler(async (req: Request, res: Response) => {
-    const { topicId, title } = req.body as ICreateVideoProjectBody;
-    if (Boolean(topicId) === Boolean(title)) {
-      throw BadRequest("Provide exactly one of topicId or title");
+    const { ideaId, title } = req.body as ICreateVideoProjectBody;
+    if (Boolean(ideaId) === Boolean(title)) {
+      throw BadRequest("Provide exactly one of ideaId or title");
     }
-    const data = topicId
-      ? await this.service.create(req.userId, topicId)
+    const data = ideaId
+      ? await this.service.create(req.userId, ideaId)
       : await this.service.createFromTitle(req.userId, title as string);
+    eventService.capture(req.userId, EventType.PROJECT_CREATED, {
+      projectId: (data as { id?: string }).id,
+      ideaId,
+      title,
+    });
     res.sendSuccess({ data, message: "Video project created successfully", statusCode: 201 });
   });
 

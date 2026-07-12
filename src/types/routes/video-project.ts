@@ -31,7 +31,7 @@ export interface IVideoProject {
   id: string;
   createdBy: string;
   title: string;
-  topicId: string;
+  ideaId: string;
   scriptId: string | null;
   hooksId: string | null;
   selectedHookIndex: number | null;
@@ -40,6 +40,9 @@ export interface IVideoProject {
   pipeline: IVideoProjectPipeline;
   overallStatus: OverallStatus;
   currentStep: StepName;
+  // Read-time only (never stored): the guided-CTA target — the first non-completed
+  // step, or null when the pipeline is done. Attached in reconcileView (6A.4).
+  recommendedNextStep?: StepName | null;
   isDeleted: boolean;
   deletedAt: Timestamp | null;
   createdAt: Timestamp;
@@ -47,7 +50,7 @@ export interface IVideoProject {
 }
 
 export interface ICreateVideoProjectBody {
-  topicId?: string;
+  ideaId?: string;
   title?: string;
 }
 

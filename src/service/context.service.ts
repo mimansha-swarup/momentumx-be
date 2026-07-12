@@ -20,7 +20,7 @@ interface ICompetitorRecord {
 
 const EMPTY_SESSION: ISessionContext = {
   videoProjectId: null,
-  topicId: null,
+  ideaId: null,
   workingTitle: null,
   script: null,
   selectedHook: null,
@@ -35,7 +35,7 @@ const EMPTY_SESSION: ISessionContext = {
  *   for not-yet-persisted onboarding context). Missing user with no overrides
  *   is the only NotFound this service throws itself.
  * - sessionContext degrades: absent upstream content (no script yet, no hook
- *   selected, missing topic doc) yields null fields, never an error.
+ *   selected, missing idea doc) yields null fields, never an error.
  * - Invalid targets still fail loudly: a videoProjectId that doesn't exist or
  *   isn't owned by the caller propagates NotFound/Forbidden from
  *   VideoProjectService.getById. Infrastructure errors also propagate — a
@@ -119,14 +119,14 @@ class ContextService {
     );
 
     const [workingTitle, script, selectedHook] = await Promise.all([
-      this.resolveWorkingTitle(project.topicId, project.title),
+      this.resolveWorkingTitle(project.ideaId, project.title),
       this.resolveScript(project.scriptId),
       this.resolveSelectedHook(project.hooksId, project.selectedHookIndex),
     ]);
 
     return {
       videoProjectId: project.id,
-      topicId: project.topicId ?? null,
+      ideaId: project.ideaId ?? null,
       workingTitle,
       script,
       selectedHook,
@@ -135,14 +135,14 @@ class ContextService {
   };
 
   private resolveWorkingTitle = async (
-    topicId: string | null,
+    ideaId: string | null,
     projectTitle: string | null
   ): Promise<string | null> => {
-    if (!topicId) {
+    if (!ideaId) {
       return projectTitle ?? null;
     }
-    const topic = await this.contentRepo.getTopic(topicId);
-    return topic?.title ?? projectTitle ?? null;
+    const idea = await this.contentRepo.getIdea(ideaId);
+    return idea?.title ?? projectTitle ?? null;
   };
 
   private resolveScript = async (

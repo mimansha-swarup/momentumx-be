@@ -1,5 +1,6 @@
 import { asyncHandler } from "../middleware/async_handler.js";
 import { BadRequest } from "../utlils/errors.js";
+import { eventService } from "../service/event.service.js";
 class HooksController {
     constructor(service) {
         this.service = service;
@@ -20,6 +21,7 @@ class HooksController {
             }
             // videoProjectId is NOT taken from the client — select resolves it from the stored hooks batch.
             const data = await this.service.select(req.userId, hooksId, hookIndex);
+            eventService.capture(req.userId, "hook_selected" /* EventType.HOOK_SELECTED */, { hooksId, hookIndex });
             res.sendSuccess({ message: "Hook selected successfully", data });
         });
         this.regenerate = asyncHandler(async (req, res) => {
@@ -27,23 +29,13 @@ class HooksController {
             // script is optional — resolved server-side from the stored batch's project.
             const { script } = req.body;
             const data = await this.service.regenerate(req.userId, hooksId, script);
+            eventService.capture(req.userId, "regenerate" /* EventType.REGENERATE */, { resource: "hooks", hooksId });
             res.sendSuccess({ message: "Hooks regenerated successfully", data });
-        });
-        this.updateFeedback = asyncHandler(async (req, res) => {
-            const hooksId = req.params.hooksId;
-            const { hookIndex, feedback } = req.body;
-            if (hookIndex === undefined || hookIndex === null) {
-                throw BadRequest("hookIndex is required");
-            }
-            if (feedback === undefined) {
-                throw BadRequest("feedback is required");
-            }
-            const data = await this.service.updateFeedback(req.userId, hooksId, hookIndex, feedback);
-            res.sendSuccess({ message: "Feedback updated successfully", data });
         });
         this.exportHooks = asyncHandler(async (req, res) => {
             const hooksId = req.params.hooksId;
             const data = await this.service.exportHooks(req.userId, hooksId);
+            eventService.capture(req.userId, "export" /* EventType.EXPORT */, { resource: "hooks", hooksId });
             res.sendSuccess({ message: "Hooks exported successfully", data });
         });
     }

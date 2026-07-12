@@ -22,6 +22,5 @@ router.get("/", scriptController.retrieveScripts);
 router.patch("/edit/:scriptId", scriptController.editScript);
 router.get("/:scriptId/export", scriptController.exportScript);
 router.post("/:scriptId/regenerate", scriptController.regenerateScript);
-router.patch("/:scriptId/feedback", scriptController.updateScriptFeedback);
 router.get("/:scriptId", scriptController.retrieveScriptById);
 export default router;

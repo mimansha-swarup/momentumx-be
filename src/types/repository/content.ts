@@ -1,4 +1,4 @@
-export interface IGetTopicByUserIdArgs {
+export interface IGetIdeaByUserIdArgs {
   userId: string;
   limit: number;
   cursor: {

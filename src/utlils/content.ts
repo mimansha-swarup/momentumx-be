@@ -50,7 +50,7 @@ export const formatGeneratedIdea = async (
 export const formatGeneratedScript = (
   title: string,
   scriptId: string,
-  topicId: string,
+  ideaId: string,
   videoProjectId: string,
   script: string,
   userId: string,
@@ -61,7 +61,7 @@ export const formatGeneratedScript = (
     createdBy: userId || "",
     createdAt: firebase.firestore.FieldValue.serverTimestamp(),
     script,
-    topicId,
+    ideaId,
     videoProjectId,
   };
 };
@@ -205,8 +205,8 @@ export async function getClusteredTitles(
   userId: string,
   repo: ContentRepository,
 ) {
-  // Bounded, projected read: active topics only, title + embedding, capped at 200.
-  const capped = (await repo.getTopicsForClustering(userId)) || [];
+  // Bounded, projected read: active ideas only, title + embedding, capped at 200.
+  const capped = (await repo.getIdeasForClustering(userId)) || [];
   const k = Math.min(8, Math.ceil(capped.length / 20));
   const titles: string[] = capped.map((doc) => doc.title) || [];
   const embeddings: number[][] = capped.map((doc) => doc.embedding) || [];

@@ -3,15 +3,17 @@ import { Request, Response } from "express";
 import ContentService from "../service/content.service.js";
 import { formatGeneratedIdea } from "../utlils/content.js";
 import { asyncHandler } from "../middleware/async_handler.js";
+import { eventService } from "../service/event.service.js";
+import { EventType } from "../types/routes/event.js";
 
-class TopicController {
+class IdeaController {
   private service: ContentService;
 
   constructor(service: ContentService) {
     this.service = service;
   }
 
-  retrieveTopics = asyncHandler(async (req: Request, res: Response) => {
+  retrieveIdeas = asyncHandler(async (req: Request, res: Response) => {
     const {
       limit = "9",
       createdAt = "",
@@ -28,7 +30,7 @@ class TopicController {
       isScriptGenerated: Boolean(isScriptGenerated),
     };
 
-    const data = await this.service.getPaginatedUsersTopics({
+    const data = await this.service.getPaginatedUsersIdeas({
       userId: req.userId,
       limit: parseInt(limit as string, 10),
       cursor,
@@ -36,12 +38,12 @@ class TopicController {
     });
 
     res.sendSuccess({
-      message: "successfully retrieved topics",
+      message: "successfully retrieved ideas",
       data,
     });
   });
 
-  generateTopics = asyncHandler(async (req: Request, res: Response) => {
+  generateIdeas = asyncHandler(async (req: Request, res: Response) => {
     // Optional instant-first-idea context (validated by generateIdeasSchema) —
     // absent means generate from the persisted user record as before.
     const ideas = await this.service.generateIdeas(
@@ -62,42 +64,39 @@ class TopicController {
     if (!modifiedData?.length) {
       throw new Error("Unable to generate at the moment");
     }
-    const updatedData = await this.service.saveBatchTopics(modifiedData);
+    const updatedData = await this.service.saveBatchIdeas(modifiedData);
     res.sendSuccess({
       message: "successfully generated ideas",
       data: updatedData,
     });
   });
 
-  editTopic = asyncHandler(async (req: Request, res: Response) => {
-    const topicId = req.params.topicId;
-    const data = await this.service.editTopics(topicId, req.userId, req.body);
+  editIdea = asyncHandler(async (req: Request, res: Response) => {
+    const ideaId = req.params.ideaId;
+    const data = await this.service.editIdeas(ideaId, req.userId, req.body);
     res.sendSuccess({
       message: "Title updated successfully",
-      data: { ...data, id: topicId },
+      data: { ...data, id: ideaId },
     });
   });
 
   regenerateAll = asyncHandler(async (req: Request, res: Response) => {
     const data = await this.service.regenerateAll(req.userId);
+    eventService.capture(req.userId, EventType.REGENERATE, { resource: "idea", scope: "all" });
     res.sendSuccess({ message: "Ideas regenerated successfully", data });
   });
 
   regenerateOne = asyncHandler(async (req: Request, res: Response) => {
-    const data = await this.service.regenerateOne(req.userId, req.params.topicId);
+    const data = await this.service.regenerateOne(req.userId, req.params.ideaId);
+    eventService.capture(req.userId, EventType.REGENERATE, { resource: "idea", ideaId: req.params.ideaId });
     res.sendSuccess({ message: "Idea regenerated successfully", data });
   });
 
-  updateFeedback = asyncHandler(async (req: Request, res: Response) => {
-    const { feedback } = req.body as { feedback: "like" | "dislike" | null };
-    const data = await this.service.updateFeedback(req.userId, req.params.topicId, feedback);
-    res.sendSuccess({ message: "Feedback updated successfully", data });
-  });
-
-  exportTopics = asyncHandler(async (req: Request, res: Response) => {
-    const data = await this.service.exportTopics(req.userId);
+  exportIdeas = asyncHandler(async (req: Request, res: Response) => {
+    const data = await this.service.exportIdeas(req.userId);
+    eventService.capture(req.userId, EventType.EXPORT, { resource: "idea" });
     res.sendSuccess({ message: "Ideas exported successfully", data });
   });
 }
 
-export default TopicController;
+export default IdeaController;

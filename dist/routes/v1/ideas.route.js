@@ -1,7 +1,7 @@
 import { Router } from "express";
 import ContentRepository from "../../repository/content.repository.js";
 import ContentService from "../../service/content.service.js";
-import TopicController from "../../controller/topic.controller.js";
+import IdeaController from "../../controller/idea.controller.js";
 import UserRepository from "../../repository/user.repository.js";
 import VideoProjectRepository from "../../repository/video-project.repository.js";
 import VideoProjectService from "../../service/video-project.service.js";
@@ -20,14 +20,13 @@ const researchRepo = new ResearchRepository();
 const videoProjectService = new VideoProjectService(videoProjectRepo, contentRepository, packagingRepo);
 const researchContextService = new ResearchContextService(researchRepo);
 const contentService = new ContentService(contentRepository, userRepository, videoProjectService, researchContextService);
-const topicController = new TopicController(contentService);
+const ideaController = new IdeaController(contentService);
 router.use(authMiddleware);
-router.post("/generate", validate(generateIdeasSchema), topicController.generateTopics);
-// Specific routes BEFORE parameterized /:topicId routes
-router.post("/regenerate-all", topicController.regenerateAll);
-router.get("/export", topicController.exportTopics);
-router.get("/", topicController.retrieveTopics);
-router.patch("/edit/:topicId", topicController.editTopic);
-router.post("/:topicId/regenerate", topicController.regenerateOne);
-router.patch("/:topicId/feedback", topicController.updateFeedback);
+router.post("/generate", validate(generateIdeasSchema), ideaController.generateIdeas);
+// Specific routes BEFORE parameterized /:ideaId routes
+router.post("/regenerate-all", ideaController.regenerateAll);
+router.get("/export", ideaController.exportIdeas);
+router.get("/", ideaController.retrieveIdeas);
+router.patch("/edit/:ideaId", ideaController.editIdea);
+router.post("/:ideaId/regenerate", ideaController.regenerateOne);
 export default router;

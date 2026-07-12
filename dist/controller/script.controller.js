@@ -1,5 +1,5 @@
 import { asyncHandler } from "../middleware/async_handler.js";
-import { BadRequest } from "../utlils/errors.js";
+import { eventService } from "../service/event.service.js";
 class ScriptController {
     constructor(service) {
         // SSE: NOT wrapped in asyncHandler — keeps its own headersSent-aware try/catch
@@ -47,20 +47,13 @@ class ScriptController {
         this.regenerateScript = asyncHandler(async (req, res) => {
             const { scriptId } = req.params;
             const data = await this.service.regenerateScript(req.userId, scriptId);
+            eventService.capture(req.userId, "regenerate" /* EventType.REGENERATE */, { resource: "script", scriptId });
             res.sendSuccess({ message: "Script regenerated successfully", data });
-        });
-        this.updateScriptFeedback = asyncHandler(async (req, res) => {
-            const { scriptId } = req.params;
-            const { feedback } = req.body;
-            if (feedback === undefined) {
-                throw BadRequest("feedback is required");
-            }
-            const data = await this.service.updateScriptFeedback(req.userId, scriptId, feedback);
-            res.sendSuccess({ message: "Script feedback updated", data });
         });
         this.exportScript = asyncHandler(async (req, res) => {
             const { scriptId } = req.params;
             const data = await this.service.exportScript(req.userId, scriptId);
+            eventService.capture(req.userId, "export" /* EventType.EXPORT */, { resource: "script", scriptId });
             res.sendSuccess({ message: "Script exported successfully", data });
         });
         this.service = service;

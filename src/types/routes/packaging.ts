@@ -31,6 +31,9 @@ export interface IPackaging {
   createdBy: string;
   videoProjectId: string | null;
   titles: IPackagingTitle[];
+  // §7.3: the Title variation the user finalized; promoted to the project's
+  // display title. Absent/null until they pick one.
+  selectedTitleIndex?: number | null;
   description: string;
   thumbnail: string[];
   shorts: IPackagingShorts | null;

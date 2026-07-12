@@ -1,16 +1,16 @@
 import { db, firebase } from "../config/firebase.js";
 class ContentRepository {
     constructor() {
-        this.getTopic = async (topicId) => {
-            const doc = await this.db.collection(this.collection).doc(topicId).get();
+        this.getIdea = async (ideaId) => {
+            const doc = await this.db.collection(this.collection).doc(ideaId).get();
             return doc.data();
         };
-        this.getTopics = async ({ userId, limit = 8, cursor, filters, }) => {
+        this.getIdeas = async ({ userId, limit = 8, cursor, filters, }) => {
             try {
                 let query = this.db
                     .collection(this.collection)
                     .where("createdBy", "==", userId)
-                    // Active batch only — archived topics must never appear in the list
+                    // Active batch only — archived ideas must never appear in the list
                     .where("archived", "==", false);
                 // Optional filtering
                 if (filters.hasOwnProperty("isScriptGenerated") &&
@@ -42,7 +42,7 @@ class ContentRepository {
         };
         // Bounded read for KMeans clustering — projects to title + embedding only and
         // caps at 200 docs at the query level so we never pull every embedding array.
-        this.getTopicsForClustering = async (userId) => {
+        this.getIdeasForClustering = async (userId) => {
             const snapshot = await this.db
                 .collection(this.collection)
                 .where("createdBy", "==", userId)
@@ -85,17 +85,17 @@ class ContentRepository {
             data.createdAt = data.createdAt?.toDate();
             return data;
         };
-        this.batchSaveTopics = async (dataList) => {
+        this.batchSaveIdeas = async (dataList) => {
             const batch = db.batch();
             const collectionRef = db.collection(this.collection);
             const updatedDataList = (dataList ?? []).map((data) => {
-                const topic = data;
-                // Topics convention: doc id = the UUID generated in formatGeneratedTitle.
+                const idea = data;
+                // Ideas convention: doc id = the UUID generated in formatGeneratedTitle.
                 // Fall back to a Firestore auto-id only if no id was supplied.
-                const docId = typeof topic.id === "string" && topic.id
-                    ? topic.id
+                const docId = typeof idea.id === "string" && idea.id
+                    ? idea.id
                     : collectionRef.doc().id;
-                const dataWithId = { ...topic, id: docId };
+                const dataWithId = { ...idea, id: docId };
                 batch.set(collectionRef.doc(docId), dataWithId);
                 return dataWithId;
             });
@@ -122,7 +122,7 @@ class ContentRepository {
                 return data;
             });
         };
-        this.archiveUserTopics = async (userId, excludeBatchId) => {
+        this.archiveUserIdeas = async (userId, excludeBatchId) => {
             const snapshot = await this.db
                 .collection(this.collection)
                 .where("createdBy", "==", userId)
@@ -145,10 +145,10 @@ class ContentRepository {
                 await batch.commit();
             }
         };
-        this.updateTopic = async (topicId, data) => {
+        this.updateIdea = async (ideaId, data) => {
             await this.db
                 .collection(this.collection)
-                .doc(topicId)
+                .doc(ideaId)
                 .set(data, { merge: true });
         };
         this.editScript = async (scriptId, data) => {
@@ -164,7 +164,7 @@ class ContentRepository {
                 .set(data, { merge: true });
         };
         this.db = db;
-        this.collection = "topics" /* COLLECTIONS.TOPICS */;
+        this.collection = "ideas" /* COLLECTIONS.IDEAS */;
         this.script_collection = "scripts" /* COLLECTIONS.SCRIPTS */;
     }
 }

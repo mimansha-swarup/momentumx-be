@@ -147,12 +147,13 @@ class PackagingService {
     return this.generateContent(userPrompt);
   };
 
-  generateShorts = async (userId: string, script: string, duration: number) => {
-    if (!script) {
-      throw BadRequest("Script is required");
+  generateShorts = async (userId: string, script: string | undefined, duration: number, videoProjectId?: string) => {
+    // Script is pipeline-native but resolved server-side: an explicit body
+    // script wins, else it's pulled from the project (best-available context).
+    const inputs = await this.resolveGenerationInputs(userId, videoProjectId, script);
+    if (!inputs.script) {
+      throw BadRequest("Provide a script or a videoProjectId with a generated script");
     }
-    // Shorts has no project linkage yet (P6A) — channel context only.
-    const inputs = await this.resolveGenerationInputs(userId, undefined, script);
     const userPrompt = fillTemplate(GENERATE_SHORTS_PROMPT, {
       "{creatorContext}": buildCreatorContextBlock(inputs.channel),
       "{script}": inputs.script,
@@ -218,11 +219,22 @@ class PackagingService {
     };
   };
 
-  savePackaging = async (userId: string, data: Record<string, unknown>, videoProjectId?: string) => {
-    if (videoProjectId) {
-      await this.videoProjectService.getById(videoProjectId, userId);
+  // A door-saved package has no project title; use its first generated title as
+  // the shallow project's working title, else a neutral placeholder.
+  private deriveWorkingTitle = (data: Record<string, unknown>): string => {
+    const titles = data.titles;
+    if (Array.isArray(titles) && titles.length > 0) {
+      const first = titles[0];
+      if (typeof first === "string" && first.trim()) return first.trim();
+      if (first && typeof first === "object") {
+        const t = (first as { title?: unknown }).title;
+        if (typeof t === "string" && t.trim()) return t.trim();
+      }
     }
+    return "Untitled video";
+  };
 
+  savePackaging = async (userId: string, data: Record<string, unknown>, videoProjectId?: string) => {
     // Coerce any present content field to its canonical stored shape so the
     // persisted doc matches what regenerateItem and the readers expect.
     const normalized: Record<string, unknown> = { ...data };
@@ -234,11 +246,26 @@ class PackagingService {
 
     const itemStatuses = this.buildItemStatuses(normalized);
 
+    // Door model (§0 / 6A.3): packaging is NEVER a standalone doc. Given a
+    // project, use it (ownership-checked); with none, lazily spin up a shallow
+    // one (idea + project from the packaged title) so the work is captured into
+    // the pipeline. Either branch leaves us with a project for the save below.
+    let projectId = videoProjectId;
+    if (projectId) {
+      await this.videoProjectService.getById(projectId, userId);
+    } else {
+      const project = await this.videoProjectService.createFromTitle(
+        userId,
+        this.deriveWorkingTitle(normalized)
+      );
+      projectId = project.id;
+    }
+
     const packagingData = {
       ...normalized,
       createdBy: userId,
       itemStatuses,
-      ...(videoProjectId ? { videoProjectId } : {}),
+      videoProjectId: projectId,
     };
 
     // Stale flags are set fresh ONLY when the document is first created — a
@@ -248,23 +275,14 @@ class PackagingService {
     // regenerateItem → refreshPackagingStep.
     const freshStaleFlags = { isStale: false, staleReason: null, staleSince: null };
 
+    // Upsert: reuse the existing package for this project, else create one.
+    const existing = await this.repo.findByVideoProject(projectId);
     let result: Record<string, unknown>;
-
-    // Upsert: check if packaging already exists for this video project
-    if (videoProjectId) {
-      const existing = await this.repo.findByVideoProject(videoProjectId);
-      if (existing) {
-        result = await this.repo.update(existing.id as string, {
-          ...packagingData,
-          updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-        });
-      } else {
-        result = await this.repo.save({
-          ...packagingData,
-          ...freshStaleFlags,
-          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-        });
-      }
+    if (existing) {
+      result = await this.repo.update(existing.id as string, {
+        ...packagingData,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
     } else {
       result = await this.repo.save({
         ...packagingData,
@@ -273,13 +291,15 @@ class PackagingService {
       });
     }
 
-    if (videoProjectId) {
-      try {
-        await this.videoProjectService.linkResource(videoProjectId, "packaging", result.id as string, userId);
-        await this.videoProjectService.completeStep(videoProjectId, "packaging", userId);
-      } catch (pipelineError) {
-        console.error(JSON.stringify({ event: "pipeline_transition_failed", step: "packaging", projectId: videoProjectId, packagingId: result.id, userId, message: (pipelineError as Error)?.message }));
-      }
+    try {
+      await this.videoProjectService.linkResource(projectId, "packaging", result.id as string, userId);
+      // A door-created (or never-started) project has packaging still not_started,
+      // which completeStep rejects — start it first (startStep no-ops if already
+      // in_progress/completed), so both the door and pipeline paths complete cleanly.
+      await this.videoProjectService.startStep(projectId, "packaging", userId);
+      await this.videoProjectService.completeStep(projectId, "packaging", userId);
+    } catch (pipelineError) {
+      console.error(JSON.stringify({ event: "pipeline_transition_failed", step: "packaging", projectId, packagingId: result.id, userId, message: (pipelineError as Error)?.message }));
     }
     return result;
   };
@@ -293,6 +313,41 @@ class PackagingService {
 
   getPackagingByUser = async (userId: string) => {
     return this.repo.getByUserId(userId);
+  };
+
+  // Title continuity (§7.3): the user finalizes one of the generated Title
+  // variations. Persist the choice and promote it to the project's display title
+  // (the idea working-title was only ever a placeholder).
+  selectTitle = async (userId: string, packagingId: string, index: number) => {
+    const pkg = await this.repo.get(packagingId);
+    if (!pkg) {
+      throw NotFound("Packaging not found");
+    }
+    if (pkg.createdBy !== userId) {
+      throw Forbidden();
+    }
+    if (!Array.isArray(pkg.titles) || pkg.titles.length === 0) {
+      throw BadRequest("No titles have been generated for this packaging");
+    }
+    if (!Number.isInteger(index) || index < 0 || index >= pkg.titles.length) {
+      throw BadRequest("Invalid title index");
+    }
+    const titleText = pkg.titles[index]?.title?.trim();
+    if (!titleText) {
+      throw BadRequest("Selected title has no text");
+    }
+
+    await this.repo.update(packagingId, { selectedTitleIndex: index });
+
+    // Title continuity (§7.3): promote the chosen title to the project's display
+    // name. Owning project from the STORED doc, never the client (api-design rule).
+    // NOT best-effort — the rename IS the feature, so a failure must surface (→ FE
+    // toast → retry, which is idempotent) rather than be silently swallowed.
+    if (pkg.videoProjectId) {
+      await this.videoProjectService.update(pkg.videoProjectId, userId, { title: titleText });
+    }
+
+    return { id: packagingId, selectedTitleIndex: index, title: titleText };
   };
 
   regenerateItem = async (
@@ -352,7 +407,7 @@ class PackagingService {
         result = await this.generateThumbnail(userId, resolved.script || undefined, title!, videoProjectId);
         fieldKey = "thumbnail";
       } else {
-        result = await this.generateShorts(userId, resolved.script, duration!);
+        result = await this.generateShorts(userId, resolved.script, duration!, videoProjectId);
         fieldKey = "shorts";
       }
     } catch (genError) {
@@ -408,32 +463,6 @@ class PackagingService {
     }
 
     return { id: packagingId, item, data: canonical };
-  };
-
-  updateFeedback = async (
-    userId: string,
-    packagingId: string,
-    item: string,
-    feedback: "like" | "dislike" | null
-  ) => {
-    const pkg = await this.repo.get(packagingId);
-    if (!pkg) {
-      throw NotFound("Packaging not found");
-    }
-    if (pkg.createdBy !== userId) {
-      throw Forbidden();
-    }
-    const validItems = ["title", "description", "thumbnail", "shorts"];
-    if (!validItems.includes(item)) {
-      throw BadRequest(`item must be one of: ${validItems.join(", ")}`);
-    }
-    const validFeedback = ["like", "dislike", null];
-    if (!validFeedback.includes(feedback)) {
-      throw BadRequest('feedback must be "like", "dislike", or null');
-    }
-
-    await this.repo.update(packagingId, { [`feedback.${item}`]: feedback });
-    return { id: packagingId, item, feedback };
   };
 
   exportPackaging = async (userId: string, packagingId: string) => {

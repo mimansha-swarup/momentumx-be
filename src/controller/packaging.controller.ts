@@ -2,6 +2,8 @@ import { Request, Response } from "express";
 import PackagingService from "../service/packaging.service.js";
 import { asyncHandler } from "../middleware/async_handler.js";
 import { BadRequest, NotFound } from "../utlils/errors.js";
+import { eventService } from "../service/event.service.js";
+import { EventType } from "../types/routes/event.js";
 
 class PackagingController {
   private service: PackagingService;
@@ -51,14 +53,12 @@ class PackagingController {
   });
 
   generateShorts = asyncHandler(async (req: Request, res: Response) => {
-    const { script, duration } = req.body;
-    if (!script) {
-      throw BadRequest("Script is required");
-    }
+    const { script, duration, videoProjectId } = req.body;
     if (!duration) {
       throw BadRequest("Duration is required");
     }
-    const data = await this.service.generateShorts(req.userId, script, duration);
+    // script optional — resolved server-side from the project when omitted.
+    const data = await this.service.generateShorts(req.userId, script, duration, videoProjectId);
     res.sendSuccess({
       message: "Shorts script generated successfully",
       data,
@@ -100,25 +100,25 @@ class PackagingController {
     // server-side; per-item requirements are validated in the service.
     const { script, title, duration } = req.body as { script?: string; title?: string; duration?: number };
     const data = await this.service.regenerateItem(req.userId, packagingId, item, script, title, duration);
+    eventService.capture(req.userId, EventType.REGENERATE, { resource: "packaging", packagingId, item });
     res.sendSuccess({ message: "Packaging item regenerated successfully", data });
   });
 
-  updateFeedback = asyncHandler(async (req: Request, res: Response) => {
+  selectTitle = asyncHandler(async (req: Request, res: Response) => {
     const { packagingId } = req.params;
-    const { item, feedback } = req.body as { item: string; feedback: "like" | "dislike" | null };
-    if (!item) {
-      throw BadRequest("item is required");
+    const { index } = req.body as { index?: number };
+    if (typeof index !== "number") {
+      throw BadRequest("index (number) is required");
     }
-    if (feedback === undefined) {
-      throw BadRequest("feedback is required");
-    }
-    const data = await this.service.updateFeedback(req.userId, packagingId, item, feedback);
-    res.sendSuccess({ message: "Feedback updated successfully", data });
+    const data = await this.service.selectTitle(req.userId, packagingId, index);
+    eventService.capture(req.userId, EventType.TITLE_SELECTED, { packagingId, index });
+    res.sendSuccess({ message: "Title selected successfully", data });
   });
 
   exportPackaging = asyncHandler(async (req: Request, res: Response) => {
     const { packagingId } = req.params;
     const data = await this.service.exportPackaging(req.userId, packagingId);
+    eventService.capture(req.userId, EventType.EXPORT, { resource: "packaging", packagingId });
     res.sendSuccess({ message: "Packaging exported successfully", data });
   });
 }

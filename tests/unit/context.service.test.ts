@@ -58,7 +58,7 @@ const fullProject = {
   id: "proj-1",
   createdBy: USER_ID,
   title: "Working title from project",
-  topicId: "topic-1",
+  ideaId: "idea-1",
   scriptId: "script-1",
   hooksId: "hooks-1",
   selectedHookIndex: 1,
@@ -85,7 +85,7 @@ describe("ContextService.assemble — degradation matrix", () => {
 
     userRepo.get = jest.fn().mockResolvedValue(userDoc);
     vpService.getById = jest.fn().mockResolvedValue(fullProject);
-    contentRepo.getTopic = jest.fn().mockResolvedValue({ id: "topic-1", title: "Topic title" });
+    contentRepo.getIdea = jest.fn().mockResolvedValue({ id: "idea-1", title: "Idea title" });
     contentRepo.getScriptById = jest.fn().mockResolvedValue({ id: "script-1", script: "Full script text" });
     hooksRepo.findById = jest.fn().mockResolvedValue({ id: "hooks-1", hooks: ["Hook 0", "Hook 1", "Hook 2"] });
   });
@@ -107,8 +107,8 @@ describe("ContextService.assemble — degradation matrix", () => {
     });
     expect(ctx.sessionContext).toEqual({
       videoProjectId: "proj-1",
-      topicId: "topic-1",
-      workingTitle: "Topic title",
+      ideaId: "idea-1",
+      workingTitle: "Idea title",
       script: "Full script text",
       selectedHook: "Hook 1",
       packagingId: "pkg-1",
@@ -142,7 +142,7 @@ describe("ContextService.assemble — degradation matrix", () => {
 
     const ctx = await service.assemble(USER_ID, { videoProjectId: "proj-1" });
 
-    expect(ctx.sessionContext.workingTitle).toBe("Topic title");
+    expect(ctx.sessionContext.workingTitle).toBe("Idea title");
     expect(ctx.sessionContext.script).toBeNull();
     expect(ctx.sessionContext.selectedHook).toBeNull();
     expect(contentRepo.getScriptById).not.toHaveBeenCalled();
@@ -154,7 +154,7 @@ describe("ContextService.assemble — degradation matrix", () => {
     expect(ctx.channelContext.niche).toBe("AI productivity");
     expect(ctx.sessionContext).toEqual({
       videoProjectId: null,
-      topicId: null,
+      ideaId: null,
       workingTitle: null,
       script: null,
       selectedHook: null,
@@ -163,8 +163,8 @@ describe("ContextService.assemble — degradation matrix", () => {
     expect(vpService.getById).not.toHaveBeenCalled();
   });
 
-  it("missing topic doc degrades workingTitle to the project title", async () => {
-    contentRepo.getTopic = jest.fn().mockResolvedValue(undefined);
+  it("missing idea doc degrades workingTitle to the project title", async () => {
+    contentRepo.getIdea = jest.fn().mockResolvedValue(undefined);
 
     const ctx = await service.assemble(USER_ID, { videoProjectId: "proj-1" });
 

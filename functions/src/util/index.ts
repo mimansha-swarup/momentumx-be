@@ -10,13 +10,13 @@ export const getUserObject = (user: UserRecord) => {
     // Seed lifetime counters at creation so every user has a `stats` baseline —
     // including those who sign up but never finish onboarding. Mirrors the
     // `stats` shape in the API's src/constants/collection.ts.
-    stats: { topics: 0, scripts: 0, credits: 0 },
+    stats: { ideas: 0, scripts: 0, credits: 0 },
   };
 };
 export const enum COLLECTIONS {
   USERS = "users",
   SCRIPTS = "scripts",
-  TOPICS = "topics",
+  IDEAS = "ideas",
   PACKAGING = "packaging",
   VIDEO_PROJECTS = "videoProjects",
   HOOKS = "hooks",

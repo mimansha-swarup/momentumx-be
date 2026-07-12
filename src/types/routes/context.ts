@@ -22,7 +22,7 @@ export interface IChannelContext {
 
 export interface ISessionContext {
   videoProjectId: string | null;
-  topicId: string | null;
+  ideaId: string | null;
   workingTitle: string | null;
   script: string | null;
   selectedHook: string | null;

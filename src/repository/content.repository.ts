@@ -1,8 +1,8 @@
 import { Firestore } from "firebase-admin/firestore";
 import { COLLECTIONS } from "../constants/collection.js";
 import { db, firebase } from "../config/firebase.js";
-import { IGetTopicByUserIdArgs } from "../types/repository/content.js";
-import { ITopic, IScript } from "../types/routes/content.js";
+import { IGetIdeaByUserIdArgs } from "../types/repository/content.js";
+import { IIdea, IScript } from "../types/routes/content.js";
 
 class ContentRepository {
   private collection: `${COLLECTIONS}`;
@@ -10,25 +10,25 @@ class ContentRepository {
   private db: Firestore;
   constructor() {
     this.db = db;
-    this.collection = COLLECTIONS.TOPICS;
+    this.collection = COLLECTIONS.IDEAS;
     this.script_collection = COLLECTIONS.SCRIPTS;
   }
-  getTopic = async (topicId: string): Promise<ITopic | undefined> => {
-    const doc = await this.db.collection(this.collection).doc(topicId).get();
-    return doc.data() as ITopic | undefined;
+  getIdea = async (ideaId: string): Promise<IIdea | undefined> => {
+    const doc = await this.db.collection(this.collection).doc(ideaId).get();
+    return doc.data() as IIdea | undefined;
   };
 
-  getTopics = async ({
+  getIdeas = async ({
     userId,
     limit = 8,
     cursor,
     filters,
-  }: IGetTopicByUserIdArgs) => {
+  }: IGetIdeaByUserIdArgs) => {
     try {
       let query = this.db
         .collection(this.collection)
         .where("createdBy", "==", userId)
-        // Active batch only — archived topics must never appear in the list
+        // Active batch only — archived ideas must never appear in the list
         .where("archived", "==", false);
 
       // Optional filtering
@@ -73,9 +73,9 @@ class ContentRepository {
   };
   // Bounded read for KMeans clustering — projects to title + embedding only and
   // caps at 200 docs at the query level so we never pull every embedding array.
-  getTopicsForClustering = async (
+  getIdeasForClustering = async (
     userId: string,
-  ): Promise<Pick<ITopic, "title" | "embedding">[]> => {
+  ): Promise<Pick<IIdea, "title" | "embedding">[]> => {
     const snapshot = await this.db
       .collection(this.collection)
       .where("createdBy", "==", userId)
@@ -84,7 +84,7 @@ class ContentRepository {
       .select("title", "embedding")
       .get();
     return snapshot.docs.map(
-      (doc) => doc.data() as Pick<ITopic, "title" | "embedding">,
+      (doc) => doc.data() as Pick<IIdea, "title" | "embedding">,
     );
   };
 
@@ -123,19 +123,19 @@ class ContentRepository {
     return data as IScript;
   };
 
-  batchSaveTopics = async (dataList: unknown[]) => {
+  batchSaveIdeas = async (dataList: unknown[]) => {
     const batch = db.batch();
     const collectionRef = db.collection(this.collection);
 
     const updatedDataList = (dataList ?? []).map((data) => {
-      const topic = data as { id?: string } & Record<string, unknown>;
-      // Topics convention: doc id = the UUID generated in formatGeneratedTitle.
+      const idea = data as { id?: string } & Record<string, unknown>;
+      // Ideas convention: doc id = the UUID generated in formatGeneratedTitle.
       // Fall back to a Firestore auto-id only if no id was supplied.
       const docId =
-        typeof topic.id === "string" && topic.id
-          ? topic.id
+        typeof idea.id === "string" && idea.id
+          ? idea.id
           : collectionRef.doc().id;
-      const dataWithId = { ...topic, id: docId };
+      const dataWithId = { ...idea, id: docId };
       batch.set(collectionRef.doc(docId), dataWithId);
       return dataWithId;
     });
@@ -151,7 +151,7 @@ class ContentRepository {
   // Active batch for regenerate/export — excludes embeddings (not needed here).
   getActiveBatch = async (
     userId: string,
-  ): Promise<Pick<ITopic, "id" | "title" | "concept" | "ideaType" | "createdAt" | "videoProjectId">[]> => {
+  ): Promise<Pick<IIdea, "id" | "title" | "concept" | "ideaType" | "createdAt" | "videoProjectId">[]> => {
     const snapshot = await this.db
       .collection(this.collection)
       .where("createdBy", "==", userId)
@@ -161,11 +161,11 @@ class ContentRepository {
     return snapshot.docs.map((doc) => {
       const data = doc.data();
       data.id = doc.id;
-      return data as Pick<ITopic, "id" | "title" | "concept" | "ideaType" | "createdAt" | "videoProjectId">;
+      return data as Pick<IIdea, "id" | "title" | "concept" | "ideaType" | "createdAt" | "videoProjectId">;
     });
   };
 
-  archiveUserTopics = async (userId: string, excludeBatchId?: string) => {
+  archiveUserIdeas = async (userId: string, excludeBatchId?: string) => {
     const snapshot = await this.db
       .collection(this.collection)
       .where("createdBy", "==", userId)
@@ -193,10 +193,10 @@ class ContentRepository {
     }
   };
 
-  updateTopic = async (topicId: string, data: Record<string, unknown>) => {
+  updateIdea = async (ideaId: string, data: Record<string, unknown>) => {
     await this.db
       .collection(this.collection)
-      .doc(topicId)
+      .doc(ideaId)
       .set(data, { merge: true });
   };
 

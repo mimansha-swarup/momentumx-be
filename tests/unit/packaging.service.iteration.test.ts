@@ -42,7 +42,7 @@ function makeContextService(session: Record<string, unknown> = {}) {
         topTitles: [], competitorUrls: [], competitorTitles: [],
       },
       sessionContext: {
-        videoProjectId: null, topicId: null, workingTitle: null,
+        videoProjectId: null, ideaId: null, workingTitle: null,
         script: null, selectedHook: null, packagingId: null, ...session,
       },
     }),
@@ -50,7 +50,14 @@ function makeContextService(session: Record<string, unknown> = {}) {
 }
 
 function makeVp() {
-  return { getById: jest.fn().mockResolvedValue({}) } as any;
+  return {
+    getById: jest.fn().mockResolvedValue({}),
+    createFromTitle: jest.fn().mockResolvedValue({ id: "shallow-proj" }),
+    linkResource: jest.fn().mockResolvedValue(undefined),
+    startStep: jest.fn().mockResolvedValue(undefined),
+    completeStep: jest.fn().mockResolvedValue(undefined),
+    update: jest.fn().mockResolvedValue({}),
+  } as any;
 }
 
 function makeStream(text: string) {
@@ -308,65 +315,15 @@ describe("PackagingService — regenerateItem project sync (DA6 stale clear)", (
   });
 });
 
-describe("PackagingService — updateFeedback", () => {
-  let service: PackagingService;
-  let mockRepo: jest.Mocked<PackagingRepository>;
-
-  beforeEach(() => {
-    mockRepo = new MockPackagingRepo() as jest.Mocked<PackagingRepository>;
-    service = new PackagingService(mockRepo, makeVp(), makeContextService());
-  });
-
-  it("throws 404 if not found", async () => {
-    mockRepo.get = jest.fn().mockResolvedValue(null);
-    const err = await service.updateFeedback("user-1", "pkg-1", "title", "like").catch(e => e);
-    expect(err.statusCode).toBe(404);
-  });
-
-  it("throws 403 if not owner", async () => {
-    mockRepo.get = jest.fn().mockResolvedValue({ ...mockPkg, createdBy: "other" });
-    const err = await service.updateFeedback("user-1", "pkg-1", "title", "like").catch(e => e);
-    expect(err.statusCode).toBe(403);
-  });
-
-  it("throws 400 for invalid item", async () => {
-    mockRepo.get = jest.fn().mockResolvedValue(mockPkg);
-    const err = await service.updateFeedback("user-1", "pkg-1", "hooks", "like").catch(e => e);
-    expect(err.statusCode).toBe(400);
-  });
-
-  it("throws 400 for invalid feedback", async () => {
-    mockRepo.get = jest.fn().mockResolvedValue(mockPkg);
-    const err = await service.updateFeedback("user-1", "pkg-1", "title", "invalid" as any).catch(e => e);
-    expect(err.statusCode).toBe(400);
-  });
-
-  it("happy path: updates feedback map and returns { id, item, feedback }", async () => {
-    mockRepo.get = jest.fn().mockResolvedValue(mockPkg);
-    mockRepo.update = jest.fn().mockResolvedValue(undefined);
-
-    const result = await service.updateFeedback("user-1", "pkg-1", "title", "like");
-
-    expect(mockRepo.update).toHaveBeenCalledWith("pkg-1", { "feedback.title": "like" });
-    expect(result).toEqual({ id: "pkg-1", item: "title", feedback: "like" });
-  });
-
-  it("happy path: null clears feedback for an item", async () => {
-    mockRepo.get = jest.fn().mockResolvedValue(mockPkg);
-    mockRepo.update = jest.fn().mockResolvedValue(undefined);
-
-    const result = await service.updateFeedback("user-1", "pkg-1", "description", null);
-    expect(result).toEqual({ id: "pkg-1", item: "description", feedback: null });
-  });
-});
-
 describe("PackagingService — savePackaging with videoProjectId", () => {
   let service: PackagingService;
   let mockRepo: jest.Mocked<PackagingRepository>;
+  let mockVp: ReturnType<typeof makeVp>;
 
   beforeEach(() => {
     mockRepo = new MockPackagingRepo() as jest.Mocked<PackagingRepository>;
-    service = new PackagingService(mockRepo, makeVp(), makeContextService());
+    mockVp = makeVp();
+    service = new PackagingService(mockRepo, mockVp, makeContextService());
     mockRepo.save = jest.fn().mockResolvedValue({ id: "pkg-new" });
     // savePackaging upserts by project: no existing doc -> save path
     mockRepo.findByVideoProject = jest.fn().mockResolvedValue(null);
@@ -378,10 +335,25 @@ describe("PackagingService — savePackaging with videoProjectId", () => {
     expect(packagingData).toMatchObject({ videoProjectId: "proj-1" });
   });
 
-  it("does not include videoProjectId when not provided", async () => {
-    await service.savePackaging("user-1", { title: "t" });
+  // Door model (6A.3): saving with no project must NOT create a standalone doc —
+  // it lazily spins up a shallow project from the packaged title and binds to it.
+  it("creates a shallow project from the packaged title and binds packaging to it", async () => {
+    await service.savePackaging("user-1", {
+      titles: [{ title: "My Title", characterCount: 8 }],
+    });
+    expect(mockVp.createFromTitle).toHaveBeenCalledWith("user-1", "My Title");
     const packagingData = (mockRepo.save as jest.Mock).mock.calls[0][0];
-    expect(packagingData).not.toHaveProperty("videoProjectId");
+    expect(packagingData).toMatchObject({ videoProjectId: "shallow-proj" });
+    expect(mockVp.linkResource).toHaveBeenCalledWith("shallow-proj", "packaging", "pkg-new", "user-1");
+    // The shallow project's packaging step must be started before it can complete
+    // (a fresh project's packaging is not_started, which completeStep rejects).
+    expect(mockVp.startStep).toHaveBeenCalledWith("shallow-proj", "packaging", "user-1");
+    expect(mockVp.completeStep).toHaveBeenCalledWith("shallow-proj", "packaging", "user-1");
+  });
+
+  it("falls back to a placeholder working title when the package has no title (e.g. thumbnail-only door)", async () => {
+    await service.savePackaging("user-1", { thumbnail: ["Brief one"] });
+    expect(mockVp.createFromTitle).toHaveBeenCalledWith("user-1", "Untitled video");
   });
 
   it("coerces wrapper-shaped item fields to the canonical stored shape", async () => {
@@ -431,6 +403,62 @@ describe("PackagingService — savePackaging with videoProjectId", () => {
     expect(updatePayload).not.toHaveProperty("isStale");
     expect(updatePayload).not.toHaveProperty("staleReason");
     expect(updatePayload).not.toHaveProperty("staleSince");
+  });
+});
+
+describe("PackagingService — selectTitle (title continuity §7.3)", () => {
+  let service: PackagingService;
+  let mockRepo: jest.Mocked<PackagingRepository>;
+  let mockVp: ReturnType<typeof makeVp>;
+
+  beforeEach(() => {
+    mockRepo = new MockPackagingRepo() as jest.Mocked<PackagingRepository>;
+    mockVp = makeVp();
+    service = new PackagingService(mockRepo, mockVp, makeContextService());
+    mockRepo.get = jest.fn().mockResolvedValue({
+      id: "pkg-1",
+      createdBy: "user-1",
+      videoProjectId: "proj-1",
+      titles: [{ title: "First" }, { title: "Second" }],
+    });
+    mockRepo.update = jest.fn().mockResolvedValue({});
+  });
+
+  it("persists the choice and promotes the chosen title to the project", async () => {
+    const res = await service.selectTitle("user-1", "pkg-1", 1);
+    expect(mockRepo.update).toHaveBeenCalledWith("pkg-1", { selectedTitleIndex: 1 });
+    expect(mockVp.update).toHaveBeenCalledWith("proj-1", "user-1", { title: "Second" });
+    expect(res).toMatchObject({ selectedTitleIndex: 1, title: "Second" });
+  });
+
+  it("rejects an out-of-range index with 400 (no writes)", async () => {
+    const err = await service.selectTitle("user-1", "pkg-1", 5).catch((e) => e);
+    expect(err.statusCode).toBe(400);
+    expect(mockRepo.update).not.toHaveBeenCalled();
+    expect(mockVp.update).not.toHaveBeenCalled();
+  });
+
+  it("throws 403 for another user's package", async () => {
+    mockRepo.get = jest.fn().mockResolvedValue({
+      id: "pkg-1",
+      createdBy: "other-user",
+      videoProjectId: "proj-1",
+      titles: [{ title: "First" }],
+    });
+    const err = await service.selectTitle("user-1", "pkg-1", 0).catch((e) => e);
+    expect(err.statusCode).toBe(403);
+  });
+
+  it("rejects with 400 (not a 500 crash) when the package has no titles", async () => {
+    mockRepo.get = jest.fn().mockResolvedValue({
+      id: "pkg-1",
+      createdBy: "user-1",
+      videoProjectId: "proj-1",
+      thumbnail: ["Brief"], // thumbnail-only door doc — no titles field
+    });
+    const err = await service.selectTitle("user-1", "pkg-1", 0).catch((e) => e);
+    expect(err.statusCode).toBe(400);
+    expect(mockRepo.update).not.toHaveBeenCalled();
   });
 });
 

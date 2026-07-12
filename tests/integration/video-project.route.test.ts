@@ -81,7 +81,7 @@ const PROJECT_STUB = {
   id: "proj-1",
   createdBy: "test-user-id",
   title: "Test Video",
-  topicId: "topic-1",
+  ideaId: "idea-1",
   scriptId: null,
   hooksId: null,
   packagingId: null,
@@ -110,14 +110,14 @@ describe("POST /v1/video-projects", () => {
 
     const res = await request(app)
       .post("/v1/video-projects")
-      .send({ topicId: "topic-1" });
+      .send({ ideaId: "idea-1" });
 
     expect(res.status).toBe(201);
     expect(res.body.success).toBe(true);
     expect(res.body.data).toBeDefined();
   });
 
-  it("returns 201 creating from a title (project-first, no pre-existing topic)", async () => {
+  it("returns 201 creating from a title (project-first, no pre-existing idea)", async () => {
     getService().createFromTitle.mockResolvedValueOnce({ ...PROJECT_STUB, title: "My Idea" } as any);
 
     const res = await request(app)
@@ -130,7 +130,7 @@ describe("POST /v1/video-projects", () => {
     expect(getService().create).not.toHaveBeenCalled();
   });
 
-  it("returns 400 when neither topicId nor title is provided", async () => {
+  it("returns 400 when neither ideaId nor title is provided", async () => {
     const res = await request(app)
       .post("/v1/video-projects")
       .send({});
@@ -139,10 +139,10 @@ describe("POST /v1/video-projects", () => {
     expect(res.body.success).toBe(false);
   });
 
-  it("returns 400 when both topicId and title are provided", async () => {
+  it("returns 400 when both ideaId and title are provided", async () => {
     const res = await request(app)
       .post("/v1/video-projects")
-      .send({ topicId: "topic-1", title: "My Idea" });
+      .send({ ideaId: "idea-1", title: "My Idea" });
 
     expect(res.status).toBe(400);
     expect(res.body.success).toBe(false);
@@ -153,18 +153,18 @@ describe("POST /v1/video-projects", () => {
 
     const res = await request(app)
       .post("/v1/video-projects")
-      .send({ topicId: "topic-1" });
+      .send({ ideaId: "idea-1" });
 
     expect(res.status).toBe(403);
     expect(res.body.success).toBe(false);
   });
 
-  it("returns 404 when topic is not found", async () => {
-    getService().create.mockRejectedValueOnce(makeServiceError("Topic not found", 404));
+  it("returns 404 when idea is not found", async () => {
+    getService().create.mockRejectedValueOnce(makeServiceError("Idea not found", 404));
 
     const res = await request(app)
       .post("/v1/video-projects")
-      .send({ topicId: "topic-missing" });
+      .send({ ideaId: "idea-missing" });
 
     expect(res.status).toBe(404);
     expect(res.body.success).toBe(false);

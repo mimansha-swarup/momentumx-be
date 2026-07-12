@@ -160,31 +160,6 @@ class HooksService {
     return { id: hooksId, hooks: parsed.hooks, hookFeedback: {} };
   };
 
-  updateFeedback = async (
-    userId: string,
-    hooksId: string,
-    hookIndex: number,
-    feedback: "like" | "dislike" | null
-  ): Promise<{ id: string; hookIndex: number; feedback: "like" | "dislike" | null }> => {
-    const hooksBatch = await this.repo.findById(hooksId);
-    if (!hooksBatch) {
-      throw NotFound("Hooks batch not found");
-    }
-    if (hooksBatch.createdBy !== userId) {
-      throw Forbidden();
-    }
-    if (hookIndex < 0 || hookIndex >= hooksBatch.hooks.length) {
-      throw BadRequest(`hookIndex out of range. Must be 0–${hooksBatch.hooks.length - 1}`);
-    }
-    const validFeedback = ["like", "dislike", null];
-    if (!validFeedback.includes(feedback)) {
-      throw BadRequest('feedback must be "like", "dislike", or null');
-    }
-
-    await this.repo.update(hooksId, { [`hookFeedback.${hookIndex}`]: feedback });
-    return { id: hooksId, hookIndex, feedback };
-  };
-
   exportHooks = async (
     userId: string,
     hooksId: string

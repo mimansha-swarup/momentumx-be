@@ -45,54 +45,6 @@ function makeScriptStream(text: string) {
 const MockContentRepo = ContentRepository as jest.MockedClass<typeof ContentRepository>;
 const MockUserRepo = UserRepository as jest.MockedClass<typeof UserRepository>;
 
-describe("ContentService — updateScriptFeedback", () => {
-  let service: ContentService;
-  let mockContentRepo: jest.Mocked<ContentRepository>;
-  let mockUserRepo: jest.Mocked<UserRepository>;
-
-  beforeEach(() => {
-    mockContentRepo = new MockContentRepo() as jest.Mocked<ContentRepository>;
-    mockUserRepo = new MockUserRepo() as jest.Mocked<UserRepository>;
-    service = new ContentService(mockContentRepo, mockUserRepo, {} as any);
-  });
-
-  it("throws 404 if script not found", async () => {
-    mockContentRepo.getScriptById = jest.fn().mockResolvedValue(null);
-    const err = await service.updateScriptFeedback("user-1", "script-1", "like").catch(e => e);
-    expect(err.statusCode).toBe(404);
-    expect(err.message).toMatch(/not found/i);
-  });
-
-  it("throws 403 if script belongs to another user", async () => {
-    mockContentRepo.getScriptById = jest.fn().mockResolvedValue({ id: "script-1", createdBy: "other-user", title: "T", script: "S" });
-    const err = await service.updateScriptFeedback("user-1", "script-1", "like").catch(e => e);
-    expect(err.statusCode).toBe(403);
-  });
-
-  it("throws 400 for invalid feedback value", async () => {
-    mockContentRepo.getScriptById = jest.fn().mockResolvedValue({ id: "script-1", createdBy: "user-1", title: "T", script: "S" });
-    mockContentRepo.editScript = jest.fn();
-    const err = await service.updateScriptFeedback("user-1", "script-1", "invalid" as any).catch(e => e);
-    expect(err.statusCode).toBe(400);
-  });
-
-  it("happy path: saves feedback and returns { id, userFeedback }", async () => {
-    mockContentRepo.getScriptById = jest.fn().mockResolvedValue({ id: "script-1", createdBy: "user-1", title: "T", script: "S" });
-    mockContentRepo.editScript = jest.fn().mockResolvedValue(undefined);
-    const result = await service.updateScriptFeedback("user-1", "script-1", "like");
-    expect(mockContentRepo.editScript).toHaveBeenCalledWith("script-1", { userFeedback: "like" });
-    expect(result).toEqual({ id: "script-1", userFeedback: "like" });
-  });
-
-  it("happy path: clearing feedback with null", async () => {
-    mockContentRepo.getScriptById = jest.fn().mockResolvedValue({ id: "script-1", createdBy: "user-1", title: "T", script: "S" });
-    mockContentRepo.editScript = jest.fn().mockResolvedValue(undefined);
-    const result = await service.updateScriptFeedback("user-1", "script-1", null);
-    expect(mockContentRepo.editScript).toHaveBeenCalledWith("script-1", { userFeedback: null });
-    expect(result).toEqual({ id: "script-1", userFeedback: null });
-  });
-});
-
 describe("ContentService — regenerateScript", () => {
   let service: ContentService;
   let mockContentRepo: jest.Mocked<ContentRepository>;
@@ -206,26 +158,26 @@ describe("ContentService — edit whitelist & SSE ownership guard", () => {
 
   afterEach(() => jest.clearAllMocks());
 
-  it("editTopics ignores non-whitelisted fields (only title persisted)", async () => {
-    mockContentRepo.getTopic = jest.fn().mockResolvedValue({ id: "t-1", createdBy: "user-1" });
-    mockContentRepo.updateTopic = jest.fn().mockResolvedValue(undefined);
-    const result = await service.editTopics("t-1", "user-1", {
+  it("editIdeas ignores non-whitelisted fields (only title persisted)", async () => {
+    mockContentRepo.getIdea = jest.fn().mockResolvedValue({ id: "t-1", createdBy: "user-1" });
+    mockContentRepo.updateIdea = jest.fn().mockResolvedValue(undefined);
+    const result = await service.editIdeas("t-1", "user-1", {
       title: "New Title",
       archived: "false",
       videoProjectId: "evil",
       embedding: "[1,2,3]",
       createdBy: "victim",
     } as any);
-    expect(mockContentRepo.updateTopic).toHaveBeenCalledWith("t-1", { title: "New Title" });
+    expect(mockContentRepo.updateIdea).toHaveBeenCalledWith("t-1", { title: "New Title" });
     expect(result).toEqual({ title: "New Title" });
   });
 
-  it("editTopics throws 400 when no editable field is provided", async () => {
-    mockContentRepo.getTopic = jest.fn().mockResolvedValue({ id: "t-1", createdBy: "user-1" });
-    mockContentRepo.updateTopic = jest.fn();
-    const err = await service.editTopics("t-1", "user-1", { archived: "false" } as any).catch((e) => e);
+  it("editIdeas throws 400 when no editable field is provided", async () => {
+    mockContentRepo.getIdea = jest.fn().mockResolvedValue({ id: "t-1", createdBy: "user-1" });
+    mockContentRepo.updateIdea = jest.fn();
+    const err = await service.editIdeas("t-1", "user-1", { archived: "false" } as any).catch((e) => e);
     expect(err.statusCode).toBe(400);
-    expect(mockContentRepo.updateTopic).not.toHaveBeenCalled();
+    expect(mockContentRepo.updateIdea).not.toHaveBeenCalled();
   });
 
   it("editScript persists only script and title", async () => {
@@ -286,24 +238,24 @@ describe("ContentService — generateScripts project-scoped script id & FKs", ()
     service = new ContentService(mockContentRepo, mockUserRepo, mockVp as any);
     mockUserRepo.get = jest.fn().mockResolvedValue({ brandName: "B", targetAudience: "a", competitors: [], niche: "n", websiteContent: "c" });
     mockUserRepo.update = jest.fn().mockResolvedValue(undefined);
-    mockContentRepo.getTopic = jest.fn().mockResolvedValue({ id: "topic-1", createdBy: "user-1", title: "My Topic" });
+    mockContentRepo.getIdea = jest.fn().mockResolvedValue({ id: "idea-1", createdBy: "user-1", title: "My Idea" });
     mockContentRepo.saveScript = jest.fn().mockResolvedValue(undefined);
-    mockContentRepo.updateTopic = jest.fn().mockResolvedValue(undefined);
+    mockContentRepo.updateIdea = jest.fn().mockResolvedValue(undefined);
     mockGenerateStreaming.mockResolvedValue(makeScriptStream("Streamed script body."));
   });
 
   afterEach(() => jest.clearAllMocks());
 
-  it("saves a script whose id !== topicId and carries topicId + videoProjectId FKs (first generation)", async () => {
-    mockVp.getById.mockResolvedValue({ id: "proj-1", topicId: "topic-1", scriptId: null });
+  it("saves a script whose id !== ideaId and carries ideaId + videoProjectId FKs (first generation)", async () => {
+    mockVp.getById.mockResolvedValue({ id: "proj-1", ideaId: "idea-1", scriptId: null });
     const res = makeRes();
     await service.generateScripts("user-1", "proj-1", res as any);
 
     expect(mockContentRepo.saveScript).toHaveBeenCalledTimes(1);
     const [savedId, savedDoc] = mockContentRepo.saveScript.mock.calls[0] as [string, Record<string, unknown>];
-    expect(savedId).not.toBe("topic-1");
+    expect(savedId).not.toBe("idea-1");
     expect(typeof savedId).toBe("string");
-    expect(savedDoc.topicId).toBe("topic-1");
+    expect(savedDoc.ideaId).toBe("idea-1");
     expect(savedDoc.videoProjectId).toBe("proj-1");
     // FK on the saved doc matches the document id it was stored under
     expect(savedDoc.id).toBe(savedId);
@@ -312,7 +264,7 @@ describe("ContentService — generateScripts project-scoped script id & FKs", ()
   });
 
   it("streams the body, always terminates the SSE with [DONE]+end, and completes the script step", async () => {
-    mockVp.getById.mockResolvedValue({ id: "proj-1", topicId: "topic-1", scriptId: null });
+    mockVp.getById.mockResolvedValue({ id: "proj-1", ideaId: "idea-1", scriptId: null });
     const res = makeRes();
 
     await service.generateScripts("user-1", "proj-1", res as any);
@@ -327,7 +279,7 @@ describe("ContentService — generateScripts project-scoped script id & FKs", ()
   });
 
   it("reuses project.scriptId on regenerate (no new id minted)", async () => {
-    mockVp.getById.mockResolvedValue({ id: "proj-1", topicId: "topic-1", scriptId: "existing-script-id" });
+    mockVp.getById.mockResolvedValue({ id: "proj-1", ideaId: "idea-1", scriptId: "existing-script-id" });
     await service.generateScripts("user-1", "proj-1", makeRes() as any);
 
     const [savedId] = mockContentRepo.saveScript.mock.calls[0];

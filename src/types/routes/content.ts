@@ -24,10 +24,10 @@ export interface IIdeaContextOverride {
   topTitles?: string[];
 }
 
-// A topic document as stored in / read from Firestore (see formatGeneratedTitle /
+// A idea document as stored in / read from Firestore (see formatGeneratedTitle /
 // formatGeneratedIdea). `title` holds the idea's working title. The idea fields
 // are optional: legacy docs and bring-your-own-title docs are title-only.
-export interface ITopic {
+export interface IIdea {
   id: string;
   title: string;
   concept?: string | null;
@@ -51,7 +51,7 @@ export interface IScript {
   createdBy: string;
   createdAt: Timestamp;
   script: string;
-  topicId: string;
+  ideaId: string;
   videoProjectId: string | null;
   userFeedback?: UserFeedback;
 }

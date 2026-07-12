@@ -5,7 +5,7 @@ const STRING_SENTINELS = {
     Forbidden: 403,
     Unauthorized: 403,
     "Not found": 404,
-    "Topic not found": 404,
+    "Idea not found": 404,
     "Script not found": 404,
     "Hooks batch not found": 404,
     "Packaging not found": 404,
