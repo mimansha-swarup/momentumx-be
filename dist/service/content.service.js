@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import { SCRIPT_SYSTEM_PROMPT, SCRIPT_USER_PROMPT, IDEA_SYSTEM_PROMPT, IDEA_USER_PROMPT, } from "../constants/prompt.js";
+import { STEP_LOCK_MS } from "./video-project.service.js";
 import { generateContent, generateStreamingContent } from "../utlils/ai.js";
 import { SCRIPT_FORMAT_STYLE, fillTemplate, resolveVideoFormat } from "../utlils/prompt-blocks.js";
 import { formatCreatorsData, formatGeneratedScript, formatGeneratedIdea, getClusteredTitles, } from "../utlils/content.js";
@@ -161,6 +162,20 @@ class ContentService {
                 throw BadRequest("No editable fields provided (allowed: script, title)");
             }
             await this.repo.editScript(scriptId, updates);
+            // A content edit invalidates downstream hooks/packaging exactly like a
+            // regenerate does (parity with regenerateScript). A title rename doesn't.
+            if (typeof updates.script === "string") {
+                try {
+                    const project = await this.videoProjectService.getByScriptId(scriptId, userId);
+                    if (project) {
+                        await this.videoProjectService.markStale(project.id, "script");
+                        await this.videoProjectService.markPackagingDocumentStale(project.id, "script_regenerated");
+                    }
+                }
+                catch (cascadeError) {
+                    console.error(JSON.stringify({ event: "stale_cascade_failed", from: "script", scriptId, userId, message: cascadeError?.message }));
+                }
+            }
             return updates;
         };
         this.generateScripts = async (userId, projectId, res) => {
@@ -188,7 +203,7 @@ class ContentService {
                 // concurrent tabs become a real pattern.
                 const scriptStep = project.pipeline.script;
                 const startedMs = scriptStep.startedAt?.toMillis() ?? 0;
-                if (scriptStep.status === "in_progress" && Date.now() - startedMs < 180000) {
+                if (scriptStep.status === "in_progress" && Date.now() - startedMs < STEP_LOCK_MS) {
                     throw Conflict("Script generation already in progress for this project");
                 }
                 const [userRecord, idea] = await Promise.all([
@@ -282,29 +297,32 @@ class ContentService {
                 throw Forbidden();
             return doc;
         };
-        this.regenerateAll = async (userId) => {
-            const activeIdeas = await this.repo.getActiveBatch(userId);
-            // Fan out the stale cascade to ALL projects on each active idea — a idea
-            // can back multiple video projects, so keying off idea.videoProjectId alone
-            // would only reach one of them.
-            for (const idea of activeIdeas) {
-                let projects = [];
+        // An idea's content changed underneath its projects — stale every project
+        // built from it. An idea can back multiple video projects, so this fans out
+        // via the project index, not idea.videoProjectId (which reaches only one).
+        this.cascadeIdeaStale = async (ideaId, userId) => {
+            let projects = [];
+            try {
+                projects = await this.videoProjectService.getProjectsByIdea(ideaId, userId);
+            }
+            catch (err) {
+                console.error(JSON.stringify({ event: "stale_cascade_lookup_failed", from: "research", ideaId, userId, message: err?.message }));
+                return;
+            }
+            for (const project of projects) {
                 try {
-                    projects = await this.videoProjectService.getProjectsByIdea(idea.id, userId);
+                    await this.videoProjectService.markStale(project.id, "research");
+                    await this.videoProjectService.markPackagingDocumentStale(project.id, "research_regenerated");
                 }
                 catch (err) {
-                    console.error(JSON.stringify({ event: "stale_cascade_lookup_failed", from: "research", ideaId: idea.id, userId, message: err?.message }));
-                    continue;
+                    console.error(JSON.stringify({ event: "stale_cascade_failed", from: "research", projectId: project.id, userId, message: err?.message }));
                 }
-                for (const project of projects) {
-                    try {
-                        await this.videoProjectService.markStale(project.id, "research");
-                        await this.videoProjectService.markPackagingDocumentStale(project.id, "research_regenerated");
-                    }
-                    catch (err) {
-                        console.error(JSON.stringify({ event: "stale_cascade_failed", from: "research", projectId: project.id, userId, message: err?.message }));
-                    }
-                }
+            }
+        };
+        this.regenerateAll = async (userId) => {
+            const activeIdeas = await this.repo.getActiveBatch(userId);
+            for (const idea of activeIdeas) {
+                await this.cascadeIdeaStale(idea.id, userId);
             }
             // Archive current active batch
             await this.repo.archiveUserIdeas(userId);
@@ -343,6 +361,8 @@ class ContentService {
                 videoProjectId: null,
                 userFeedback: null,
             });
+            // Same cascade as regenerateAll — this slot's content changed too.
+            await this.cascadeIdeaStale(ideaId, userId);
             // One idea regenerated -> count exactly one toward stats.
             await this.userRepo.update(userId, {
                 "stats.ideas": firebase.firestore.FieldValue.increment(1),

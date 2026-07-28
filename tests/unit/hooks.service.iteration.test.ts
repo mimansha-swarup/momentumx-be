@@ -215,3 +215,69 @@ describe("HooksService — exportHooks", () => {
     expect(result.text).toContain("5. h5");
   });
 });
+
+describe("HooksService — generate (idempotency, lock, rollback)", () => {
+  let service: HooksService;
+  let mockRepo: jest.Mocked<HooksRepository>;
+  let mockVpService: jest.Mocked<VideoProjectService>;
+
+  const makeProj = (over: Record<string, unknown> = {}) => ({
+    id: "proj-1",
+    hooksId: null,
+    pipeline: {
+      script: { status: "completed" },
+      hooks: { status: "not_started", startedAt: null },
+    },
+    ...over,
+  });
+
+  beforeEach(() => {
+    mockRepo = new MockHooksRepo() as jest.Mocked<HooksRepository>;
+    mockVpService = new MockVideoProjectService(null as any, null as any, null as any) as jest.Mocked<VideoProjectService>;
+    service = new HooksService(mockRepo, mockVpService);
+    mockGenerate.mockResolvedValue(makeStream(HOOKS_JSON));
+    mockVpService.getById = jest.fn().mockResolvedValue(makeProj()) as any;
+    mockVpService.startStep = jest.fn().mockResolvedValue(undefined) as any;
+    mockVpService.abandonStep = jest.fn().mockResolvedValue(undefined) as any;
+    mockVpService.linkResource = jest.fn().mockResolvedValue(undefined) as any;
+    mockRepo.findById = jest.fn();
+    mockRepo.save = jest.fn().mockResolvedValue(mockBatch);
+  });
+
+  it("returns the existing linked batch without regenerating (idempotent start)", async () => {
+    mockVpService.getById = jest.fn().mockResolvedValue(makeProj({ hooksId: "hooks-1" })) as any;
+    mockRepo.findById = jest.fn().mockResolvedValue(mockBatch);
+
+    const result = await service.generate("user-1", "proj-1", "my script");
+
+    expect(result).toBe(mockBatch);
+    expect(mockGenerate).not.toHaveBeenCalled();
+    expect(mockRepo.save).not.toHaveBeenCalled();
+  });
+
+  it("409s while a generation is in flight (fresh startedAt), before any AI call", async () => {
+    mockVpService.getById = jest.fn().mockResolvedValue(
+      makeProj({
+        pipeline: {
+          script: { status: "completed" },
+          hooks: { status: "in_progress", startedAt: { toMillis: () => Date.now() } },
+        },
+      })
+    ) as any;
+
+    const err = await service.generate("user-1", "proj-1", "my script").catch((e) => e);
+
+    expect(err.statusCode).toBe(409);
+    expect(mockGenerate).not.toHaveBeenCalled();
+  });
+
+  it("rolls the step back (abandonStep) when generation fails, then rethrows", async () => {
+    mockGenerate.mockResolvedValue(makeStream("not json"));
+
+    const err = await service.generate("user-1", "proj-1", "my script").catch((e) => e);
+
+    expect(err).toBeInstanceOf(Error);
+    expect(mockVpService.abandonStep).toHaveBeenCalledWith("proj-1", "hooks");
+    expect(mockRepo.save).not.toHaveBeenCalled();
+  });
+});

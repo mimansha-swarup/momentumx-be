@@ -6,10 +6,10 @@ import { GENERATION_CONFIG_PACKAGING } from "../constants/firebase.js";
 import { generateStreamingContent } from "../utlils/ai.js";
 import { fillTemplate } from "../utlils/prompt-blocks.js";
 import HooksRepository from "../repository/hooks.repository.js";
-import VideoProjectService from "./video-project.service.js";
+import VideoProjectService, { STEP_LOCK_MS } from "./video-project.service.js";
 import ContextService from "./context.service.js";
 import { IHooksBatch } from "../types/routes/hooks.js";
-import { BadRequest, Forbidden, NotFound } from "../utlils/errors.js";
+import { BadRequest, Conflict, Forbidden, NotFound } from "../utlils/errors.js";
 
 class HooksService {
   constructor(
@@ -56,6 +56,17 @@ class HooksService {
       if (existing) return existing;
     }
 
+    // In-flight lock (parity with the script stream): a second generate while
+    // one is running (remount mid-generation, second tab) would mint a second
+    // batch and re-link it, orphaning the first. Stale startedAt = crashed run.
+    // ponytail: same ~ms read-then-start race as the script lock; move both to
+    // a transaction if concurrent tabs become a real pattern.
+    const hooksStep = project.pipeline.hooks;
+    const startedMs = hooksStep.startedAt?.toMillis() ?? 0;
+    if (hooksStep.status === "in_progress" && Date.now() - startedMs < STEP_LOCK_MS) {
+      throw Conflict("Hooks generation already in progress for this project");
+    }
+
     const resolvedScript = await this.resolveScript(userId, videoProjectId, script);
     const userPrompt = fillTemplate(GENERATE_HOOKS_PROMPT, { "{script}": resolvedScript });
 
@@ -67,21 +78,34 @@ class HooksService {
       console.error(JSON.stringify({ event: "pipeline_start_failed", step: "hooks", projectId: videoProjectId, userId, message: (stepError as Error)?.message }));
     }
 
-    const result = await generateStreamingContent(
-      HOOKS_SYSTEM_PROMPT,
-      userPrompt,
-      GENERATION_CONFIG_PACKAGING
-    );
+    let parsed: { hooks: string[] };
+    try {
+      const result = await generateStreamingContent(
+        HOOKS_SYSTEM_PROMPT,
+        userPrompt,
+        GENERATION_CONFIG_PACKAGING
+      );
 
-    let accumulatedRes = "";
-    for await (const chunk of result.stream) {
-      const part = chunk.text();
-      if (part) {
-        accumulatedRes += part;
+      let accumulatedRes = "";
+      for await (const chunk of result.stream) {
+        const part = chunk.text();
+        if (part) {
+          accumulatedRes += part;
+        }
       }
-    }
 
-    const parsed = JSON.parse(accumulatedRes) as { hooks: string[] };
+      parsed = JSON.parse(accumulatedRes) as { hooks: string[] };
+    } catch (genError) {
+      // Roll the step back (parity with the script stream's empty-output path)
+      // so a failed generation doesn't leave it in_progress — that would 409
+      // retries for the full lock window and read as running on the dashboard.
+      try {
+        await this.videoProjectService.abandonStep(videoProjectId, "hooks");
+      } catch (abandonError) {
+        console.error(JSON.stringify({ event: "pipeline_abandon_failed", step: "hooks", projectId: videoProjectId, userId, message: (abandonError as Error)?.message }));
+      }
+      throw genError;
+    }
 
     const hooksBatch = await this.repo.save({
       videoProjectId,

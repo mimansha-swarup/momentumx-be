@@ -327,47 +327,12 @@ describe("DELETE /v1/video-projects/:projectId", () => {
 // PATCH /v1/video-projects/:projectId/step/:stepName/start
 // ---------------------------------------------------------------------------
 
-describe("PATCH /v1/video-projects/:projectId/step/:stepName/start", () => {
-  it("returns 200 on success", async () => {
-    getService().startStep.mockResolvedValueOnce({ id: "proj-1", currentStep: "script" } as any);
-
+describe("PATCH /v1/video-projects/:projectId/step/:stepName/start (removed)", () => {
+  it("404s — generation endpoints own the in_progress transition server-side", async () => {
     const res = await request(app).patch("/v1/video-projects/proj-1/step/script/start");
-
-    expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
-  });
-
-  it("returns 200 on idempotent case (step already in_progress)", async () => {
-    getService().startStep.mockResolvedValueOnce({ id: "proj-1", currentStep: "script" } as any);
-
-    const res = await request(app).patch("/v1/video-projects/proj-1/step/script/start");
-
-    expect(res.status).toBe(200);
-  });
-
-  it("returns 400 for invalid stepName", async () => {
-    getService().startStep.mockRejectedValueOnce(makeServiceError("Invalid step", 400));
-
-    const res = await request(app).patch("/v1/video-projects/proj-1/step/research/start");
-
-    expect(res.status).toBe(400);
-    expect(res.body.success).toBe(false);
-  });
-
-  it("returns 404 when project not found", async () => {
-    getService().startStep.mockRejectedValueOnce(makeServiceError("Not found", 404));
-
-    const res = await request(app).patch("/v1/video-projects/missing/step/script/start");
 
     expect(res.status).toBe(404);
-  });
-
-  it("passes projectId, stepName, userId to service", async () => {
-    getService().startStep.mockResolvedValueOnce({ id: "proj-42", currentStep: "hooks" } as any);
-
-    await request(app).patch("/v1/video-projects/proj-42/step/hooks/start");
-
-    expect(getService().startStep).toHaveBeenCalledWith("proj-42", "hooks", "test-user-id");
+    expect(getService().startStep).not.toHaveBeenCalled();
   });
 });
 

@@ -222,9 +222,19 @@ describe("ContentService — generateScripts project-scoped script id & FKs", ()
     startStep: jest.Mock;
     completeStep: jest.Mock;
     linkResource: jest.Mock;
+    abandonStep: jest.Mock;
   };
 
   const makeRes = () => ({ setHeader: jest.fn(), flushHeaders: jest.fn(), write: jest.fn(), end: jest.fn() });
+
+  // Minimal project shape the replay/lock guards read before generating.
+  const makeProj = (over: Record<string, unknown> = {}) => ({
+    id: "proj-1",
+    ideaId: "idea-1",
+    scriptId: null,
+    pipeline: { script: { status: "not_started", startedAt: null } },
+    ...over,
+  });
 
   beforeEach(() => {
     mockContentRepo = new MockContentRepo() as jest.Mocked<ContentRepository>;
@@ -234,11 +244,13 @@ describe("ContentService — generateScripts project-scoped script id & FKs", ()
       startStep: jest.fn().mockResolvedValue(undefined),
       completeStep: jest.fn().mockResolvedValue(undefined),
       linkResource: jest.fn().mockResolvedValue(undefined),
+      abandonStep: jest.fn().mockResolvedValue(undefined),
     };
     service = new ContentService(mockContentRepo, mockUserRepo, mockVp as any);
     mockUserRepo.get = jest.fn().mockResolvedValue({ brandName: "B", targetAudience: "a", competitors: [], niche: "n", websiteContent: "c" });
     mockUserRepo.update = jest.fn().mockResolvedValue(undefined);
     mockContentRepo.getIdea = jest.fn().mockResolvedValue({ id: "idea-1", createdBy: "user-1", title: "My Idea" });
+    mockContentRepo.getScriptById = jest.fn().mockResolvedValue(null);
     mockContentRepo.saveScript = jest.fn().mockResolvedValue(undefined);
     mockContentRepo.updateIdea = jest.fn().mockResolvedValue(undefined);
     mockGenerateStreaming.mockResolvedValue(makeScriptStream("Streamed script body."));
@@ -247,7 +259,7 @@ describe("ContentService — generateScripts project-scoped script id & FKs", ()
   afterEach(() => jest.clearAllMocks());
 
   it("saves a script whose id !== ideaId and carries ideaId + videoProjectId FKs (first generation)", async () => {
-    mockVp.getById.mockResolvedValue({ id: "proj-1", ideaId: "idea-1", scriptId: null });
+    mockVp.getById.mockResolvedValue(makeProj());
     const res = makeRes();
     await service.generateScripts("user-1", "proj-1", res as any);
 
@@ -264,7 +276,7 @@ describe("ContentService — generateScripts project-scoped script id & FKs", ()
   });
 
   it("streams the body, always terminates the SSE with [DONE]+end, and completes the script step", async () => {
-    mockVp.getById.mockResolvedValue({ id: "proj-1", ideaId: "idea-1", scriptId: null });
+    mockVp.getById.mockResolvedValue(makeProj());
     const res = makeRes();
 
     await service.generateScripts("user-1", "proj-1", res as any);
@@ -278,12 +290,40 @@ describe("ContentService — generateScripts project-scoped script id & FKs", ()
     expect(mockVp.completeStep).toHaveBeenCalledWith("proj-1", "script", "user-1");
   });
 
-  it("reuses project.scriptId on regenerate (no new id minted)", async () => {
-    mockVp.getById.mockResolvedValue({ id: "proj-1", ideaId: "idea-1", scriptId: "existing-script-id" });
+  it("replays the stored script on re-entry — no second generation, no save", async () => {
+    mockVp.getById.mockResolvedValue(makeProj({ scriptId: "existing-script-id" }));
+    mockContentRepo.getScriptById = jest.fn().mockResolvedValue({ id: "existing-script-id", script: "Saved body" });
+    const res = makeRes();
+
+    await service.generateScripts("user-1", "proj-1", res as any);
+
+    expect(mockGenerateStreaming).not.toHaveBeenCalled();
+    expect(mockContentRepo.saveScript).not.toHaveBeenCalled();
+    expect(res.write).toHaveBeenCalledWith(`data: ${JSON.stringify("Saved body")}\n\n`);
+    expect(res.write).toHaveBeenCalledWith("data: [DONE]\n\n");
+    expect(res.end).toHaveBeenCalled();
+  });
+
+  it("reuses project.scriptId when the doc is missing (no new id minted)", async () => {
+    // scriptId set but doc gone (replay impossible) → regenerate INTO that id.
+    mockVp.getById.mockResolvedValue(makeProj({ scriptId: "existing-script-id" }));
     await service.generateScripts("user-1", "proj-1", makeRes() as any);
 
     const [savedId] = mockContentRepo.saveScript.mock.calls[0];
     expect(savedId).toBe("existing-script-id");
     expect(mockVp.linkResource).toHaveBeenCalledWith("proj-1", "script", "existing-script-id", "user-1");
+  });
+
+  it("409s while a generation is in flight (fresh startedAt), before any AI call", async () => {
+    mockVp.getById.mockResolvedValue(
+      makeProj({ pipeline: { script: { status: "in_progress", startedAt: { toMillis: () => Date.now() } } } })
+    );
+    const res = makeRes();
+
+    const err = await service.generateScripts("user-1", "proj-1", res as any).catch((e) => e);
+
+    expect(err.statusCode).toBe(409);
+    expect(res.flushHeaders).not.toHaveBeenCalled();
+    expect(mockGenerateStreaming).not.toHaveBeenCalled();
   });
 });

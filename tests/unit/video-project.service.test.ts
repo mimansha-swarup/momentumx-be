@@ -608,7 +608,7 @@ describe("VideoProjectService", () => {
       });
     });
 
-    it("returns { id, currentStep } idempotently when step is already in_progress", async () => {
+    it("refreshes startedAt (lock heartbeat) when step is already in_progress", async () => {
       repo.findById.mockResolvedValue(
         makeProject({ currentStep: "script", pipeline: { ...makeProject().pipeline, script: { status: "in_progress", startedAt: null, completedAt: null } } })
       );
@@ -616,7 +616,12 @@ describe("VideoProjectService", () => {
       const result = await service.startStep("proj-1", "script", "user-1");
 
       expect(result).toEqual({ id: "proj-1", currentStep: expect.any(String) });
-      expect(repo.update).not.toHaveBeenCalled();
+      // The refresh keeps the in-flight lock honest: only startedAt is touched.
+      expect(repo.update).toHaveBeenCalledTimes(1);
+      expect(repo.update).toHaveBeenCalledWith(
+        "proj-1",
+        expect.objectContaining({ "pipeline.script.startedAt": expect.anything() })
+      );
     });
 
     it("returns { id, currentStep } idempotently when step is already completed", async () => {

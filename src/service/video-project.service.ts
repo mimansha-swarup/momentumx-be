@@ -26,6 +26,11 @@ const STALE_CASCADE: Record<string, StepName[]> = {
 };
 const VALID_MUTABLE_STEPS = ["script", "hooks", "packaging"];
 
+// Shared by the generation endpoints' in-flight locks (script stream, hooks
+// generate): an in_progress step with startedAt older than this outlives the
+// Gemini timeout, so it's a crashed run and safe to retry.
+export const STEP_LOCK_MS = 180_000;
+
 // Single source of the overall-status arithmetic, shared by reconcileView (read path)
 // and refreshPackagingStep (write path) so the two can never drift.
 const computeOverallStatus = (pipeline: IVideoProjectPipeline): OverallStatus => {
