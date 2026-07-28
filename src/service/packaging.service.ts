@@ -238,6 +238,10 @@ class PackagingService {
     // Coerce any present content field to its canonical stored shape so the
     // persisted doc matches what regenerateItem and the readers expect.
     const normalized: Record<string, unknown> = { ...data };
+    // Never persist script/hooks snapshots: nothing reads them (generation
+    // resolves both from the project), and clients used to send empty ones.
+    delete normalized.script;
+    delete normalized.hooks;
     for (const field of PackagingService.ITEM_FIELDS) {
       if (field in data && data[field] != null) {
         normalized[field] = this.normalizeField(field, data[field]);

@@ -335,6 +335,17 @@ describe("PackagingService — savePackaging with videoProjectId", () => {
     expect(packagingData).toMatchObject({ videoProjectId: "proj-1" });
   });
 
+  it("never persists script/hooks snapshots from the body (server-resolved, unread)", async () => {
+    await service.savePackaging(
+      "user-1",
+      { title: "t", script: "full script text", hooks: ["h1", "h2"] },
+      "proj-1"
+    );
+    const packagingData = (mockRepo.save as jest.Mock).mock.calls[0][0];
+    expect(packagingData).not.toHaveProperty("script");
+    expect(packagingData).not.toHaveProperty("hooks");
+  });
+
   // Door model (6A.3): saving with no project must NOT create a standalone doc —
   // it lazily spins up a shallow project from the packaged title and binds to it.
   it("creates a shallow project from the packaged title and binds packaging to it", async () => {

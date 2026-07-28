@@ -192,7 +192,11 @@ Snapshot of the API surface. When exact behavior matters, verify against `src/ro
   POST  /generate-description  — generate SEO description
   POST  /generate-thumbnail    — generate thumbnail brief
   POST  /generate-shorts       — generate Shorts script
-  POST  /save                  — save packaging to Firestore
+  POST  /save                  — save packaging (script/hooks are NOT accepted in the body —
+                                  server-resolved from the project. A door save without
+                                  videoProjectId creates ONE project and returns it on the
+                                  saved doc; the client must adopt that id — navigate into
+                                  the project — or repeat saves will mint duplicates)
   GET   /list                  — list user's packaging
   GET   /:packagingId          — get single packaging
   POST  /:packagingId/regenerate/:item — regenerate one packaging item
