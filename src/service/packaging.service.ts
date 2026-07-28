@@ -384,9 +384,6 @@ class PackagingService {
     if ((item === "description" || item === "thumbnail") && !title) {
       throw BadRequest("title is required for description and thumbnail regeneration");
     }
-    if (item === "shorts" && !duration) {
-      throw BadRequest("duration is required for shorts regeneration");
-    }
 
     // Save previous item status for rollback on failure
     const currentStatuses: Partial<IPackagingItemStatuses> = pkg.itemStatuses ?? {};
@@ -407,7 +404,9 @@ class PackagingService {
         result = await this.generateThumbnail(userId, resolved.script || undefined, title!, videoProjectId);
         fieldKey = "thumbnail";
       } else {
-        result = await this.generateShorts(userId, resolved.script, duration!, videoProjectId);
+        // Same default the generate-shorts path uses client-side; regenerate
+        // must not 400 when the client omits it (it always did).
+        result = await this.generateShorts(userId, resolved.script, duration ?? 60, videoProjectId);
         fieldKey = "shorts";
       }
     } catch (genError) {
