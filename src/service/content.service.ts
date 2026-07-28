@@ -27,7 +27,14 @@ import {
 import { IGetIdeaByUserIdArgs } from "../types/repository/content.js";
 import { IGeneratedIdea, IIdeaContextOverride } from "../types/routes/content.js";
 import { firebase } from "../config/firebase.js";
-import { BadRequest, Forbidden, NotFound } from "../utlils/errors.js";
+import { BadRequest, Conflict, Forbidden, NotFound } from "../utlils/errors.js";
+
+const openSseStream = (res: Response): void => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+};
 
 //  createOnboardingData
 function formatCompetitorUrls(competitors: unknown): string {
@@ -224,6 +231,31 @@ class ContentService {
       const vps = this.videoProjectService;
       const project = await vps.getById(projectId, userId);
 
+      // Idempotent start: if a script already exists, replay it instead of
+      // generating again — auto-starting clients can never double-generate.
+      // A fresh generation is only reachable via the explicit regenerate endpoint.
+      if (project.scriptId) {
+        const existing = await this.repo.getScriptById(project.scriptId);
+        if (existing) {
+          openSseStream(res);
+          res.write(`data: ${JSON.stringify(existing.script)}\n\n`);
+          res.write(`data: [DONE]\n\n`);
+          res.end();
+          return existing.script;
+        }
+      }
+
+      // In-flight lock: a second stream while one is generating (second tab,
+      // remount mid-generation) would mint a duplicate script doc. startedAt
+      // older than the Gemini timeout means a crashed run — let it retry.
+      // ponytail: ~ms read-then-start race remains; move to a transaction if
+      // concurrent tabs become a real pattern.
+      const scriptStep = project.pipeline.script;
+      const startedMs = scriptStep.startedAt?.toMillis() ?? 0;
+      if (scriptStep.status === "in_progress" && Date.now() - startedMs < 180_000) {
+        throw Conflict("Script generation already in progress for this project");
+      }
+
       const [userRecord, idea] = await Promise.all([
         this.userRepo.get(userId),
         this.repo.getIdea(project.ideaId),
@@ -243,26 +275,26 @@ class ContentService {
         SCRIPT_FORMAT_STYLE[resolveVideoFormat(userRecord?.format)]
       );
 
-      const result = await generateStreamingContent(
-        systemPrompt,
-        userPrompt,
-        GENERATION_CONFIG_SCRIPTS,
-      );
-
-      let accumulatedRes = "";
-
       try {
         await vps.startStep(projectId, "script", userId);
       } catch (stepError) {
         console.error(JSON.stringify({ event: "pipeline_start_failed", step: "script", projectId, userId, message: (stepError as Error)?.message }));
       }
 
-      res.setHeader("Content-Type", "text/event-stream");
-      res.setHeader("Cache-Control", "no-cache");
-      res.setHeader("Connection", "keep-alive");
-      res.flushHeaders();
+      // Flush headers BEFORE connecting to Gemini: the client is attached to the
+      // stream immediately, so an upstream stall can never leave the EventSource
+      // hanging in CONNECTING with no data and no error. Any failure past this
+      // point terminates via the [DONE] in finally.
+      openSseStream(res);
+
+      let accumulatedRes = "";
 
       try {
+        const result = await generateStreamingContent(
+          systemPrompt,
+          userPrompt,
+          GENERATION_CONFIG_SCRIPTS,
+        );
         for await (const chunk of result.stream) {
           const part = chunk.text();
           if (part) {
@@ -275,6 +307,15 @@ class ContentService {
       } finally {
         res.write(`data: [DONE]\n\n`);
         res.end();
+      }
+
+      // Nothing generated (Gemini error/timeout): don't persist an empty script
+      // or complete the step — the client sees an empty [DONE] and offers retry.
+      // Roll the step back so the retry isn't blocked by the in-flight lock.
+      if (!accumulatedRes) {
+        console.error(JSON.stringify({ event: "script_stream_empty", projectId, userId }));
+        await vps.abandonStep(projectId, "script");
+        return accumulatedRes;
       }
 
       try {

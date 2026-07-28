@@ -14,25 +14,32 @@ export const generateContent = async (
   const result = genAIModel(
     systemPrompt,
     generationConfig
-  ).generateContentStream({
-    contents: [
-      {
-        role: "user",
-        parts: [
-          { text: userPrompt },
-          {
-            inlineData: {
-              mimeType,
-              data: base64Text,
+  ).generateContentStream(
+    {
+      contents: [
+        {
+          role: "user",
+          parts: [
+            { text: userPrompt },
+            {
+              inlineData: {
+                mimeType,
+                data: base64Text,
+              },
             },
-          },
-        ],
-      },
-    ],
-  });
+          ],
+        },
+      ],
+    },
+    { timeout: STREAM_TIMEOUT_MS }
+  );
 
   return result;
 };
+// Bounds the whole Gemini request (connect + stream). Without it a stalled
+// upstream connection hangs the SSE client forever with no error to react to.
+const STREAM_TIMEOUT_MS = 120_000;
+
 export const generateStreamingContent = (
   systemPrompt: string,
   userPrompt: string,
@@ -41,6 +48,6 @@ export const generateStreamingContent = (
   const result = genAIModel(
     systemPrompt,
     generationConfig
-  ).generateContentStream(userPrompt);
+  ).generateContentStream(userPrompt, { timeout: STREAM_TIMEOUT_MS });
   return result;
 };

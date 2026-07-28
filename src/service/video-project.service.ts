@@ -249,7 +249,17 @@ class VideoProjectService {
     const step = stepName as StepName;
     const currentStatus = project.pipeline[step].status;
 
-    if (currentStatus === "in_progress" || currentStatus === "completed") {
+    if (currentStatus === "completed") {
+      return { id: project.id, currentStep: project.currentStep };
+    }
+
+    // Re-starting an in_progress step refreshes startedAt: it doubles as the
+    // in-flight-lock heartbeat (script streaming), so a retry after a crashed
+    // run must re-arm the lock rather than run under the stale timestamp.
+    if (currentStatus === "in_progress") {
+      await this.repo.update(projectId, {
+        [`pipeline.${step}.startedAt`]: firebase.firestore.FieldValue.serverTimestamp(),
+      });
       return { id: project.id, currentStep: project.currentStep };
     }
 
@@ -267,6 +277,15 @@ class VideoProjectService {
 
     await this.repo.update(projectId, updates);
     return { id: projectId, currentStep: step };
+  };
+
+  // Internal (no route): roll back an in_progress step that produced nothing,
+  // so the client can retry immediately instead of waiting out the in-flight lock.
+  abandonStep = async (projectId: string, stepName: StepName) => {
+    await this.repo.update(projectId, {
+      [`pipeline.${stepName}.status`]: "not_started",
+      [`pipeline.${stepName}.startedAt`]: null,
+    });
   };
 
   completeStep = async (projectId: string, stepName: string, userId: string) => {

@@ -11,7 +11,8 @@ function extractChannelField(value, field) {
     return "";
 }
 export const formatGeneratedTitle = async (title, userId, batchId) => {
-    const embedding = await embeddingModel.embedContent(title);
+    // Bounded like every other Gemini call — an unbounded embed would hang idea saves.
+    const embedding = await embeddingModel.embedContent(title, { timeout: 30000 });
     return {
         id: randomUUID(),
         title,

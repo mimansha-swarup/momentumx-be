@@ -44,11 +44,8 @@ class VideoProjectController {
             const data = await this.service.delete(projectId, req.userId);
             res.sendSuccess({ data, message: "Video project deleted successfully" });
         });
-        this.startStep = asyncHandler(async (req, res) => {
-            const { projectId, stepName } = req.params;
-            const data = await this.service.startStep(projectId, stepName, req.userId);
-            res.sendSuccess({ data, message: "Step started successfully" });
-        });
+        // startStep has no route: the generation endpoints (script stream, hooks
+        // generate, packaging save) own the in_progress transition server-side.
         this.completeStep = asyncHandler(async (req, res) => {
             const { projectId, stepName } = req.params;
             const data = await this.service.completeStep(projectId, stepName, req.userId);

@@ -27,8 +27,24 @@ class HooksService {
             if (project.pipeline.script.status !== "completed") {
                 throw BadRequest("Script must be completed before generating hooks");
             }
+            // Idempotent start: a batch already linked to this project is returned
+            // as-is, so auto-starting clients can never double-generate. A fresh batch
+            // is only reachable via the explicit regenerate endpoint.
+            if (project.hooksId) {
+                const existing = await this.repo.findById(project.hooksId);
+                if (existing)
+                    return existing;
+            }
             const resolvedScript = await this.resolveScript(userId, videoProjectId, script);
             const userPrompt = fillTemplate(GENERATE_HOOKS_PROMPT, { "{script}": resolvedScript });
+            // The generate endpoint owns the in_progress transition (same as script
+            // streaming and packaging save) — clients never PATCH step state themselves.
+            try {
+                await this.videoProjectService.startStep(videoProjectId, "hooks", userId);
+            }
+            catch (stepError) {
+                console.error(JSON.stringify({ event: "pipeline_start_failed", step: "hooks", projectId: videoProjectId, userId, message: stepError?.message }));
+            }
             const result = await generateStreamingContent(HOOKS_SYSTEM_PROMPT, userPrompt, GENERATION_CONFIG_PACKAGING);
             let accumulatedRes = "";
             for await (const chunk of result.stream) {

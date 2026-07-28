@@ -20,7 +20,6 @@ router.get("/", videoProjectController.list);
 router.get("/:projectId", videoProjectController.getById);
 router.patch("/:projectId", videoProjectController.update);
 router.delete("/:projectId", videoProjectController.delete);
-router.patch("/:projectId/step/:stepName/start", videoProjectController.startStep);
 router.patch("/:projectId/step/:stepName/complete", videoProjectController.completeStep);
 router.patch("/:projectId/link/:resourceType", videoProjectController.linkResource);
 

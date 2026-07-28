@@ -210,8 +210,9 @@ Snapshot of the API surface. When exact behavior matters, verify against `src/ro
   GET   /:projectId            — get single project
   PATCH /:projectId            — update project
   DELETE /:projectId           — soft delete project
-  PATCH /:projectId/step/:stepName/start    — mark a pipeline step in progress
   PATCH /:projectId/step/:stepName/complete — mark a pipeline step complete
+                                              (no /start route: generation endpoints
+                                               set in_progress server-side)
   PATCH /:projectId/link/:resourceType      — link a resource (script/hooks/packaging) to the project
 ```
 

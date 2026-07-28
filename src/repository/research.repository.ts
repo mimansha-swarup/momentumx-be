@@ -7,6 +7,13 @@ const API_KEY = process.env.YT_API;
 // keeps results in the user's language. Both cut spam from the research pool.
 const SEARCH_QUALITY_PARAMS = `&videoDuration=medium&relevanceLanguage=en`;
 
+// fetch() has no implicit timeout — a stalled YouTube connection would hang idea
+// generation forever (research is meant to degrade, never block). Bound every call
+// so a slow/dead response rejects; the caller then falls back to no research signals.
+const YT_TIMEOUT_MS = 8000;
+const ytFetch = (url: string): Promise<Response> =>
+  fetch(url, { signal: AbortSignal.timeout(YT_TIMEOUT_MS) });
+
 // The search API returns titles with HTML entities (&amp;, &#39;, …) — decode at the
 // boundary so downstream prompts never see encoded text.
 const decodeEntities = (text: string): string =>
@@ -48,7 +55,7 @@ class ResearchRepository {
       `&key=${API_KEY}`;
 
     try {
-      const res = await fetch(url);
+      const res = await ytFetch(url);
       const data: {
         items: {
           id: { videoId: string };
@@ -77,7 +84,7 @@ class ResearchRepository {
       `&key=${API_KEY}`;
 
     try {
-      const res = await fetch(url);
+      const res = await ytFetch(url);
       const data: {
         items: { snippet: { title: string } }[];
       } = await res.json();
@@ -98,7 +105,7 @@ class ResearchRepository {
       `&key=${API_KEY}`;
 
     try {
-      const res = await fetch(url);
+      const res = await ytFetch(url);
       const data: {
         items: { id: string; statistics: { viewCount?: string } }[];
       } = await res.json();
@@ -125,7 +132,7 @@ class ResearchRepository {
       `&key=${API_KEY}`;
 
     try {
-      const res = await fetch(url);
+      const res = await ytFetch(url);
       const data: {
         items: {
           id: { videoId: string };
