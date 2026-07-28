@@ -5,7 +5,11 @@ import {
   GENERATE_THUMBNAIL_PROMPT,
   GENERATE_SHORTS_PROMPT,
 } from "../constants/prompt.js";
-import { GENERATION_CONFIG_PACKAGING, GENERATION_CONFIG_TITLE_VARIATIONS } from "../constants/firebase.js";
+import {
+  GENERATION_CONFIG_PACKAGING,
+  GENERATION_CONFIG_TITLE_VARIATIONS,
+  GENERATION_CONFIG_SHORTS,
+} from "../constants/firebase.js";
 import PackagingRepository from "../repository/packaging.repository.js";
 import VideoProjectService from "./video-project.service.js";
 import ContextService from "./context.service.js";
@@ -159,7 +163,7 @@ class PackagingService {
       "{script}": inputs.script,
       "{duration}": duration.toString(),
     });
-    return this.generateContent(userPrompt);
+    return this.generateContent(userPrompt, GENERATION_CONFIG_SHORTS);
   };
 
   // The four packaging content fields, in their canonical stored shapes:

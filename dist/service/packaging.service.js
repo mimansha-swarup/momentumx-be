@@ -1,5 +1,5 @@
 import { PACKAGING_SYSTEM_PROMPT, GENERATE_TITLE_PROMPT, GENERATE_DESCRIPTION_PROMPT, GENERATE_THUMBNAIL_PROMPT, GENERATE_SHORTS_PROMPT, } from "../constants/prompt.js";
-import { GENERATION_CONFIG_PACKAGING, GENERATION_CONFIG_TITLE_VARIATIONS } from "../constants/firebase.js";
+import { GENERATION_CONFIG_PACKAGING, GENERATION_CONFIG_TITLE_VARIATIONS, GENERATION_CONFIG_SHORTS, } from "../constants/firebase.js";
 import { generateStreamingContent } from "../utlils/ai.js";
 import { firebase } from "../config/firebase.js";
 import { BadRequest, Forbidden, NotFound } from "../utlils/errors.js";
@@ -91,7 +91,7 @@ class PackagingService {
                 "{script}": inputs.script,
                 "{duration}": duration.toString(),
             });
-            return this.generateContent(userPrompt);
+            return this.generateContent(userPrompt, GENERATION_CONFIG_SHORTS);
         };
         this.normalizeField = (field, raw) => {
             const wrapper = (raw ?? {});
