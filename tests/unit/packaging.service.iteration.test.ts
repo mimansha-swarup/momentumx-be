@@ -473,7 +473,7 @@ describe("PackagingService — selectTitle (title continuity §7.3)", () => {
   });
 });
 
-describe("PackagingService — generateTitle injects the assembled context", () => {
+describe("PackagingService — generateTitle persists + injects context", () => {
   let service: PackagingService;
   let mockRepo: jest.Mocked<PackagingRepository>;
 
@@ -481,11 +481,12 @@ describe("PackagingService — generateTitle injects the assembled context", () 
     mockRepo = new MockPackagingRepo() as jest.Mocked<PackagingRepository>;
   });
 
-  it("injects the hook resolved by ContextService into the prompt", async () => {
+  it("persists via the atomic upsert and injects the hook into the prompt", async () => {
     const fakeTitles = [{ title: "Title A", characterCount: 55 }];
     mockGenerate.mockResolvedValue(makeStream(JSON.stringify({ titles: fakeTitles })));
     const ctx = makeContextService({ selectedHook: "my hook opener" });
     service = new PackagingService(mockRepo, makeVp(), ctx);
+    mockRepo.upsertGeneratedItem = jest.fn().mockResolvedValue({ packagingId: "proj-1", created: false, allDone: false });
 
     const result = await service.generateTitle("user-1", "script text", "proj-1");
 
@@ -493,18 +494,56 @@ describe("PackagingService — generateTitle injects the assembled context", () 
     expect(ctx.assemble).toHaveBeenCalledWith("user-1", { videoProjectId: "proj-1" });
     const userPromptArg = mockGenerate.mock.calls[0][1] as string;
     expect(userPromptArg).toContain("my hook opener");
-    expect(result).toEqual({ titles: fakeTitles });
+    // Generation writes straight to the doc (one atomic upsert) — no round-trip save.
+    expect(mockRepo.upsertGeneratedItem).toHaveBeenCalledWith("proj-1", "user-1", "titles", "title", fakeTitles);
+    expect(result).toEqual({ titles: fakeTitles, packagingId: "proj-1" });
   });
 
-  it("works without a videoProjectId (empty session, no project lookup)", async () => {
+  it("links the doc only when the upsert reports it was created", async () => {
+    mockGenerate.mockResolvedValue(makeStream(JSON.stringify({ titles: [{ title: "T", characterCount: 1 }] })));
+    const vp = makeVp();
+    service = new PackagingService(mockRepo, vp, makeContextService({ selectedHook: "h" }));
+    mockRepo.upsertGeneratedItem = jest.fn().mockResolvedValue({ packagingId: "proj-1", created: true, allDone: false });
+
+    const result = await service.generateTitle("user-1", "script text", "proj-1");
+
+    expect(vp.linkResource).toHaveBeenCalledWith("proj-1", "packaging", "proj-1", "user-1");
+    expect(result).toEqual({ titles: [{ title: "T", characterCount: 1 }], packagingId: "proj-1" });
+  });
+
+  it("completes the packaging step when the upsert reports allDone", async () => {
+    mockGenerate.mockResolvedValue(makeStream(JSON.stringify({ titles: [{ title: "T", characterCount: 1 }] })));
+    const vp = makeVp();
+    service = new PackagingService(mockRepo, vp, makeContextService());
+    mockRepo.upsertGeneratedItem = jest.fn().mockResolvedValue({ packagingId: "proj-1", created: false, allDone: true });
+
+    await service.generateTitle("user-1", "script text", "proj-1");
+
+    expect(vp.completeStep).toHaveBeenCalledWith("proj-1", "packaging", "user-1");
+  });
+
+  it("does NOT complete the step when the upsert reports allDone false", async () => {
+    mockGenerate.mockResolvedValue(makeStream(JSON.stringify({ titles: [{ title: "T", characterCount: 1 }] })));
+    const vp = makeVp();
+    service = new PackagingService(mockRepo, vp, makeContextService());
+    mockRepo.upsertGeneratedItem = jest.fn().mockResolvedValue({ packagingId: "proj-1", created: false, allDone: false });
+
+    await service.generateTitle("user-1", "script text", "proj-1");
+
+    expect(vp.completeStep).not.toHaveBeenCalled();
+  });
+
+  it("is a stateless preview without a videoProjectId (no persist)", async () => {
     const fakeTitles = [{ title: "Title B", characterCount: 50 }];
     mockGenerate.mockResolvedValue(makeStream(JSON.stringify({ titles: fakeTitles })));
     const ctx = makeContextService();
     service = new PackagingService(mockRepo, makeVp(), ctx);
+    mockRepo.upsertGeneratedItem = jest.fn();
 
     const result = await service.generateTitle("user-1", "script text");
 
     expect(ctx.assemble).toHaveBeenCalledWith("user-1", {});
+    expect(mockRepo.upsertGeneratedItem).not.toHaveBeenCalled();
     expect(result).toEqual({ titles: fakeTitles });
   });
 });

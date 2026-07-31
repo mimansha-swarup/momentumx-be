@@ -63,6 +63,59 @@ class PackagingRepository {
                 throw error;
             }
         };
+        // Atomic "generation writes its item to the doc" for the persist-on-generate
+        // flow. Keyed on a DETERMINISTIC id (= videoProjectId) so two first-generations
+        // racing (round 1 title+shorts) converge on ONE doc instead of creating two
+        // auto-id docs; legacy/door docs (auto-id) are located by query and updated in
+        // place. The transaction makes the itemStatuses read-modify-write and the
+        // "all four done?" check see a consistent snapshot, so concurrent final writes
+        // can't both skip completion. Returns whether it created the doc and whether
+        // the whole set is now complete (so the service can drive the pipeline step).
+        this.upsertGeneratedItem = async (videoProjectId, userId, field, item, canonical) => {
+            const existing = await this.findByVideoProject(videoProjectId);
+            const ref = this.db
+                .collection(this.collection)
+                .doc(existing?.id ?? videoProjectId);
+            return this.db.runTransaction(async (txn) => {
+                const snap = await txn.get(ref);
+                const statuses = {
+                    title: "not_started",
+                    description: "not_started",
+                    thumbnail: "not_started",
+                    shorts: "not_started",
+                    ...(snap.exists ? (snap.data()?.itemStatuses ?? {}) : {}),
+                    [item]: "completed",
+                };
+                if (!snap.exists) {
+                    txn.set(ref, {
+                        id: ref.id,
+                        createdBy: userId,
+                        videoProjectId,
+                        titles: [],
+                        description: "",
+                        thumbnail: [],
+                        shorts: { segments: [], totalDuration: "" },
+                        selectedTitleIndex: null,
+                        selectedThumbnailIndex: 0,
+                        isStale: false,
+                        staleReason: null,
+                        staleSince: null,
+                        [field]: canonical,
+                        itemStatuses: statuses,
+                        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    });
+                }
+                else {
+                    txn.update(ref, {
+                        [field]: canonical,
+                        [`itemStatuses.${item}`]: "completed",
+                        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    });
+                }
+                const allDone = ["title", "description", "thumbnail", "shorts"].every((k) => statuses[k] === "completed");
+                return { packagingId: ref.id, created: !snap.exists, allDone };
+            });
+        };
         this.findByVideoProject = async (videoProjectId) => {
             try {
                 const snapshot = await this.db

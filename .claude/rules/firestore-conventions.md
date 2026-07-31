@@ -52,8 +52,15 @@ const id = randomUUID();
 
 // users → Firebase UID (req.userId from authMiddleware)
 
-// packaging → Firestore auto-ID (let Firestore generate)
-const ref = await db.collection(COLLECTIONS.PACKAGING).add(data);
+// packaging → DETERMINISTIC id = videoProjectId, written in a transaction
+// (repo.upsertGeneratedItem). Persist-on-generate fires the item writes
+// concurrently (round 1 title+shorts, round 2 desc+thumbnail); a deterministic
+// id makes concurrent first-generations converge on ONE doc instead of racing
+// two auto-id creates, and the transaction makes the "all four done?" check see
+// a consistent snapshot. doc(videoProjectId).set(...) on create.
+const ref = db.collection(COLLECTIONS.PACKAGING).doc(videoProjectId);
+// Legacy/door docs may still have auto-IDs — always LOCATE by findByVideoProject
+// (query on the videoProjectId field), never assume id === videoProjectId on read.
 ```
 
 ---

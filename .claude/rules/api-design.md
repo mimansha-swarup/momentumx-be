@@ -188,15 +188,21 @@ Snapshot of the API surface. When exact behavior matters, verify against `src/ro
   GET   /:hooksId/export       — export hooks as plain text
 
 /v1/packaging
-  POST  /generate-title        — generate 3 title variations
-  POST  /generate-description  — generate SEO description
-  POST  /generate-thumbnail    — generate thumbnail brief
-  POST  /generate-shorts       — generate Shorts script
-  POST  /save                  — save packaging (script/hooks are NOT accepted in the body —
-                                  server-resolved from the project. A door save without
-                                  videoProjectId creates ONE project and returns it on the
-                                  saved doc; the client must adopt that id — navigate into
-                                  the project — or repeat saves will mint duplicates)
+  # generate-* PERSIST server-side: each writes its item straight into the project's
+  # packaging doc (created on the first generation), sets that item's status, and
+  # returns the content + packagingId. The step is in_progress until all four items
+  # exist, then auto-completes. Clients never round-trip generated content back to
+  # /save. Without a videoProjectId these are stateless previews (no persist).
+  POST  /generate-title        — generate 3 title variations (persists → { titles, packagingId })
+  POST  /generate-description  — generate SEO description (persists → { description, packagingId })
+  POST  /generate-thumbnail    — generate thumbnail brief (persists → { descriptions, packagingId })
+  POST  /generate-shorts       — generate Shorts script (persists → { segments, totalDuration, packagingId })
+  POST  /save                  — persist USER EDITS only (edited title/description text,
+                                  thumbnail selection). Generated content is already saved by
+                                  the generate-* endpoints. script/hooks are NOT accepted in the
+                                  body — server-resolved. A door save without videoProjectId
+                                  creates ONE project and returns it on the saved doc; the client
+                                  must adopt that id or repeat saves mint duplicates)
   GET   /list                  — list user's packaging
   GET   /:packagingId          — get single packaging
   POST  /:packagingId/regenerate/:item — regenerate one packaging item

@@ -74,6 +74,33 @@ export const GENERATION_CONFIG_SHORTS = {
         required: ["segments", "totalDuration"],
     },
 };
+// Description generation (packaging): schema-enforced to match the canonical
+// { description } shape instead of relying on GENERATION_CONFIG_PACKAGING's no-schema mode.
+export const GENERATION_CONFIG_DESCRIPTION = {
+    responseMimeType: "application/json",
+    responseSchema: {
+        type: SchemaType.OBJECT,
+        properties: {
+            description: { type: SchemaType.STRING },
+        },
+        required: ["description"],
+    },
+};
+// Thumbnail brief generation (packaging): schema-enforced to match the canonical
+// { descriptions } shape instead of relying on GENERATION_CONFIG_PACKAGING's no-schema mode.
+export const GENERATION_CONFIG_THUMBNAIL = {
+    responseMimeType: "application/json",
+    responseSchema: {
+        type: SchemaType.OBJECT,
+        properties: {
+            descriptions: {
+                type: SchemaType.ARRAY,
+                items: { type: SchemaType.STRING },
+            },
+        },
+        required: ["descriptions"],
+    },
+};
 // Post-script Title step: 3 scored variations. Schema-enforced.
 export const GENERATION_CONFIG_TITLE_VARIATIONS = {
     responseMimeType: "application/json",

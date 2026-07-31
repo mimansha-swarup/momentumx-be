@@ -1,5 +1,5 @@
 import { PACKAGING_SYSTEM_PROMPT, GENERATE_TITLE_PROMPT, GENERATE_DESCRIPTION_PROMPT, GENERATE_THUMBNAIL_PROMPT, GENERATE_SHORTS_PROMPT, } from "../constants/prompt.js";
-import { GENERATION_CONFIG_PACKAGING, GENERATION_CONFIG_TITLE_VARIATIONS, GENERATION_CONFIG_SHORTS, } from "../constants/firebase.js";
+import { GENERATION_CONFIG_TITLE_VARIATIONS, GENERATION_CONFIG_SHORTS, GENERATION_CONFIG_DESCRIPTION, GENERATION_CONFIG_THUMBNAIL, } from "../constants/firebase.js";
 import { generateStreamingContent } from "../utlils/ai.js";
 import { firebase } from "../config/firebase.js";
 import { BadRequest, Forbidden, NotFound } from "../utlils/errors.js";
@@ -24,7 +24,10 @@ class PackagingService {
                 workingTitle: ctx.sessionContext.workingTitle,
             };
         };
-        this.generateContent = async (userPrompt, config = GENERATION_CONFIG_PACKAGING) => {
+        // config is required (no schema-less default): every packaging generation
+        // must pass a responseSchema-enforced config, or malformed JSON silently
+        // returns and JSON.parse below throws a 500.
+        this.generateContent = async (userPrompt, config) => {
             const result = await generateStreamingContent(PACKAGING_SYSTEM_PROMPT, userPrompt, config);
             let accumulatedRes = "";
             for await (const chunk of result.stream) {
@@ -39,7 +42,7 @@ class PackagingService {
         // live competitive title research → 3 scored variations. Research query =
         // the project's working title when available (specific beats broad), else
         // the script's opening. Research failure degrades to context-only titles.
-        this.generateTitle = async (userId, script, videoProjectId) => {
+        this.runTitle = async (userId, script, videoProjectId) => {
             const inputs = await this.resolveGenerationInputs(userId, videoProjectId, script);
             if (!inputs.script) {
                 throw BadRequest("Script is required — provide one or use a project with a generated script");
@@ -57,7 +60,7 @@ class PackagingService {
             });
             return this.generateContent(userPrompt, GENERATION_CONFIG_TITLE_VARIATIONS);
         };
-        this.generateDescription = async (userId, script, title, videoProjectId) => {
+        this.runDescription = async (userId, script, title, videoProjectId) => {
             const inputs = await this.resolveGenerationInputs(userId, videoProjectId, script);
             const userPrompt = fillTemplate(GENERATE_DESCRIPTION_PROMPT, {
                 "{title}": title,
@@ -65,9 +68,9 @@ class PackagingService {
                 "{scriptSection}": buildScriptSection(inputs.script),
                 "{hookSection}": buildHookSection(inputs.hook),
             });
-            return this.generateContent(userPrompt);
+            return this.generateContent(userPrompt, GENERATION_CONFIG_DESCRIPTION);
         };
-        this.generateThumbnail = async (userId, script, title, videoProjectId) => {
+        this.runThumbnail = async (userId, script, title, videoProjectId) => {
             const inputs = await this.resolveGenerationInputs(userId, videoProjectId, script);
             const format = resolveVideoFormat(inputs.channel?.format);
             const userPrompt = fillTemplate(GENERATE_THUMBNAIL_PROMPT, {
@@ -77,9 +80,9 @@ class PackagingService {
                 "{scriptSection}": buildScriptSection(inputs.script),
                 "{hookSection}": buildHookSection(inputs.hook),
             });
-            return this.generateContent(userPrompt);
+            return this.generateContent(userPrompt, GENERATION_CONFIG_THUMBNAIL);
         };
-        this.generateShorts = async (userId, script, duration, videoProjectId) => {
+        this.runShorts = async (userId, script, duration, videoProjectId) => {
             // Script is pipeline-native but resolved server-side: an explicit body
             // script wins, else it's pulled from the project (best-available context).
             const inputs = await this.resolveGenerationInputs(userId, videoProjectId, script);
@@ -92,6 +95,68 @@ class PackagingService {
                 "{duration}": duration.toString(),
             });
             return this.generateContent(userPrompt, GENERATION_CONFIG_SHORTS);
+        };
+        // Public generation PERSISTS straight to the packaging doc (creating it on the
+        // first generation for a project) — the client never round-trips generated
+        // content back through /save. Each returns the persisted content plus the
+        // packagingId. Without a videoProjectId it's a stateless preview (no persist).
+        this.generateTitle = async (userId, script, videoProjectId) => {
+            const raw = await this.runTitle(userId, script, videoProjectId);
+            if (!videoProjectId)
+                return raw;
+            const { packagingId, canonical } = await this.persistGeneratedItem(userId, videoProjectId, "title", raw);
+            return { titles: canonical, packagingId };
+        };
+        this.generateDescription = async (userId, script, title, videoProjectId) => {
+            const raw = await this.runDescription(userId, script, title, videoProjectId);
+            if (!videoProjectId)
+                return raw;
+            const { packagingId, canonical } = await this.persistGeneratedItem(userId, videoProjectId, "description", raw);
+            return { description: canonical, packagingId };
+        };
+        this.generateThumbnail = async (userId, script, title, videoProjectId) => {
+            const raw = await this.runThumbnail(userId, script, title, videoProjectId);
+            if (!videoProjectId)
+                return raw;
+            const { packagingId, canonical } = await this.persistGeneratedItem(userId, videoProjectId, "thumbnail", raw);
+            return { descriptions: canonical, packagingId };
+        };
+        this.generateShorts = async (userId, script, duration, videoProjectId) => {
+            const raw = await this.runShorts(userId, script, duration, videoProjectId);
+            if (!videoProjectId)
+                return raw;
+            const { packagingId, canonical } = await this.persistGeneratedItem(userId, videoProjectId, "shorts", raw);
+            return { ...canonical, packagingId };
+        };
+        // Persist one freshly generated item into the project's packaging doc, mark it
+        // completed, and advance the pipeline step (in_progress now, completed once all
+        // four exist). The create-or-update + "all done?" check is a single atomic repo
+        // transaction so two generations racing (round 1 title+shorts, round 2
+        // desc+thumb) can't split into two docs or both skip completion. Content write
+        // is critical; pipeline transitions are best-effort (logged), matching savePackaging.
+        this.persistGeneratedItem = async (userId, videoProjectId, item, rawContent) => {
+            // Ownership check (throws if the project isn't the caller's).
+            await this.videoProjectService.getById(videoProjectId, userId);
+            // Storage field == item name, except title lives under "titles". Normalize
+            // BEFORE the write so malformed content throws here (no orphaned doc).
+            const field = item === "title" ? "titles" : item;
+            const canonical = this.normalizeField(field, rawContent);
+            const { packagingId, created, allDone } = await this.repo.upsertGeneratedItem(videoProjectId, userId, field, item, canonical);
+            // Pipeline sync is best-effort: the content is already saved, so a transition
+            // hiccup must not fail generation.
+            try {
+                if (created) {
+                    await this.videoProjectService.linkResource(videoProjectId, "packaging", packagingId, userId);
+                }
+                await this.videoProjectService.startStep(videoProjectId, "packaging", userId);
+                if (allDone) {
+                    await this.videoProjectService.completeStep(videoProjectId, "packaging", userId);
+                }
+            }
+            catch (pipelineError) {
+                console.error(JSON.stringify({ event: "pipeline_transition_failed", step: "packaging", projectId: videoProjectId, packagingId, item, userId, message: pipelineError?.message }));
+            }
+            return { packagingId, canonical };
         };
         this.normalizeField = (field, raw) => {
             const wrapper = (raw ?? {});
@@ -302,22 +367,25 @@ class PackagingService {
             let result;
             let fieldKey;
             try {
+                // Pure generation (run*, not the public persisting generate*): regenerate
+                // does its own targeted update + stale handling below, so it must not
+                // double-persist through the public wrappers.
                 if (item === "title") {
-                    result = await this.generateTitle(userId, resolved.script, videoProjectId);
+                    result = await this.runTitle(userId, resolved.script, videoProjectId);
                     fieldKey = "titles";
                 }
                 else if (item === "description") {
-                    result = await this.generateDescription(userId, resolved.script || undefined, title, videoProjectId);
+                    result = await this.runDescription(userId, resolved.script || undefined, title, videoProjectId);
                     fieldKey = "description";
                 }
                 else if (item === "thumbnail") {
-                    result = await this.generateThumbnail(userId, resolved.script || undefined, title, videoProjectId);
+                    result = await this.runThumbnail(userId, resolved.script || undefined, title, videoProjectId);
                     fieldKey = "thumbnail";
                 }
                 else {
                     // Same default the generate-shorts path uses client-side; regenerate
                     // must not 400 when the client omits it (it always did).
-                    result = await this.generateShorts(userId, resolved.script, duration ?? 60, videoProjectId);
+                    result = await this.runShorts(userId, resolved.script, duration ?? 60, videoProjectId);
                     fieldKey = "shorts";
                 }
             }
