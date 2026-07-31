@@ -12,6 +12,11 @@ firebase.initializeApp({
 });
 
 const db = firebase.firestore();
+// Drop undefined values instead of throwing on write. Optional fields are
+// pervasive here (onboarding/context enrichment, event metadata that carries
+// one of several keys), and a partial update should simply skip absent fields
+// rather than 500. Must be set before the client is first used.
+db.settings({ ignoreUndefinedProperties: true });
 
 const auth = firebase.auth();
 

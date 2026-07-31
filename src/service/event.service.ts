@@ -15,6 +15,8 @@ class EventService {
     metadata?: Record<string, unknown>
   ): void {
     if (!userId) return;
+    // Undefined metadata keys (e.g. PROJECT_CREATED carries either ideaId or
+    // title) are dropped globally by Firestore's ignoreUndefinedProperties.
     this.repo
       .add({ type, createdBy: userId, metadata })
       .catch((err) => console.error("event capture failed", type, err));
