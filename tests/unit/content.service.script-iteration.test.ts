@@ -22,6 +22,9 @@ jest.mock("../../src/config/firebase", () => ({
 }));
 
 jest.mock("../../src/utlils/ai", () => ({
+  // collectJson stays REAL: it is the empty/malformed-JSON guard, and the fake
+  // streams below are exactly what should be driving it.
+  collectJson: jest.requireActual("../../src/utlils/ai").collectJson,
   generateContent: jest.fn(),
   generateStreamingContent: jest.fn(),
 }));

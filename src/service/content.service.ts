@@ -12,7 +12,7 @@ import ContentRepository from "../repository/content.repository.js";
 import UserRepository from "../repository/user.repository.js";
 import VideoProjectService, { STEP_LOCK_MS } from "./video-project.service.js";
 import ResearchContextService from "./research-context.service.js";
-import { generateContent, generateStreamingContent } from "../utlils/ai.js";
+import { collectJson, generateContent, generateStreamingContent } from "../utlils/ai.js";
 import { SCRIPT_FORMAT_STYLE, fillTemplate, resolveVideoFormat } from "../utlils/prompt-blocks.js";
 import {
   formatCreatorsData,
@@ -27,7 +27,7 @@ import {
 import { IGetIdeaByUserIdArgs } from "../types/repository/content.js";
 import { IGeneratedIdea, IIdeaContextOverride } from "../types/routes/content.js";
 import { firebase } from "../config/firebase.js";
-import { BadRequest, Conflict, Forbidden, NotFound } from "../utlils/errors.js";
+import { BadRequest, Conflict, Forbidden, NotFound, ServiceUnavailable } from "../utlils/errors.js";
 
 const openSseStream = (res: Response): void => {
   res.setHeader("Content-Type", "text/event-stream");
@@ -165,20 +165,16 @@ class ContentService {
       text,
     );
 
-    let accumulatedRes = "";
-    for await (const chunk of result.stream) {
-      const part = chunk.text();
-      if (part) {
-        accumulatedRes += part;
-      }
-    }
-
-    const parsedRes = JSON.parse(accumulatedRes) as IGeneratedIdea[];
+    const parsedRes = await collectJson<IGeneratedIdea[]>(result, "ideas");
     const ideas = (Array.isArray(parsedRes) ? parsedRes : []).filter(
       (idea) => idea?.workingTitle?.trim() && idea?.concept?.trim()
     );
     if (ideas.length === 0) {
-      throw new Error("Unable to generate ideas at the moment");
+      // Was a bare Error, so the handler masked it as "Something went wrong".
+      console.error(JSON.stringify({ event: "ai_shape_invalid", label: "ideas", userId }));
+      throw ServiceUnavailable(
+        "Couldn't generate ideas — nothing usable came back. Please try again."
+      );
     }
 
     if (countTowardStats) {
@@ -505,6 +501,14 @@ class ContentService {
     for await (const chunk of result.stream) {
       const part = chunk.text();
       if (part) accumulatedRes += part;
+    }
+
+    // Same guard the streaming path has: a safety-blocked or timed-out generation
+    // returns nothing, and writing that would replace the creator's script — which
+    // has no version history anywhere — with an empty string.
+    if (!accumulatedRes.trim()) {
+      console.error(JSON.stringify({ event: "script_regenerate_empty", scriptId, userId }));
+      throw ServiceUnavailable("Regeneration returned nothing — your existing script is unchanged. Try again.");
     }
 
     await this.repo.editScript(scriptId, { script: accumulatedRes });

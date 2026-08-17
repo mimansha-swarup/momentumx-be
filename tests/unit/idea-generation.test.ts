@@ -22,6 +22,9 @@ jest.mock("../../src/config/firebase", () => ({
 }));
 
 jest.mock("../../src/utlils/ai", () => ({
+  // collectJson stays REAL: it is the empty/malformed-JSON guard, and the fake
+  // streams below are exactly what should be driving it.
+  collectJson: jest.requireActual("../../src/utlils/ai").collectJson,
   generateContent: jest.fn(),
   generateStreamingContent: jest.fn(),
 }));
@@ -63,6 +66,16 @@ const IDEAS = [
   { concept: "Concept one about niche pain point", workingTitle: "Working title one", type: "long", evidence: "trending signal" },
   { concept: "Concept two, single point for Shorts", workingTitle: "Working title two", type: "short", evidence: "" },
 ];
+
+// Yields text verbatim — makeStream JSON.stringifies, so it can't express the
+// empty and malformed bodies the guards exist for.
+function makeRawStream(text: string) {
+  return {
+    stream: (async function* () {
+      yield { text: () => text };
+    })(),
+  } as never;
+}
 
 function makeStream(payload: unknown) {
   return {
@@ -123,9 +136,30 @@ describe("ContentService.generateIdeas", () => {
       makeStream([{ concept: "", workingTitle: "" }, { bogus: true }])
     );
 
-    await expect(service.generateIdeas("user-1")).rejects.toThrow(
-      "Unable to generate ideas at the moment"
+    // 503, not a bare Error: the error handler masks unrecognised throws as
+    // "Something went wrong", so the creator learned nothing about a failure
+    // that a retry usually clears.
+    const err = await service.generateIdeas("user-1").catch((e) => e);
+    expect(err.statusCode).toBe(503);
+    expect(err.message).toMatch(/Couldn't generate ideas/);
+  });
+
+  it("surfaces an empty generation as a retryable 503, not a JSON parse crash", async () => {
+    mockGenerate.mockImplementation(async () => makeRawStream(""));
+
+    const err = await service.generateIdeas("user-1").catch((e) => e);
+    expect(err.statusCode).toBe(503);
+    expect(err.message).toMatch(/nothing came back/);
+  });
+
+  it("surfaces malformed JSON as a retryable 503 rather than a SyntaxError", async () => {
+    mockGenerate.mockImplementation(async () =>
+      makeRawStream('{"concept": "unterminated')
     );
+
+    const err = await service.generateIdeas("user-1").catch((e) => e);
+    expect(err.statusCode).toBe(503);
+    expect(err.message).toMatch(/malformed/);
   });
 
   it("increments stats.ideas by batch size only when counting is on", async () => {
