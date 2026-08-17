@@ -27,3 +27,10 @@ export const Unauthorized = (
   message = "Unauthorized",
   detail?: unknown
 ): HttpError => new HttpError(message, 401, detail);
+
+// Upstream (Gemini / YouTube) produced nothing usable. Not the caller's fault and
+// not an internal defect — the creator should be told plainly and offered a retry.
+export const ServiceUnavailable = (
+  message: string,
+  detail?: unknown
+): HttpError => new HttpError(message, 503, detail);

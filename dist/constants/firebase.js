@@ -1,5 +1,8 @@
 import { SchemaType } from "@google/generative-ai";
 // Idea generation (step 1): concepts, not headlines. Schema-enforced.
+// Exactly 10 — IDEA_SYSTEM_PROMPT mandates 10 (5 long, 5 short) and the batch
+// UI is built around a full slate. `evidence` stays optional on purpose:
+// research signals may be unavailable and the prompt forbids fabricating them.
 export const GENERATION_CONFIG_IDEAS = {
     responseMimeType: "application/json",
     responseSchema: {
@@ -14,22 +17,12 @@ export const GENERATION_CONFIG_IDEAS = {
             },
             required: ["concept", "workingTitle", "type"],
         },
-    },
-};
-export const GENERATION_CONFIG_TITLES = {
-    responseMimeType: "application/json",
-    responseSchema: {
-        type: SchemaType.ARRAY,
-        items: {
-            type: SchemaType.STRING,
-        },
+        minItems: 10,
+        maxItems: 10,
     },
 };
 export const GENERATION_CONFIG_SCRIPTS = {
     responseMimeType: "text/plain",
-};
-export const GENERATION_CONFIG_PACKAGING = {
-    responseMimeType: "application/json",
 };
 // Onboarding prefill (Phase 3.2): infer niche/audience/brand from channel signals. Schema-enforced.
 export const GENERATION_CONFIG_PREFILL = {
@@ -44,9 +37,12 @@ export const GENERATION_CONFIG_PREFILL = {
         required: ["niche", "targetAudience", "brandName"],
     },
 };
-// Shorts generation (packaging): longest JSON packaging output, most exposed
-// to truncation/malformed JSON under GENERATION_CONFIG_PACKAGING's no-schema
-// mode — schema-enforced to match the canonical { segments, totalDuration } shape.
+// Shorts generation (packaging): longest JSON packaging output, so the most
+// exposed to truncation/malformed JSON — schema-enforced to match the canonical
+// { segments, totalDuration } shape. Segment COUNT is duration-dependent
+// (GENERATE_SHORTS_PROMPT: ~2 for 15s, ~3 for 30s, ~5 for 60s), so only a lower
+// bound: an empty segments array is rejected downstream anyway
+// (packaging.service.ts isEmptyField) — better to fail generation than persist it.
 export const GENERATION_CONFIG_SHORTS = {
     responseMimeType: "application/json",
     responseSchema: {
@@ -68,6 +64,7 @@ export const GENERATION_CONFIG_SHORTS = {
                     },
                     required: ["startTime", "endTime", "content", "type"],
                 },
+                minItems: 1,
             },
             totalDuration: { type: SchemaType.STRING },
         },
@@ -75,7 +72,7 @@ export const GENERATION_CONFIG_SHORTS = {
     },
 };
 // Description generation (packaging): schema-enforced to match the canonical
-// { description } shape instead of relying on GENERATION_CONFIG_PACKAGING's no-schema mode.
+// { description } shape — never a bare string or a differently-keyed object.
 export const GENERATION_CONFIG_DESCRIPTION = {
     responseMimeType: "application/json",
     responseSchema: {
@@ -87,7 +84,8 @@ export const GENERATION_CONFIG_DESCRIPTION = {
     },
 };
 // Thumbnail brief generation (packaging): schema-enforced to match the canonical
-// { descriptions } shape instead of relying on GENERATION_CONFIG_PACKAGING's no-schema mode.
+// { descriptions } shape, exactly 3 — GENERATE_THUMBNAIL_PROMPT asks for THREE
+// distinct visual approaches and the UI renders three brief slots.
 export const GENERATION_CONFIG_THUMBNAIL = {
     responseMimeType: "application/json",
     responseSchema: {
@@ -96,12 +94,37 @@ export const GENERATION_CONFIG_THUMBNAIL = {
             descriptions: {
                 type: SchemaType.ARRAY,
                 items: { type: SchemaType.STRING },
+                minItems: 3,
+                maxItems: 3,
             },
         },
         required: ["descriptions"],
     },
 };
-// Post-script Title step: 3 scored variations. Schema-enforced.
+// Hooks generation: hook text routinely contains quotation marks (the system
+// prompt's own style examples are quoted sentences), which under a schema-less
+// JSON config came back unescaped and broke JSON.parse in production.
+// Schema-enforced to the canonical { hooks } shape, exactly 5 — one per style
+// in HOOKS_SYSTEM_PROMPT.
+export const GENERATION_CONFIG_HOOKS = {
+    responseMimeType: "application/json",
+    responseSchema: {
+        type: SchemaType.OBJECT,
+        properties: {
+            hooks: {
+                type: SchemaType.ARRAY,
+                items: { type: SchemaType.STRING },
+                minItems: 5,
+                maxItems: 5,
+            },
+        },
+        required: ["hooks"],
+    },
+};
+// Post-script Title step: exactly 3 scored variations — GENERATE_TITLE_PROMPT
+// asks for THREE and TitlesCard renders three slots. `characterCount` is
+// deliberately NOT required: nothing reads it (the UI computes it from
+// title.length), so requiring it would only add a way for generation to fail.
 export const GENERATION_CONFIG_TITLE_VARIATIONS = {
     responseMimeType: "application/json",
     responseSchema: {
@@ -119,6 +142,8 @@ export const GENERATION_CONFIG_TITLE_VARIATIONS = {
                     },
                     required: ["title", "score", "reason"],
                 },
+                minItems: 3,
+                maxItems: 3,
             },
         },
         required: ["titles"],

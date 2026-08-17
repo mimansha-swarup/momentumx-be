@@ -62,7 +62,11 @@ export const errorHandler: ErrorRequestHandler = (
       })
     );
 
-    const message = "Something went wrong";
+    // Disclosure policy: mask *unexpected* throws (raw driver/runtime messages,
+    // stack-bearing errors). A thrown HttpError is author-written for the creator
+    // to read — masking it turns "regeneration returned nothing, your script is
+    // unchanged" into "Something went wrong", which is strictly less safe to act on.
+    const message = err instanceof HttpError ? rawMessage : "Something went wrong";
     if (typeof res.sendError === "function") {
       res.sendError({ message, statusCode });
     } else {
