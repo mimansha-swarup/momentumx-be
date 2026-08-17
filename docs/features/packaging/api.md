@@ -22,7 +22,6 @@ Base path: `/v1/packaging`
 | `POST` | `/v1/packaging/generate-title` | Generate 3 title variations | ✅ Built |
 | `POST` | `/v1/packaging/generate-description` | Generate SEO description | ✅ Built |
 | `POST` | `/v1/packaging/generate-thumbnail` | Generate 3 thumbnail briefs | ✅ Built |
-| `POST` | `/v1/packaging/generate-hooks` | Generate 5 hooks (stateless, legacy) | ✅ Built |
 | `POST` | `/v1/packaging/generate-shorts` | Generate Shorts script | ✅ Built |
 | `POST` | `/v1/packaging/save` | Save packaging to Firestore | ✅ Built |
 | `GET` | `/v1/packaging/list` | List user's packaging | ✅ Built |
@@ -118,30 +117,6 @@ Generate 3 thumbnail design concepts. Each is a design brief (not a rendered ima
 
 ---
 
-## POST `/v1/packaging/generate-hooks`
-
-Generate 5 hook variations. **Deprecated** — use `POST /v1/hooks/generate` instead. This endpoint is stateless and does not save to Firestore or link to a video project.
-
-### Request Body
-| Field | Type | Required |
-|---|---|---|
-| `script` | `string` | Yes |
-
-### Response — `200`
-```json
-{
-  "success": true,
-  "data": {
-    "hooks": ["hook1", "hook2", "hook3", "hook4", "hook5"]
-  }
-}
-```
-
-### Error Cases
-- `500` — Gemini generation failed or JSON parse error
-
----
-
 ## POST `/v1/packaging/generate-shorts`
 
 Generate a YouTube Shorts script. Structured as hook / body / CTA, written to fit the specified duration.
@@ -178,9 +153,13 @@ Generate a YouTube Shorts script. Structured as hook / body / CTA, written to fi
 
 Save a packaging document to Firestore. If `videoProjectId` is provided and a packaging document already exists for that project, the existing document is **updated** (upsert). Otherwise a new document is created with Firestore auto-ID.
 
-Server automatically sets `createdBy`, `createdAt`, `itemStatuses` (derived from which content fields are present), and stale tracking fields (`isStale: false`, `staleReason: null`, `staleSince: null`).
+Server automatically sets `createdBy`, `createdAt`, `itemStatuses` (derived from which content fields are present), and stale tracking fields (`isStale: false`, `staleReason: null`, `staleSince: null`) — **on create only**. On update the server writes the submitted edits and nothing else: recomputing `itemStatuses` would rewrite a `"stale"` item back to `"completed"`, and auto-save fires on every committed edit.
 
-If `videoProjectId` is provided, the server verifies ownership of the video project before saving, then calls `linkResource` (fire-and-forget) to record the `packagingId` on the project.
+**Empty content fields are ignored.** A `description: ""`, `thumbnail: []`, or `shorts` with no segments is dropped rather than written — an unhydrated client posting its blank initial state must not wipe generated content. There is no "clear this field" operation.
+
+If `videoProjectId` is provided, the server verifies ownership of the video project before saving, then calls `linkResource` to record the `packagingId` on the project (awaited, best-effort — failures are logged as `pipeline_transition_failed`, never returned).
+
+**Pipeline transitions are conditional.** `startStep`/`completeStep` for the packaging step run only when description, thumbnail *and* shorts are all present, and never when the stored document is stale. Saving an edit is not step completion — the Title screen auto-saves through this same endpoint.
 
 ### Request Body
 
@@ -195,7 +174,7 @@ If `videoProjectId` is provided, the server verifies ownership of the video proj
 
 > **Canonical stored shape.** The four content fields are normalized server-side to one canonical shape before persisting: `titles: [{title, characterCount}]`, `description: string`, `thumbnail: string[]`, `shorts: {segments, totalDuration}`. You may send either the raw generate-endpoint response (wrapper) or the already-unwrapped value under each field key — the server coerces both. Malformed shapes are rejected with `400`. The same normalization applies on `regenerate/:item`, so saved and regenerated content always have identical shapes.
 
-### Server-Set Fields
+### Server-Set Fields (create only — see above)
 
 | Field | Value |
 |---|---|
@@ -316,10 +295,19 @@ Regenerates a single packaging item and overwrites it on the existing document. 
   "data": {
     "id": "string",
     "item": "title",
-    "data": {}
+    "data": [{ "title": "string", "characterCount": 0 }]
   }
 }
 ```
+
+The inner `data` is the **bare** value for the item, not an object wrapping it:
+
+| `item` | inner `data` |
+|---|---|
+| `title` | `Array<{title, characterCount}>` |
+| `description` | `string` |
+| `thumbnail` | `string[]` |
+| `shorts` | `{segments, totalDuration}` |
 
 > **`data` is the canonical persisted shape** — identical to what a subsequent `GET /packaging/:id` returns for that field (e.g. `titles: [{title, characterCount}]`, `description: string`, `thumbnail: string[]`, `shorts: {segments, totalDuration}`). It is **not** the raw generator wrapper, so the FE can treat a regenerate response the same as reading the stored item.
 

@@ -158,7 +158,7 @@ MomentumX is a solo tool today. Teams and agency use cases (multiple creators, s
 The visual representation of the project pipeline — whether it's a Kanban board, a dashboard view, or another model — is yet to be defined and will be discussed and finalized separately.
 
 **Video Project Lifecycle** *(defined — see pipeline-spec.md)*
-The pipeline state machine is fully defined and implemented. Each project tracks `currentStep` (research → script → hooks → packaging) and `overallStatus` (in_progress / completed / stale). Extended lifecycle stages beyond the pipeline (e.g. Scheduled, Published) are planned for a future phase.
+The pipeline state machine is fully defined and implemented. Each project tracks `currentStep` (research → script → hooks → title → packaging) and `overallStatus` (in_progress / completed / stale). Extended lifecycle stages beyond the pipeline (e.g. Scheduled, Published) are planned for a future phase.
 
 ---
 

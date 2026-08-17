@@ -117,7 +117,12 @@ List all Video Projects for the authenticated user. Powers the dashboard.
 }
 ```
 
-`thumbnailHint` is `null` until packaging is completed.
+`thumbnailHint` mirrors the brief the creator **selected** —
+`packaging.thumbnail[selectedThumbnailIndex]`, falling back to the first. It is written when
+packaging is linked to the project (on the first generated item, when `thumbnail` is still empty
+→ `null`; and on `POST /packaging/save`) and refreshed on thumbnail regeneration. So it stays
+`null` until a save or a thumbnail regenerate happens after briefs exist — generating thumbnails
+alone does not set it.
 Full `pipeline` object is NOT returned here — use GET single project for that.
 
 ### Error Cases
@@ -243,9 +248,22 @@ Idempotent — if step is already `in_progress` or `completed`, returns 200 with
 
 ## PATCH `/v1/video-projects/:projectId/step/:stepName/complete`
 
-Mark a step as `completed`. For the Script step the backend fires this automatically after the generated script is saved; Hooks/Packaging complete via their own mechanics. The endpoint stays available for explicit/manual completion. Stale cascade does NOT apply here — only regeneration triggers staleness.
+Mark a step as `completed`. For the Script step the backend fires this automatically after the generated script is saved; Hooks/Title/Packaging complete via their own mechanics. The endpoint stays available for explicit/manual completion — notably the "Keep as-is" action on a stale step. Stale cascade does NOT apply here — only regeneration triggers staleness.
 
-If all four steps are `completed`, sets `overallStatus = "completed"`.
+If all five steps are `completed`, sets `overallStatus = "completed"`.
+
+**Response includes the updated `pipeline` and `overallStatus`**, not just `{id, currentStep}`.
+The client patches its cached project from this body, so a partial response left it reading
+`pipeline` on `undefined` — which threw in the reducer and silently aborted the whole update.
+
+`overallStatus` is recomputed on every completion (not only when all steps are done), so
+completing the last stale step actually clears the dashboard's "Needs Update" badge. The
+completed step's `staleReason` is cleared at the same time.
+
+**Completing a stale `packaging` step also clears the packaging document's stale markers**
+(`isStale`, `staleReason`, `staleSince`, and any per-item `"stale"` → `"completed"`). Without it
+the per-card "Outdated" indicators would outlive the banner the creator just dismissed.
+Best-effort — logged as `packaging_stale_clear_failed`, never fails the request.
 
 Idempotent — if step already `completed`, returns 200.
 

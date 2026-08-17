@@ -39,7 +39,7 @@ Onboarding → Research → Script → Hooks → Packaging
 ### Video Projects
 When a creator commits an idea from Research — or brings their own idea (`POST /v1/video-projects` accepts either `{ ideaId }` or `{ title }`) — a **video project** is created. All subsequent work — script, hooks, packaging — is tied to that project. Script generation is project-scoped (`GET /v1/scripts/stream/:projectId`), and each project owns its own script document, so multiple projects can share an idea. This gives creators a structured workspace per video rather than a disconnected collection of generated assets.
 
-The Video Project entity is now built (Sprint 2). It holds the pipeline state machine (research → script → hooks → packaging), tracks `currentStep` and `overallStatus`, and links resources (`scriptId`, `hooksId`, `packagingId`) to the project. Integration with Research, Script, Hooks, and Packaging endpoints is the next step. See [Video Project Spec](../features/video-project/spec.md) for full schema and decisions.
+The Video Project entity is now built (Sprint 2). It holds the pipeline state machine (research → script → hooks → title → packaging), tracks `currentStep` and `overallStatus`, and links resources (`scriptId`, `hooksId`, `packagingId`) to the project. Integration with Research, Script, Hooks, and Packaging endpoints is the next step. See [Video Project Spec](../features/video-project/spec.md) for full schema and decisions.
 
 ### Step 1: Onboarding
 Creator sets up their brand context once. MomentumX ingests:

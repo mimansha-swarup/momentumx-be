@@ -60,6 +60,18 @@ but `refresh-context` is the most casual/repeatable, so most likely to bite.
 **Candidate fix:** preserve prior non-empty values when a re-pull comes back empty
 (merge in `refreshContext`, or make `formatUserData` skip empty overwrites).
 
+## 6. Packaging state integrity — **RESOLVED 2026-08-09**
+
+The thumbnail-selection item that sat here (finding #21) was resolved along with a
+wider state-integrity pass — the selection now drives `thumbnailHint`, and it resets
+when thumbnails are regenerated. See findings #23–#34 in
+`momentumx-fe/docs/PACKAGING_UX_AUDIT.md` for the full set, which also covered
+`/packaging/save` rewriting `itemStatuses` and completing pipeline steps it hadn't
+earned.
+
+Still worth revisiting alongside item 1 (thumbnail image-gen): that spike may replace
+briefs with images and change what "selected" means.
+
 ## 4. Data-model debt — **LOW (consolidate at P6B)**
 
 - `userName` field actually holds a **YouTube channel URL** (misleading name).

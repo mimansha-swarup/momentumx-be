@@ -24,15 +24,17 @@ Both initialized in `src/config/ai.ts`. Use the factory functions — never init
 
 ```
 GENERATION_CONFIG_IDEAS             → {concept, workingTitle, type, evidence}[] (responseSchema-enforced; step-1 idea generation)
-GENERATION_CONFIG_TITLES            → string[] (responseSchema-enforced)
 GENERATION_CONFIG_SCRIPTS           → plain text (text/plain, streamed via SSE)
-GENERATION_CONFIG_PACKAGING         → JSON object (MIME type only, no schema)
+GENERATION_CONFIG_HOOKS             → {hooks: string[5]} (responseSchema-enforced)
+GENERATION_CONFIG_PREFILL           → {niche, targetAudience, brandName} (responseSchema-enforced)
 GENERATION_CONFIG_TITLE_VARIATIONS  → {titles: [{title, characterCount?, score, reason}]} (responseSchema-enforced; post-script Title step)
 ```
 
 **Critical:** Never use a JSON config with a plain text prompt — Gemini will return malformed output that breaks `JSON.parse`.
 
-**New JSON configs must define a `responseSchema`** (see `GENERATION_CONFIG_IDEAS` for the pattern) — schema-enforced structured output is the strongest guarantee against malformed JSON. `GENERATION_CONFIG_PACKAGING` predates this and relies on MIME type alone; don't copy that for new configs.
+**Every JSON config defines a `responseSchema`** (see `GENERATION_CONFIG_IDEAS` for the pattern) — schema-enforced structured output is the strongest guarantee against malformed JSON, and there are no schema-less JSON configs left. Bound array lengths (`minItems`/`maxItems`) wherever the prompt fixes the count, so a short generation fails at the model instead of persisting a partial slate — but never invent a bound the prompt doesn't state; an over-tight schema turns graceful degradation into a hard failure.
+
+**Drain and parse every JSON generation with `collectJson`** (`src/utlils/ai.ts`), never an inline `JSON.parse`. It handles the three real failure modes — blocked stream, empty body, unparseable body — as a 503 the client can retry, with a structured log naming which one it was. A raw `JSON.parse` throws a `SyntaxError` that the error handler masks as "Something went wrong".
 
 Configs are in `src/constants/firebase.ts`. Only AI Engineer modifies this file.
 

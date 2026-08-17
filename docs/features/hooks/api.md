@@ -9,7 +9,9 @@ tags: ["api", "hooks"]
 
 # Hooks API Reference
 
-Hooks is a standalone pipeline step. The dedicated `/v1/hooks` endpoints are live. The legacy `POST /v1/packaging/generate-hooks` endpoint still exists for stateless generation but is deprecated — use `/v1/hooks/generate` instead.
+Hooks is a standalone pipeline step with its own `/v1/hooks` endpoints. The old stateless
+`POST /v1/packaging/generate-hooks` route has been **removed** — `/v1/hooks/generate` is the only
+hook-generation path.
 
 ---
 
@@ -18,10 +20,10 @@ Hooks is a standalone pipeline step. The dedicated `/v1/hooks` endpoints are liv
 | Method | URL | Status | Description |
 |---|---|---|---|
 | `POST` | `/v1/hooks/generate` | ✅ Built | Generate a 5-hook batch tied to a video project |
+| `GET` | `/v1/hooks/:hooksId` | ✅ Built | Read a saved hooks batch |
 | `POST` | `/v1/hooks/:hooksId/select` | ✅ Built | Select a hook index, stores it on the video project |
 | `POST` | `/v1/hooks/:hooksId/regenerate` | ✅ Built | Regenerate hooks for the same video project |
 | `GET` | `/v1/hooks/:hooksId/export` | ✅ Built | Export hooks as plain text |
-| `POST` | `/v1/packaging/generate-hooks` | ✅ Built (deprecated) | Stateless hook generation — legacy path |
 
 ---
 
@@ -70,6 +72,39 @@ Generates 5 hook variations from a script. Saves the batch to the `hooks` Firest
 | 403 | Video project not owned by user |
 | 404 | Video project not found |
 | 500 | Gemini generation failed or JSON parse error |
+
+---
+
+## GET `/v1/hooks/:hooksId` ✅ Built
+
+Returns a saved hooks batch. Ownership enforced (`createdBy` must match).
+
+Without this the batch existed only in the client's memory: after a refresh a creator could
+see "Hook 3 was selected" but never the hook itself, and had no way to change the pick.
+
+### Response — `200`
+
+```json
+{
+  "success": true,
+  "message": "Hooks retrieved successfully",
+  "data": {
+    "id": "hooks-batch-id",
+    "videoProjectId": "string",
+    "createdBy": "uid_abc123",
+    "hooks": ["hook one", "hook two", "hook three", "hook four", "hook five"],
+    "hookFeedback": {},
+    "createdAt": "<timestamp>"
+  }
+}
+```
+
+### Error Cases
+
+| Status | Condition |
+|---|---|
+| 403 | Hooks batch not owned by user |
+| 404 | Hooks batch not found |
 
 ---
 
@@ -204,40 +239,6 @@ Returns all hooks in the batch as a plain-text formatted string suitable for cop
 |---|---|
 | 403 | Hooks batch not owned by user |
 | 404 | Hooks batch not found |
-
----
-
-## POST `/v1/packaging/generate-hooks` ✅ Built (deprecated)
-
-Generates 5 hook variations from a script. Returns JSON — not SSE. Does not save to Firestore or link to a video project.
-
-**This endpoint is deprecated.** Use `POST /v1/hooks/generate` instead.
-
-### Auth
-`Authorization: Bearer <token>` — required.
-
-### Request Body
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `script` | `string` | Yes | Full video script text |
-
-### Response — `200`
-
-```json
-{
-  "success": true,
-  "data": {
-    "hooks": [
-      "hook variation 1",
-      "hook variation 2",
-      "hook variation 3",
-      "hook variation 4",
-      "hook variation 5"
-    ]
-  }
-}
-```
 
 ---
 

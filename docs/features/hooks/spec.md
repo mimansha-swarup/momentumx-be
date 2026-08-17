@@ -13,7 +13,7 @@ tags: ["feature", "hooks", "spec"]
 
 Hooks is Step 3 of the MomentumX content pipeline. It generates 5 hook variations from an approved script and title. The creator selects one hook, which completes the Hooks step and feeds into Packaging as context.
 
-Hooks has its own dedicated endpoints, Firestore collection, and state tracking. The standalone `POST /v1/hooks/generate` and `POST /v1/hooks/:hooksId/select` endpoints are live. The legacy `POST /v1/packaging/generate-hooks` endpoint still exists for stateless generation but is no longer the canonical path.
+Hooks has its own dedicated endpoints, Firestore collection, and state tracking. The standalone `POST /v1/hooks/generate` and `POST /v1/hooks/:hooksId/select` endpoints are live. The legacy `POST /v1/packaging/generate-hooks` endpoint has been **removed**.
 
 ---
 
@@ -45,7 +45,7 @@ When Hooks completes:
 |---|---|
 | Model | `gemini-3.5-flash` |
 | Prompt | `GENERATE_HOOKS_PROMPT` in `src/constants/prompt.ts` |
-| Generation config | `GENERATION_CONFIG_PACKAGING` (JSON object output) |
+| Generation config | `GENERATION_CONFIG_HOOKS` (responseSchema-enforced `{ hooks: string[] }`, exactly 5) |
 | Output | JSON object with `hooks` array — 5 strings |
 | Delivery | Standard JSON response (not SSE) |
 

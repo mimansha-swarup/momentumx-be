@@ -51,7 +51,10 @@ The list endpoint returns 7 fields per project: enough to identify and navigate,
 id, title, currentStep, overallStatus, updatedAt, createdAt, thumbnailHint
 ```
 
-`thumbnailHint` is `null` until packaging is reached. Full pipeline detail is only on the single-project GET.
+`thumbnailHint` is the thumbnail brief the creator selected
+(`packaging.thumbnail[selectedThumbnailIndex]`, falling back to the first); it stays `null` until a
+save or thumbnail regenerate lands after briefs exist. Full pipeline detail is only on the
+single-project GET.
 
 ### D. Step Navigation — Freely Jumpable, Status Not Regressed on Review
 

@@ -221,9 +221,16 @@ Snapshot of the API surface. When exact behavior matters, verify against `src/ro
   PATCH /:projectId            — update project
   DELETE /:projectId           — soft delete project
   PATCH /:projectId/step/:stepName/complete — mark a pipeline step complete
-                                              (no /start route: generation endpoints
+                                              (stepName ∈ script|hooks|title|packaging;
+                                               no /start route: generation endpoints
                                                set in_progress server-side)
   PATCH /:projectId/link/:resourceType      — link a resource (script/hooks/packaging) to the project
 ```
 
-Note: `/v1/ideas` generates **ideas** (video concepts with `concept`/`workingTitle`/`ideaType`/`evidence`), grounded in live trending + keyword research. (The legacy `/v1/topics` path + all "topic" naming were renamed to "idea" in P6A — step 1 is **Idea**, the post-script step 4 is **Title**; "topic" is retired.) The former `/v1/title-intelligence` routes were retired in phase 2 — `title-intelligence.service.ts` remains as the engine reserved for the post-script Title step; the research half lives in `research-context.service.ts`.
+Pipeline steps (state machine): **research → script → hooks → title → packaging**.
+The Title step is post-script: `POST /packaging/generate-title` starts it (in_progress);
+`POST /packaging/:id/select-title` completes it (and renames the project). The Packaging
+step then covers description + thumbnail + shorts, and auto-completes once those three
+exist. Legacy projects created before the title step default `pipeline.title` on read.
+
+Note: `/v1/ideas` generates **ideas** (video concepts with `concept`/`workingTitle`/`ideaType`/`evidence`), grounded in live trending + keyword research. (The legacy `/v1/topics` path + all "topic" naming were renamed to "idea" in P6A — step 1 is **Idea**; **Title** is now its own post-script pipeline step, distinct from **Packaging** (description/thumbnail/shorts); "topic" is retired.) The former `/v1/title-intelligence` routes were retired in phase 2 — `title-intelligence.service.ts` remains as the engine reserved for the post-script Title step; the research half lives in `research-context.service.ts`.

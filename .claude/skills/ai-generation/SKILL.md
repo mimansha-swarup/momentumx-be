@@ -61,9 +61,8 @@ For the full SSE controller pattern (headers, flush, try/catch/finally, `[DONE]`
 Real configs — they use `responseSchema` structured output, not temperature tuning:
 
 ```typescript
-GENERATION_CONFIG_TITLES         // responseMimeType: 'application/json' + schema: ARRAY of STRING
 GENERATION_CONFIG_SCRIPTS        // responseMimeType: 'text/plain'
-GENERATION_CONFIG_PACKAGING      // responseMimeType: 'application/json' (no schema — legacy, don't copy)
+GENERATION_CONFIG_HOOKS          // responseMimeType: 'application/json' + schema: {hooks: 5 strings}
 GENERATION_CONFIG_SCORED_TITLES  // schema: ARRAY of {title, score, reason}
 GENERATION_CONFIG_SMART_TITLES   // schema: {analysis{topic,keywords,emotion,intent}, patterns[], titles[]}
 ```

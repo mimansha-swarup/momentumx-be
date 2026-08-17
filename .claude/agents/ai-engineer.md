@@ -37,9 +37,8 @@ Both initialized in `src/config/ai.ts` (`genAIModel()` factory, `embeddingModel`
 Configs (in `src/constants/firebase.ts`) must match the output format:
 
 ```
-GENERATION_CONFIG_TITLES         → string[] (responseSchema-enforced)
 GENERATION_CONFIG_SCRIPTS        → plain text (streamed via SSE)
-GENERATION_CONFIG_PACKAGING      → JSON object (MIME type only — legacy, don't copy for new configs)
+GENERATION_CONFIG_HOOKS          → {hooks: string[5]} (responseSchema-enforced)
 GENERATION_CONFIG_SCORED_TITLES  → {title, score, reason}[] (responseSchema-enforced)
 GENERATION_CONFIG_SMART_TITLES   → {analysis, patterns, titles[]} (responseSchema-enforced)
 ```

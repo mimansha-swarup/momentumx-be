@@ -86,17 +86,21 @@ Segment types: `hook`, `point`, `transition`, `cta`. Word count targets ~2.5 wor
 
 ---
 
-### Hooks Generation (Legacy — Stateless)
+### Hooks Generation — not part of packaging
 
-`POST /v1/packaging/generate-hooks` — generates 5 hook variations.
-
-This endpoint is still available for stateless generation but is no longer the canonical hooks path. The dedicated `POST /v1/hooks/generate` endpoint (Step 3) generates hooks tied to a video project and should be used in the integrated pipeline. See [Hooks Feature Spec](../hooks/spec.md).
+Hooks are their own pipeline step, collection, and endpoints (`POST /v1/hooks/generate`). The old
+stateless `POST /v1/packaging/generate-hooks` route has been **removed**. Packaging resolves the
+project's selected hook server-side for context; it never generates hooks. See
+[Hooks Feature Spec](../hooks/spec.md).
 
 ---
 
 ### Save, List, and Retrieve
 
-- `POST /v1/packaging/save` — saves a packaging document with Firestore auto-ID
+- `POST /v1/packaging/save` — persists **user edits only** (edited title/description text,
+  thumbnail selection). Generated content is already written by the `generate-*` endpoints, so
+  clients never round-trip it back through save. `script`/`hooks` are not accepted in the body —
+  the server resolves both from the project.
 - `GET /v1/packaging/list` — list all packaging for the user, ordered by `createdAt` desc
 - `GET /v1/packaging/:packagingId` — get single packaging document; ownership enforced
 
@@ -104,7 +108,15 @@ This endpoint is still available for stateless generation but is no longer the c
 
 ## Generation Config
 
-All generation endpoints use `GENERATION_CONFIG_PACKAGING` (`responseMimeType: "application/json"`). Every response is parsed with `JSON.parse`. If `JSON.parse` throws, the prompt or config is misconfigured — the error propagates and the controller returns 500.
+Each generation endpoint uses its own **responseSchema-enforced** config —
+`GENERATION_CONFIG_TITLE_VARIATIONS`, `_DESCRIPTION`, `_THUMBNAIL`, `_SHORTS`. The schema-less
+`GENERATION_CONFIG_PACKAGING` they once shared has been removed.
+
+Responses are drained and parsed by `collectJson` (`src/utlils/ai.ts`), which turns the three
+ways a generation can fail — stream blocked mid-flight, empty body, unparseable body — into a
+**503 with a retryable message**, plus a structured log (`ai_stream_failed` / `ai_empty_response`
+/ `ai_malformed_json`). It never repairs, cleans, or retries the output: malformed JSON means the
+prompt or config is wrong and must be fixed there.
 
 ---
 
@@ -117,8 +129,8 @@ Packaging documents are saved with the client-provided fields plus server-set fi
   ...clientProvidedFields,       // whatever the client sends to /save
   createdBy: string,             // userId from authMiddleware
   createdAt: Timestamp,          // serverTimestamp()
-  itemStatuses: {                // auto-derived from content presence on save
-    title: PackagingItemStatus,
+  itemStatuses: {                // per-item; set to "completed" by each generate-*
+    title: PackagingItemStatus,  // call, and derived from content presence on save
     description: PackagingItemStatus,
     thumbnail: PackagingItemStatus,
     shorts: PackagingItemStatus,
@@ -129,13 +141,53 @@ Packaging documents are saved with the client-provided fields plus server-set fi
 }
 ```
 
-Firestore auto-generates the document ID.
+### Document ID — two paths
+
+- **Generation path (normal):** `repo.upsertGeneratedItem` writes to a **deterministic** id —
+  `doc(videoProjectId)` — inside a transaction. Persist-on-generate fires item writes
+  concurrently, so a deterministic id makes concurrent first-generations converge on one
+  document instead of racing two auto-id creates.
+- **Save-first path (door / no prior generation):** `repo.save` creates a Firestore **auto-ID**
+  document.
+
+Always locate a document with `findByVideoProject` (a query on the `videoProjectId` field);
+never assume `id === videoProjectId` on read.
 
 ### `videoProjectId` Linkage & Upsert
 
 When `videoProjectId` is passed to `POST /save`, the service checks if a packaging document already exists for that project. If it does, the existing document is updated (upsert). If not, a new document is created. This prevents duplicate packaging documents per video project.
 
-After save, `linkResource` is called fire-and-forget on the video project. Direct `scriptId` or `ideaId` foreign keys still do not exist on packaging documents.
+Pipeline sync (`linkResource` → `startStep` → `completeStep`) is awaited inside a try/catch and
+is **best-effort**: the content is already persisted, so a transition failure is logged
+(`pipeline_transition_failed`) and never fails the request. Direct `scriptId` or `ideaId` foreign
+keys still do not exist on packaging documents.
+
+### What a save is allowed to change
+
+A save carries **user edits**, so it deliberately does not own document or pipeline state:
+
+- **`itemStatuses` is written on create only.** It is derived purely from "does this field have
+  content", so recomputing it on update would rewrite a `"stale"` item back to `"completed"`.
+  With auto-save firing on every committed edit and every thumbnail click, that silently
+  un-staled packages. Generation and regeneration own those statuses after creation.
+- **Empty content fields are dropped from the payload.** Clients post the whole snapshot; one
+  that hasn't hydrated yet posts `description: ""` / `thumbnail: []` / `shorts.segments: []`,
+  which would wipe generated content. No endpoint or UI offers "clear this field".
+- **`startStep`/`completeStep` run only when the packaging content is actually complete** —
+  description, thumbnail and shorts all present, the same rule persist-on-generate uses.
+  Saving is not an achievement: the Title screen auto-saves through this endpoint, and
+  completing on save marked packaging (and whole projects) done with nothing generated.
+- **A stale package stays stale through a save.** `completeStep` promotes `stale` straight to
+  `completed`, so the transitions are skipped entirely when the stored doc is stale. Clearing
+  staleness is explicit: regenerate the item, or `PATCH /:projectId/step/packaging/complete`
+  ("Keep as-is"), which also clears the document's stale markers via `packagingRepo.clearStale`.
+
+### Selection fields
+
+`selectedTitleIndex` is set by `POST /:packagingId/select-title`, which also renames the project.
+`selectedThumbnailIndex` drives the project's `thumbnailHint` (the brief shown on the dashboard
+card) and is reset to `0` when thumbnails are regenerated, since the new briefs replace the ones
+the old index pointed at.
 
 ---
 
