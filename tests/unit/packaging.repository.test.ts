@@ -13,7 +13,9 @@ const whereChain: Record<string, unknown> = {
   limit: () => whereChain,
   get: findGet,
 };
-const docFn = jest.fn((id: string) => ({ id }));
+const docGet = jest.fn();
+const docUpdate = jest.fn();
+const docFn = jest.fn((id: string) => ({ id, get: docGet, update: docUpdate }));
 const collectionFn = jest.fn(() => ({ ...whereChain, doc: docFn }));
 const runTransaction = jest.fn(async (fn: (txn: unknown) => unknown) =>
   fn({ get: txnGet, set: txnSet, update: txnUpdate })
@@ -45,7 +47,8 @@ describe("PackagingRepository.upsertGeneratedItem", () => {
     const written = txnSet.mock.calls[0][1];
     expect(written.titles).toEqual([{ title: "A" }]);
     expect(written.itemStatuses).toMatchObject({ title: "completed", shorts: "not_started" });
-    expect(res).toEqual({ packagingId: "proj-1", created: true, allDone: false });
+    expect(res).toMatchObject({ packagingId: "proj-1", created: true });
+    expect(res.statuses).toMatchObject({ title: "completed" });
   });
 
   it("updates the existing (legacy auto-id) doc in place, not a second doc", async () => {
@@ -63,7 +66,7 @@ describe("PackagingRepository.upsertGeneratedItem", () => {
     expect(res.created).toBe(false);
   });
 
-  it("reports allDone only when the fourth item completes (consistent snapshot)", async () => {
+  it("returns the merged status snapshot with the written item marked completed", async () => {
     findGet.mockResolvedValue({ empty: false, docs: [{ id: "pkg-1", data: () => ({}) }] });
     txnGet.mockResolvedValue({
       exists: true,
@@ -72,18 +75,58 @@ describe("PackagingRepository.upsertGeneratedItem", () => {
 
     const res = await repo.upsertGeneratedItem("proj-1", "user-1", "shorts", "shorts", { segments: [] });
 
-    expect(res.allDone).toBe(true);
+    // Consistent in-transaction snapshot: this write flips shorts; the service
+    // decides step completion (packaging = its 3 items) from this.
+    expect(res.statuses).toMatchObject({
+      description: "completed", thumbnail: "completed", shorts: "completed",
+    });
+  });
+});
+
+// The inverse of markStale, used by "Keep as-is": the creator accepted the content
+// as-is, so the document must stop reporting stale — otherwise every card keeps an
+// "Outdated" chip under a banner they already dismissed.
+describe("PackagingRepository.clearStale", () => {
+  let repo: PackagingRepository;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    repo = new PackagingRepository();
   });
 
-  it("reports allDone false while items remain", async () => {
-    findGet.mockResolvedValue({ empty: false, docs: [{ id: "pkg-1", data: () => ({}) }] });
-    txnGet.mockResolvedValue({
+  it("flips only the stale items to completed and clears the document flags", async () => {
+    docGet.mockResolvedValue({
       exists: true,
-      data: () => ({ itemStatuses: { title: "completed", description: "not_started", thumbnail: "not_started", shorts: "not_started" } }),
+      data: () => ({
+        itemStatuses: {
+          title: "completed",
+          description: "stale",
+          thumbnail: "stale",
+          shorts: "not_started",
+        },
+      }),
     });
 
-    const res = await repo.upsertGeneratedItem("proj-1", "user-1", "shorts", "shorts", { segments: [] });
+    await repo.clearStale("pkg-1");
 
-    expect(res.allDone).toBe(false);
+    expect(docUpdate).toHaveBeenCalledWith({
+      itemStatuses: {
+        title: "completed",
+        description: "completed",
+        thumbnail: "completed",
+        shorts: "not_started", // never generated — not silently promoted
+      },
+      isStale: false,
+      staleReason: null,
+      staleSince: null,
+    });
+  });
+
+  it("is a no-op when the document doesn't exist", async () => {
+    docGet.mockResolvedValue({ exists: false });
+
+    await repo.clearStale("missing");
+
+    expect(docUpdate).not.toHaveBeenCalled();
   });
 });

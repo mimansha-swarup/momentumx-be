@@ -36,6 +36,8 @@ export interface IPackaging {
   selectedTitleIndex?: number | null;
   description: string;
   thumbnail: string[];
+  // Which thumbnail brief the user picked; drives the project's thumbnailHint.
+  selectedThumbnailIndex?: number | null;
   shorts: IPackagingShorts | null;
   itemStatuses: IPackagingItemStatuses;
   isStale: boolean;

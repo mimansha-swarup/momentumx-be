@@ -112,8 +112,9 @@ class PackagingRepository {
                         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
                     });
                 }
-                const allDone = ["title", "description", "thumbnail", "shorts"].every((k) => statuses[k] === "completed");
-                return { packagingId: ref.id, created: !snap.exists, allDone };
+                // Return the consistent in-transaction status snapshot; the service decides
+                // step completion (packaging = its 3 items; title completes on select).
+                return { packagingId: ref.id, created: !snap.exists, statuses };
             });
         };
         this.findByVideoProject = async (videoProjectId) => {
@@ -131,6 +132,26 @@ class PackagingRepository {
             catch (error) {
                 throw error;
             }
+        };
+        // Inverse of markStale, for the "Keep as-is" path: the creator accepted the
+        // content as-is, so the doc must stop reporting stale or every card keeps an
+        // "Outdated" chip under a banner they already dismissed.
+        this.clearStale = async (packagingId) => {
+            const doc = await this.db.collection(this.collection).doc(packagingId).get();
+            if (!doc.exists)
+                return;
+            const currentStatuses = (doc.data()?.itemStatuses ?? {});
+            const updatedStatuses = {};
+            for (const key of ["title", "description", "thumbnail", "shorts"]) {
+                const current = currentStatuses[key] ?? "not_started";
+                updatedStatuses[key] = current === "stale" ? "completed" : current;
+            }
+            await this.db.collection(this.collection).doc(packagingId).update({
+                itemStatuses: updatedStatuses,
+                isStale: false,
+                staleReason: null,
+                staleSince: null,
+            });
         };
         this.markStale = async (packagingId, reason) => {
             try {

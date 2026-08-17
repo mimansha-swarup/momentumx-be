@@ -93,7 +93,7 @@ class PackagingRepository {
     field: string,
     item: string,
     canonical: unknown
-  ): Promise<{ packagingId: string; created: boolean; allDone: boolean }> => {
+  ): Promise<{ packagingId: string; created: boolean; statuses: Record<string, string> }> => {
     const existing = await this.findByVideoProject(videoProjectId);
     const ref = this.db
       .collection(this.collection)
@@ -136,10 +136,9 @@ class PackagingRepository {
         });
       }
 
-      const allDone = (["title", "description", "thumbnail", "shorts"] as const).every(
-        (k) => statuses[k] === "completed"
-      );
-      return { packagingId: ref.id, created: !snap.exists, allDone };
+      // Return the consistent in-transaction status snapshot; the service decides
+      // step completion (packaging = its 3 items; title completes on select).
+      return { packagingId: ref.id, created: !snap.exists, statuses };
     });
   };
 
@@ -158,6 +157,28 @@ class PackagingRepository {
     } catch (error) {
       throw error;
     }
+  };
+
+  // Inverse of markStale, for the "Keep as-is" path: the creator accepted the
+  // content as-is, so the doc must stop reporting stale or every card keeps an
+  // "Outdated" chip under a banner they already dismissed.
+  clearStale = async (packagingId: string): Promise<void> => {
+    const doc = await this.db.collection(this.collection).doc(packagingId).get();
+    if (!doc.exists) return;
+
+    const currentStatuses = (doc.data()?.itemStatuses ?? {}) as IPackagingItemStatuses;
+    const updatedStatuses: Record<string, PackagingItemStatus> = {};
+    for (const key of ["title", "description", "thumbnail", "shorts"] as const) {
+      const current = currentStatuses[key] ?? "not_started";
+      updatedStatuses[key] = current === "stale" ? "completed" : current;
+    }
+
+    await this.db.collection(this.collection).doc(packagingId).update({
+      itemStatuses: updatedStatuses,
+      isStale: false,
+      staleReason: null,
+      staleSince: null,
+    });
   };
 
   markStale = async (packagingId: string, reason: StaleReason): Promise<void> => {

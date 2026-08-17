@@ -26,7 +26,12 @@ import PackagingRepository from "../../src/repository/packaging.repository";
 import { generateStreamingContent } from "../../src/utlils/ai";
 
 jest.mock("../../src/repository/packaging.repository");
-jest.mock("../../src/utlils/ai", () => ({ generateStreamingContent: jest.fn() }));
+jest.mock("../../src/utlils/ai", () => ({
+  generateStreamingContent: jest.fn(),
+  // collectJson stays REAL: it is the empty/malformed-JSON guard, and the fake
+  // streams below are exactly what should be driving it.
+  collectJson: jest.requireActual("../../src/utlils/ai").collectJson,
+}));
 
 const MockPackagingRepo = PackagingRepository as jest.MockedClass<typeof PackagingRepository>;
 const mockGenerate = generateStreamingContent as jest.MockedFunction<typeof generateStreamingContent>;
@@ -204,7 +209,19 @@ describe("PackagingService — regenerateItem", () => {
 describe("PackagingService — regenerateItem project sync (DA6 stale clear)", () => {
   let service: PackagingService;
   let mockRepo: jest.Mocked<PackagingRepository>;
-  let mockVp: { getById: jest.Mock; refreshPackagingStep: jest.Mock; setThumbnailHint: jest.Mock };
+  let mockVp: {
+    getById: jest.Mock;
+    refreshPackagingStep: jest.Mock;
+    setThumbnailHint: jest.Mock;
+    reopenTitleStep: jest.Mock;
+    startStep: jest.Mock;
+    completeStep: jest.Mock;
+  };
+
+  const SHORTS_JSON = JSON.stringify({
+    segments: [{ startTime: "0:00", endTime: "0:05", content: "x", type: "hook" }],
+    totalDuration: "0:60",
+  });
 
   // pkg linked to a project, with only `title` stale and the rest completed.
   const linkedPkg = (itemStatuses: Record<string, string>) => ({
@@ -219,6 +236,9 @@ describe("PackagingService — regenerateItem project sync (DA6 stale clear)", (
       getById: jest.fn().mockResolvedValue({}), // no selected hook -> resolves to ""
       refreshPackagingStep: jest.fn().mockResolvedValue(undefined),
       setThumbnailHint: jest.fn().mockResolvedValue(undefined),
+      reopenTitleStep: jest.fn().mockResolvedValue(undefined),
+      startStep: jest.fn().mockResolvedValue(undefined),
+      completeStep: jest.fn().mockResolvedValue(undefined),
     };
     service = new PackagingService(mockRepo, mockVp as any, makeContextService());
     mockGenerate.mockResolvedValue(makeStream('{"titles":[{"title":"New A","characterCount":40}]}'));
@@ -278,6 +298,61 @@ describe("PackagingService — regenerateItem project sync (DA6 stale clear)", (
     await service.regenerateItem("user-1", "pkg-1", "thumbnail", "script", "My Title");
 
     expect(mockVp.setThumbnailHint).toHaveBeenCalledWith("proj-1", "Fresh brief one", "user-1");
+  });
+
+  // The selected title is also the PROJECT'S NAME. Keeping the old index meant the
+  // header and dashboard showed a title absent from the new list, and "Continue"
+  // later renamed the project to whatever landed at that index.
+  it("clears selectedTitleIndex and reopens the title step when titles are regenerated", async () => {
+    mockGenerate.mockResolvedValue(makeStream(JSON.stringify({ titles: [{ title: "Fresh", characterCount: 5 }] })));
+    mockRepo.get = jest.fn().mockResolvedValue(
+      linkedPkg({ title: "completed", description: "completed", thumbnail: "completed", shorts: "completed" })
+    );
+
+    await service.regenerateItem("user-1", "pkg-1", "title", "script");
+
+    const written = (mockRepo.update as jest.Mock).mock.calls[0][1];
+    expect(written.selectedTitleIndex).toBeNull();
+    expect(mockVp.reopenTitleStep).toHaveBeenCalledWith("proj-1", "user-1");
+    expect(mockVp.completeStep).not.toHaveBeenCalled();
+  });
+
+  // Regenerating the item that FAILED is how a creator recovers from a partial
+  // generation. refreshPackagingStep only un-stales, so the step used to sit at
+  // in_progress forever with all three items present.
+  it("completes the packaging step when a regenerate fills the last missing item", async () => {
+    mockGenerate.mockResolvedValue(makeStream(SHORTS_JSON));
+    mockRepo.get = jest.fn().mockResolvedValue(
+      linkedPkg({ title: "completed", description: "completed", thumbnail: "completed", shorts: "not_started" })
+    );
+
+    await service.regenerateItem("user-1", "pkg-1", "shorts", "script", undefined, 60);
+
+    expect(mockVp.startStep).toHaveBeenCalledWith("proj-1", "packaging", "user-1");
+    expect(mockVp.completeStep).toHaveBeenCalledWith("proj-1", "packaging", "user-1");
+  });
+
+  it("does NOT complete the packaging step while another item is still missing", async () => {
+    mockGenerate.mockResolvedValue(makeStream(SHORTS_JSON));
+    mockRepo.get = jest.fn().mockResolvedValue(
+      linkedPkg({ title: "completed", description: "not_started", thumbnail: "completed", shorts: "not_started" })
+    );
+
+    await service.regenerateItem("user-1", "pkg-1", "shorts", "script", undefined, 60);
+
+    expect(mockVp.completeStep).not.toHaveBeenCalled();
+  });
+
+  it("resets selectedThumbnailIndex when thumbnails are regenerated (old index points at a gone brief)", async () => {
+    mockGenerate.mockResolvedValue(makeStream('{"descriptions":["Fresh one","Fresh two"]}'));
+    mockRepo.get = jest.fn().mockResolvedValue(
+      linkedPkg({ title: "completed", description: "completed", thumbnail: "completed", shorts: "completed" })
+    );
+
+    await service.regenerateItem("user-1", "pkg-1", "thumbnail", "script", "My Title");
+
+    const written = (mockRepo.update as jest.Mock).mock.calls[0][1];
+    expect(written.selectedThumbnailIndex).toBe(0);
   });
 
   it("does NOT touch thumbnailHint when a non-thumbnail item is regenerated", async () => {
@@ -356,8 +431,22 @@ describe("PackagingService — savePackaging with videoProjectId", () => {
     const packagingData = (mockRepo.save as jest.Mock).mock.calls[0][0];
     expect(packagingData).toMatchObject({ videoProjectId: "shallow-proj" });
     expect(mockVp.linkResource).toHaveBeenCalledWith("shallow-proj", "packaging", "pkg-new", "user-1");
-    // The shallow project's packaging step must be started before it can complete
-    // (a fresh project's packaging is not_started, which completeStep rejects).
+    // ...but a title-only package has NOT finished the packaging step. Completion is
+    // earned by content (description + thumbnail + shorts), never by the act of
+    // saving — the Title screen auto-saves through this same endpoint, and
+    // completing here marked whole projects done with nothing generated.
+    expect(mockVp.completeStep).not.toHaveBeenCalled();
+  });
+
+  it("completes the packaging step once all three packaging items are present", async () => {
+    await service.savePackaging("user-1", {
+      titles: [{ title: "My Title", characterCount: 8 }],
+      description: "An SEO description.",
+      thumbnail: ["Brief one", "Brief two"],
+      shorts: { segments: [{ startTime: "0:00", endTime: "0:05", content: "Hook", type: "hook" }] },
+    });
+    // A fresh project's packaging is not_started, which completeStep rejects — so
+    // it must be started first.
     expect(mockVp.startStep).toHaveBeenCalledWith("shallow-proj", "packaging", "user-1");
     expect(mockVp.completeStep).toHaveBeenCalledWith("shallow-proj", "packaging", "user-1");
   });
@@ -414,6 +503,63 @@ describe("PackagingService — savePackaging with videoProjectId", () => {
     expect(updatePayload).not.toHaveProperty("isStale");
     expect(updatePayload).not.toHaveProperty("staleReason");
     expect(updatePayload).not.toHaveProperty("staleSince");
+  });
+
+  // A save carries EDITS. Auto-save fires on every committed edit and every
+  // thumbnail click, so anything it rewrites beyond those edits gets rewritten
+  // constantly — these three all silently destroyed stale state.
+  describe("does not rewrite state the save doesn't own", () => {
+    const storedShorts = {
+      segments: [{ startTime: "0:00", endTime: "0:05", content: "Hook", type: "hook" }],
+    };
+    const staleDoc = {
+      id: "pkg-1",
+      createdBy: "user-1",
+      videoProjectId: "proj-1",
+      titles: [{ title: "Stored", characterCount: 6 }],
+      description: "Stored description.",
+      thumbnail: ["Stored brief"],
+      shorts: storedShorts,
+      itemStatuses: { title: "completed", description: "stale", thumbnail: "stale", shorts: "stale" },
+      isStale: true,
+      staleReason: "hooks_regenerated",
+    };
+
+    beforeEach(() => {
+      mockRepo.findByVideoProject = jest.fn().mockResolvedValue(staleDoc);
+      mockRepo.update = jest.fn().mockResolvedValue({ id: "pkg-1" });
+    });
+
+    it("leaves itemStatuses alone on update, so an edit can't un-stale items", async () => {
+      await service.savePackaging("user-1", { description: "Edited." }, "proj-1");
+      const written = (mockRepo.update as jest.Mock).mock.calls[0][1];
+      expect(written).not.toHaveProperty("itemStatuses");
+      expect(written).toMatchObject({ description: "Edited." });
+    });
+
+    it("does not complete the pipeline step while the package is stale", async () => {
+      await service.savePackaging("user-1", { description: "Edited." }, "proj-1");
+      expect(mockVp.startStep).not.toHaveBeenCalled();
+      expect(mockVp.completeStep).not.toHaveBeenCalled();
+    });
+
+    it("drops empty content fields so an unhydrated client can't wipe generated content", async () => {
+      await service.savePackaging(
+        "user-1",
+        {
+          titles: [{ title: "Edited title", characterCount: 12 }],
+          description: "",
+          thumbnail: [],
+          shorts: { segments: [] },
+        },
+        "proj-1"
+      );
+      const written = (mockRepo.update as jest.Mock).mock.calls[0][1];
+      expect(written).not.toHaveProperty("description");
+      expect(written).not.toHaveProperty("thumbnail");
+      expect(written).not.toHaveProperty("shorts");
+      expect(written.titles).toEqual([{ title: "Edited title", characterCount: 12 }]);
+    });
   });
 });
 
@@ -473,29 +619,32 @@ describe("PackagingService — selectTitle (title continuity §7.3)", () => {
   });
 });
 
-describe("PackagingService — generateTitle persists + injects context", () => {
+describe("PackagingService — generation persists + drives the right step", () => {
   let service: PackagingService;
   let mockRepo: jest.Mocked<PackagingRepository>;
+  const allNotStarted = { title: "not_started", description: "not_started", thumbnail: "not_started", shorts: "not_started" };
+  const shortsJson = JSON.stringify({ segments: [{ startTime: "0:00", endTime: "0:05", content: "x", type: "hook" }], totalDuration: "0:60" });
 
   beforeEach(() => {
     mockRepo = new MockPackagingRepo() as jest.Mocked<PackagingRepository>;
   });
 
-  it("persists via the atomic upsert and injects the hook into the prompt", async () => {
+  it("title generation drives the TITLE step (never completes packaging) + injects the hook", async () => {
     const fakeTitles = [{ title: "Title A", characterCount: 55 }];
     mockGenerate.mockResolvedValue(makeStream(JSON.stringify({ titles: fakeTitles })));
     const ctx = makeContextService({ selectedHook: "my hook opener" });
-    service = new PackagingService(mockRepo, makeVp(), ctx);
-    mockRepo.upsertGeneratedItem = jest.fn().mockResolvedValue({ packagingId: "proj-1", created: false, allDone: false });
+    const vp = makeVp();
+    service = new PackagingService(mockRepo, vp, ctx);
+    mockRepo.upsertGeneratedItem = jest.fn().mockResolvedValue({ packagingId: "proj-1", created: false, statuses: { ...allNotStarted, title: "completed" } });
 
     const result = await service.generateTitle("user-1", "script text", "proj-1");
 
-    // Context is assembled for the target project; the resolved hook reaches the prompt.
     expect(ctx.assemble).toHaveBeenCalledWith("user-1", { videoProjectId: "proj-1" });
-    const userPromptArg = mockGenerate.mock.calls[0][1] as string;
-    expect(userPromptArg).toContain("my hook opener");
-    // Generation writes straight to the doc (one atomic upsert) — no round-trip save.
+    expect(mockGenerate.mock.calls[0][1] as string).toContain("my hook opener");
     expect(mockRepo.upsertGeneratedItem).toHaveBeenCalledWith("proj-1", "user-1", "titles", "title", fakeTitles);
+    // Title is its own step: generating STARTS it; completion happens on select.
+    expect(vp.startStep).toHaveBeenCalledWith("proj-1", "title", "user-1");
+    expect(vp.completeStep).not.toHaveBeenCalled();
     expect(result).toEqual({ titles: fakeTitles, packagingId: "proj-1" });
   });
 
@@ -503,33 +652,34 @@ describe("PackagingService — generateTitle persists + injects context", () => 
     mockGenerate.mockResolvedValue(makeStream(JSON.stringify({ titles: [{ title: "T", characterCount: 1 }] })));
     const vp = makeVp();
     service = new PackagingService(mockRepo, vp, makeContextService({ selectedHook: "h" }));
-    mockRepo.upsertGeneratedItem = jest.fn().mockResolvedValue({ packagingId: "proj-1", created: true, allDone: false });
-
-    const result = await service.generateTitle("user-1", "script text", "proj-1");
-
-    expect(vp.linkResource).toHaveBeenCalledWith("proj-1", "packaging", "proj-1", "user-1");
-    expect(result).toEqual({ titles: [{ title: "T", characterCount: 1 }], packagingId: "proj-1" });
-  });
-
-  it("completes the packaging step when the upsert reports allDone", async () => {
-    mockGenerate.mockResolvedValue(makeStream(JSON.stringify({ titles: [{ title: "T", characterCount: 1 }] })));
-    const vp = makeVp();
-    service = new PackagingService(mockRepo, vp, makeContextService());
-    mockRepo.upsertGeneratedItem = jest.fn().mockResolvedValue({ packagingId: "proj-1", created: false, allDone: true });
+    mockRepo.upsertGeneratedItem = jest.fn().mockResolvedValue({ packagingId: "proj-1", created: true, statuses: { ...allNotStarted, title: "completed" } });
 
     await service.generateTitle("user-1", "script text", "proj-1");
 
+    expect(vp.linkResource).toHaveBeenCalledWith("proj-1", "packaging", "proj-1", "user-1");
+  });
+
+  it("completes the PACKAGING step once its three items exist", async () => {
+    mockGenerate.mockResolvedValue(makeStream(shortsJson));
+    const vp = makeVp();
+    service = new PackagingService(mockRepo, vp, makeContextService());
+    mockRepo.upsertGeneratedItem = jest.fn().mockResolvedValue({ packagingId: "proj-1", created: false, statuses: { title: "completed", description: "completed", thumbnail: "completed", shorts: "completed" } });
+
+    await service.generateShorts("user-1", "script text", 60, "proj-1");
+
+    expect(vp.startStep).toHaveBeenCalledWith("proj-1", "packaging", "user-1");
     expect(vp.completeStep).toHaveBeenCalledWith("proj-1", "packaging", "user-1");
   });
 
-  it("does NOT complete the step when the upsert reports allDone false", async () => {
-    mockGenerate.mockResolvedValue(makeStream(JSON.stringify({ titles: [{ title: "T", characterCount: 1 }] })));
+  it("does NOT complete packaging while an item is missing", async () => {
+    mockGenerate.mockResolvedValue(makeStream(shortsJson));
     const vp = makeVp();
     service = new PackagingService(mockRepo, vp, makeContextService());
-    mockRepo.upsertGeneratedItem = jest.fn().mockResolvedValue({ packagingId: "proj-1", created: false, allDone: false });
+    mockRepo.upsertGeneratedItem = jest.fn().mockResolvedValue({ packagingId: "proj-1", created: false, statuses: { title: "completed", description: "not_started", thumbnail: "completed", shorts: "completed" } });
 
-    await service.generateTitle("user-1", "script text", "proj-1");
+    await service.generateShorts("user-1", "script text", 60, "proj-1");
 
+    expect(vp.startStep).toHaveBeenCalledWith("proj-1", "packaging", "user-1");
     expect(vp.completeStep).not.toHaveBeenCalled();
   });
 
@@ -604,5 +754,38 @@ describe("PackagingService — exportPackaging", () => {
     expect(result.text).toContain("Stop. This changes everything.");
     expect(result.text).toContain("Total: 1:00");
     expect(result.text).not.toContain('{"segments"');
+  });
+
+  // The export is what gets pasted into YouTube. An unmarked list of three makes
+  // the creator choose a second time, having already chosen on screen.
+  it("marks the selected title and thumbnail brief", async () => {
+    mockRepo.get = jest.fn().mockResolvedValue({
+      ...mockPkg,
+      titles: [{ title: "First" }, { title: "Chosen" }, { title: "Third" }],
+      selectedTitleIndex: 1,
+      thumbnail: ["Brief one", "Brief two", "Brief three"],
+      selectedThumbnailIndex: 2,
+    });
+
+    const result = await service.exportPackaging("user-1", "pkg-1");
+
+    expect(result.text).toContain("2. Chosen  ← selected");
+    expect(result.text).toContain("3. Brief three  ← selected");
+    expect(result.text).toContain("1. First\n");
+    expect(result.text).not.toContain("1. Brief one  ← selected");
+  });
+
+  it("defaults the thumbnail marker to the first brief when nothing was selected", async () => {
+    mockRepo.get = jest.fn().mockResolvedValue({
+      ...mockPkg,
+      titles: [{ title: "Only" }],
+      thumbnail: ["Brief one", "Brief two"],
+    });
+
+    const result = await service.exportPackaging("user-1", "pkg-1");
+
+    expect(result.text).toContain("1. Brief one  ← selected");
+    // No title selected yet -> no title is marked.
+    expect(result.text).toContain("1. Only\n");
   });
 });
