@@ -18,19 +18,24 @@ class ContentRepository {
                     query = query.where("isScriptGenerated", "==", filters.isScriptGenerated);
                 }
                 if (filters.searchText) {
-                    // Prefix search using title
+                    // Prefix search using title \u2014 must order by the field it ranges over.
                     query = query.orderBy("title");
                     query = query
                         .startAt(filters.searchText)
                         .endAt(filters.searchText + "\uf8ff");
                 }
-                // Pagination
-                else if (cursor?.createdAt && cursor?.docId) {
-                    // Default ordering if no search
+                else {
+                    // ONE ordering for page 1 and every cursor page. This orderBy used to live
+                    // only in the cursor branch, so page 1 came back in Firestore's default
+                    // document-id order while page 2 ranged over `createdAt desc` \u2014 different
+                    // sorts either side of the cursor, which made "Load More" re-show ideas
+                    // already on screen and left others unreachable for good.
                     query = query
                         .orderBy("createdAt", "desc")
                         .orderBy(firebase.firestore.FieldPath.documentId(), "desc");
-                    query = query.startAfter(firebase.firestore.Timestamp.fromDate(new Date(cursor.createdAt)), cursor.docId);
+                    if (cursor?.createdAt && cursor?.docId) {
+                        query = query.startAfter(firebase.firestore.Timestamp.fromDate(new Date(cursor.createdAt)), cursor.docId);
+                    }
                 }
                 query = query.limit(limit);
                 const snapshot = await query.get();
