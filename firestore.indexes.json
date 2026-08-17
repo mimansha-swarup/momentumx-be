@@ -9,7 +9,7 @@
       ]
     },
     {
-      "collectionGroup": "topics",
+      "collectionGroup": "ideas",
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "createdBy", "order": "ASCENDING" },
@@ -17,7 +17,7 @@
       ]
     },
     {
-      "collectionGroup": "topics",
+      "collectionGroup": "ideas",
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "createdBy", "order": "ASCENDING" },
@@ -27,7 +27,7 @@
       ]
     },
     {
-      "collectionGroup": "topics",
+      "collectionGroup": "ideas",
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "createdBy", "order": "ASCENDING" },
@@ -38,7 +38,7 @@
       ]
     },
     {
-      "collectionGroup": "topics",
+      "collectionGroup": "ideas",
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "createdBy", "order": "ASCENDING" },
@@ -47,7 +47,7 @@
       ]
     },
     {
-      "collectionGroup": "topics",
+      "collectionGroup": "ideas",
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "createdBy", "order": "ASCENDING" },
