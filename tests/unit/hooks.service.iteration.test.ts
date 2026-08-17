@@ -28,7 +28,12 @@ import { generateStreamingContent } from "../../src/utlils/ai";
 
 jest.mock("../../src/repository/hooks.repository");
 jest.mock("../../src/service/video-project.service");
-jest.mock("../../src/utlils/ai", () => ({ generateStreamingContent: jest.fn() }));
+jest.mock("../../src/utlils/ai", () => ({
+  generateStreamingContent: jest.fn(),
+  // collectJson stays REAL: it is the empty/malformed-JSON guard, and the fake
+  // streams below are exactly what should be driving it.
+  collectJson: jest.requireActual("../../src/utlils/ai").collectJson,
+}));
 
 const MockHooksRepo = HooksRepository as jest.MockedClass<typeof HooksRepository>;
 const MockVideoProjectService = VideoProjectService as jest.MockedClass<typeof VideoProjectService>;

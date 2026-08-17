@@ -24,4 +24,6 @@ router.post("/generate", hooksController.generate);
 router.post("/:hooksId/select", hooksController.select);
 router.post("/:hooksId/regenerate", hooksController.regenerate);
 router.get("/:hooksId/export", hooksController.exportHooks);
+// Registered after /export so the literal segment wins the match.
+router.get("/:hooksId", hooksController.getById);
 export default router;

@@ -40,6 +40,11 @@ class HooksController {
     res.sendSuccess({ message: "Hooks regenerated successfully", data });
   });
 
+  getById = asyncHandler(async (req: Request, res: Response) => {
+    const data = await this.service.getById(req.userId, req.params.hooksId);
+    res.sendSuccess({ message: "Hooks retrieved successfully", data });
+  });
+
   exportHooks = asyncHandler(async (req: Request, res: Response) => {
     const hooksId = req.params.hooksId;
     const data = await this.service.exportHooks(req.userId, hooksId);

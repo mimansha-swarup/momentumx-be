@@ -2,14 +2,32 @@ import {
   HOOKS_SYSTEM_PROMPT,
   GENERATE_HOOKS_PROMPT,
 } from "../constants/prompt.js";
-import { GENERATION_CONFIG_PACKAGING } from "../constants/firebase.js";
-import { generateStreamingContent } from "../utlils/ai.js";
+import { GENERATION_CONFIG_HOOKS } from "../constants/firebase.js";
+import { collectJson, generateStreamingContent } from "../utlils/ai.js";
 import { fillTemplate } from "../utlils/prompt-blocks.js";
 import HooksRepository from "../repository/hooks.repository.js";
 import VideoProjectService, { STEP_LOCK_MS } from "./video-project.service.js";
 import ContextService from "./context.service.js";
 import { IHooksBatch } from "../types/routes/hooks.js";
-import { BadRequest, Conflict, Forbidden, NotFound } from "../utlils/errors.js";
+import { BadRequest, Conflict, Forbidden, NotFound, ServiceUnavailable } from "../utlils/errors.js";
+
+// The schema requires exactly 5 non-empty strings, but a schema is a request to
+// the model, not a guarantee from it — a blocked or truncated generation can still
+// resolve to a shape the rest of this file indexes into. Assert before persisting
+// so a bad batch never reaches Firestore, rather than surfacing later as an empty
+// hooks screen. Not a repair: it refuses, it doesn't reshape.
+const assertHooks = (parsed: { hooks?: unknown }): void => {
+  const ok =
+    Array.isArray(parsed?.hooks) &&
+    parsed.hooks.length > 0 &&
+    parsed.hooks.every((h) => typeof h === "string" && h.trim().length > 0);
+  if (!ok) {
+    console.error(JSON.stringify({ event: "ai_shape_invalid", label: "hooks" }));
+    throw ServiceUnavailable(
+      "Couldn't generate hooks — the response was incomplete. Please try again."
+    );
+  }
+};
 
 class HooksService {
   constructor(
@@ -83,18 +101,11 @@ class HooksService {
       const result = await generateStreamingContent(
         HOOKS_SYSTEM_PROMPT,
         userPrompt,
-        GENERATION_CONFIG_PACKAGING
+        GENERATION_CONFIG_HOOKS
       );
 
-      let accumulatedRes = "";
-      for await (const chunk of result.stream) {
-        const part = chunk.text();
-        if (part) {
-          accumulatedRes += part;
-        }
-      }
-
-      parsed = JSON.parse(accumulatedRes) as { hooks: string[] };
+      parsed = await collectJson<{ hooks: string[] }>(result, "hooks");
+      assertHooks(parsed);
     } catch (genError) {
       // Roll the step back (parity with the script stream's empty-output path)
       // so a failed generation doesn't leave it in_progress — that would 409
@@ -178,16 +189,11 @@ class HooksService {
     const result = await generateStreamingContent(
       HOOKS_SYSTEM_PROMPT,
       userPrompt,
-      GENERATION_CONFIG_PACKAGING
+      GENERATION_CONFIG_HOOKS
     );
 
-    let accumulatedRes = "";
-    for await (const chunk of result.stream) {
-      const part = chunk.text();
-      if (part) accumulatedRes += part;
-    }
-
-    const parsed = JSON.parse(accumulatedRes) as { hooks: string[] };
+    const parsed = await collectJson<{ hooks: string[] }>(result, "hooks");
+    assertHooks(parsed);
     await this.repo.update(hooksId, { hooks: parsed.hooks, hookFeedback: {} });
     try {
       await this.videoProjectService.clearSelectedHook(hooksBatch.videoProjectId, userId);
@@ -198,6 +204,20 @@ class HooksService {
     }
 
     return { id: hooksId, hooks: parsed.hooks, hookFeedback: {} };
+  };
+
+  // Read a saved batch. Without this the hooks existed only in the browser's
+  // memory: after a refresh the creator could see "Hook 3 was selected" but never
+  // the hook itself, and had no way to change the pick.
+  getById = async (userId: string, hooksId: string): Promise<IHooksBatch> => {
+    const hooksBatch = await this.repo.findById(hooksId);
+    if (!hooksBatch) {
+      throw NotFound("Hooks batch not found");
+    }
+    if (hooksBatch.createdBy !== userId) {
+      throw Forbidden();
+    }
+    return hooksBatch;
   };
 
   exportHooks = async (

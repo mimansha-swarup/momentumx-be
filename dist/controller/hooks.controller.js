@@ -32,6 +32,10 @@ class HooksController {
             eventService.capture(req.userId, "regenerate" /* EventType.REGENERATE */, { resource: "hooks", hooksId });
             res.sendSuccess({ message: "Hooks regenerated successfully", data });
         });
+        this.getById = asyncHandler(async (req, res) => {
+            const data = await this.service.getById(req.userId, req.params.hooksId);
+            res.sendSuccess({ message: "Hooks retrieved successfully", data });
+        });
         this.exportHooks = asyncHandler(async (req, res) => {
             const hooksId = req.params.hooksId;
             const data = await this.service.exportHooks(req.userId, hooksId);

@@ -1,9 +1,23 @@
 import { HOOKS_SYSTEM_PROMPT, GENERATE_HOOKS_PROMPT, } from "../constants/prompt.js";
-import { GENERATION_CONFIG_PACKAGING } from "../constants/firebase.js";
-import { generateStreamingContent } from "../utlils/ai.js";
+import { GENERATION_CONFIG_HOOKS } from "../constants/firebase.js";
+import { collectJson, generateStreamingContent } from "../utlils/ai.js";
 import { fillTemplate } from "../utlils/prompt-blocks.js";
 import { STEP_LOCK_MS } from "./video-project.service.js";
-import { BadRequest, Conflict, Forbidden, NotFound } from "../utlils/errors.js";
+import { BadRequest, Conflict, Forbidden, NotFound, ServiceUnavailable } from "../utlils/errors.js";
+// The schema requires exactly 5 non-empty strings, but a schema is a request to
+// the model, not a guarantee from it — a blocked or truncated generation can still
+// resolve to a shape the rest of this file indexes into. Assert before persisting
+// so a bad batch never reaches Firestore, rather than surfacing later as an empty
+// hooks screen. Not a repair: it refuses, it doesn't reshape.
+const assertHooks = (parsed) => {
+    const ok = Array.isArray(parsed?.hooks) &&
+        parsed.hooks.length > 0 &&
+        parsed.hooks.every((h) => typeof h === "string" && h.trim().length > 0);
+    if (!ok) {
+        console.error(JSON.stringify({ event: "ai_shape_invalid", label: "hooks" }));
+        throw ServiceUnavailable("Couldn't generate hooks — the response was incomplete. Please try again.");
+    }
+};
 class HooksService {
     constructor(repo, videoProjectService, contextService) {
         this.repo = repo;
@@ -58,15 +72,9 @@ class HooksService {
             }
             let parsed;
             try {
-                const result = await generateStreamingContent(HOOKS_SYSTEM_PROMPT, userPrompt, GENERATION_CONFIG_PACKAGING);
-                let accumulatedRes = "";
-                for await (const chunk of result.stream) {
-                    const part = chunk.text();
-                    if (part) {
-                        accumulatedRes += part;
-                    }
-                }
-                parsed = JSON.parse(accumulatedRes);
+                const result = await generateStreamingContent(HOOKS_SYSTEM_PROMPT, userPrompt, GENERATION_CONFIG_HOOKS);
+                parsed = await collectJson(result, "hooks");
+                assertHooks(parsed);
             }
             catch (genError) {
                 // Roll the step back (parity with the script stream's empty-output path)
@@ -135,14 +143,9 @@ class HooksService {
                 ? script
                 : await this.resolveScript(userId, hooksBatch.videoProjectId, script);
             const userPrompt = fillTemplate(GENERATE_HOOKS_PROMPT, { "{script}": resolvedScript });
-            const result = await generateStreamingContent(HOOKS_SYSTEM_PROMPT, userPrompt, GENERATION_CONFIG_PACKAGING);
-            let accumulatedRes = "";
-            for await (const chunk of result.stream) {
-                const part = chunk.text();
-                if (part)
-                    accumulatedRes += part;
-            }
-            const parsed = JSON.parse(accumulatedRes);
+            const result = await generateStreamingContent(HOOKS_SYSTEM_PROMPT, userPrompt, GENERATION_CONFIG_HOOKS);
+            const parsed = await collectJson(result, "hooks");
+            assertHooks(parsed);
             await this.repo.update(hooksId, { hooks: parsed.hooks, hookFeedback: {} });
             try {
                 await this.videoProjectService.clearSelectedHook(hooksBatch.videoProjectId, userId);
@@ -153,6 +156,19 @@ class HooksService {
                 console.error(JSON.stringify({ event: "stale_cascade_failed", from: "hooks", projectId: hooksBatch.videoProjectId, userId, message: cascadeError?.message }));
             }
             return { id: hooksId, hooks: parsed.hooks, hookFeedback: {} };
+        };
+        // Read a saved batch. Without this the hooks existed only in the browser's
+        // memory: after a refresh the creator could see "Hook 3 was selected" but never
+        // the hook itself, and had no way to change the pick.
+        this.getById = async (userId, hooksId) => {
+            const hooksBatch = await this.repo.findById(hooksId);
+            if (!hooksBatch) {
+                throw NotFound("Hooks batch not found");
+            }
+            if (hooksBatch.createdBy !== userId) {
+                throw Forbidden();
+            }
+            return hooksBatch;
         };
         this.exportHooks = async (userId, hooksId) => {
             const hooksBatch = await this.repo.findById(hooksId);
