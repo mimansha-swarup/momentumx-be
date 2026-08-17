@@ -18,6 +18,17 @@ class VideoProjectRepository {
     this.collection = COLLECTIONS.VIDEO_PROJECTS;
   }
 
+  // Back-compat: projects created before Title became a pipeline step lack
+  // pipeline.title. Default it on read so step logic (STEP_ORDER, stale cascade,
+  // startStep/completeStep) never dereferences an undefined step.
+  private hydrate = (project: IVideoProject): IVideoProject => {
+    const pipeline = project.pipeline as { title?: unknown } | undefined;
+    if (pipeline && !pipeline.title) {
+      project.pipeline.title = { status: "not_started", startedAt: null, completedAt: null };
+    }
+    return project;
+  };
+
   create = async (data: Record<string, unknown>): Promise<IVideoProject> => {
     const docRef = this.db.collection(this.collection).doc();
     const dataWithId = { ...data, id: docRef.id };
@@ -28,7 +39,7 @@ class VideoProjectRepository {
   findById = async (projectId: string): Promise<IVideoProject | null> => {
     const doc = await this.db.collection(this.collection).doc(projectId).get();
     if (!doc.exists) return null;
-    return doc.data() as IVideoProject;
+    return this.hydrate(doc.data() as IVideoProject);
   };
 
   list = async (
@@ -90,7 +101,7 @@ class VideoProjectRepository {
       .where("ideaId", "==", ideaId)
       .where("isDeleted", "==", false)
       .get();
-    return snap.docs.map((doc) => doc.data() as IVideoProject);
+    return snap.docs.map((doc) => this.hydrate(doc.data() as IVideoProject));
   };
 
   findByScriptId = async (scriptId: string, userId: string): Promise<IVideoProject | null> => {
@@ -101,7 +112,7 @@ class VideoProjectRepository {
       .limit(1)
       .get();
     if (snap.empty) return null;
-    return snap.docs[0].data() as IVideoProject;
+    return this.hydrate(snap.docs[0].data() as IVideoProject);
   };
 }
 

@@ -62,6 +62,7 @@ function makeProject(overrides: Partial<IVideoProject> = {}): IVideoProject {
       research: { status: "completed", startedAt: null, completedAt: null },
       script: { status: "not_started", startedAt: null, completedAt: null },
       hooks: { status: "not_started", startedAt: null, completedAt: null },
+      title: { status: "not_started", startedAt: null, completedAt: null },
       packaging: {
         status: "not_started",
         startedAt: null,
@@ -105,7 +106,7 @@ function makeMockContentRepo(): jest.Mocked<ContentRepository> {
 }
 
 function makeMockPackagingRepo(): jest.Mocked<PackagingRepository> {
-  return { get: jest.fn() } as unknown as jest.Mocked<PackagingRepository>;
+  return { get: jest.fn(), clearStale: jest.fn() } as unknown as jest.Mocked<PackagingRepository>;
 }
 
 // ---------------------------------------------------------------------------
@@ -347,6 +348,7 @@ describe("VideoProjectService", () => {
             research: { status: "completed", startedAt: null, completedAt: null },
             script: { status: "in_progress", startedAt: null, completedAt: null },
             hooks: { status: "not_started", startedAt: null, completedAt: null },
+            title: { status: "not_started", startedAt: null, completedAt: null },
             packaging: { status: "not_started", startedAt: null, completedAt: null },
           },
         })
@@ -357,7 +359,7 @@ describe("VideoProjectService", () => {
       expect(result.pipeline.script.status).toBe("completed"); // scriptId set
       expect(result.pipeline.hooks.status).toBe("completed"); // selectedHookIndex set
       expect(result.pipeline.packaging.status).toBe("not_started"); // no packagingId
-      expect(result.recommendedNextStep).toBe("packaging"); // first non-completed
+      expect(result.recommendedNextStep).toBe("title"); // first non-completed (title precedes packaging)
       expect(repo.update).not.toHaveBeenCalled(); // computed, never persisted
     });
 
@@ -370,6 +372,7 @@ describe("VideoProjectService", () => {
             research: { status: "completed", startedAt: null, completedAt: null },
             script: { status: "completed", startedAt: null, completedAt: null },
             hooks: { status: "stale", startedAt: null, completedAt: null },
+            title: { status: "stale", startedAt: null, completedAt: null },
             packaging: { status: "stale", startedAt: null, completedAt: null },
           },
         })
@@ -393,6 +396,7 @@ describe("VideoProjectService", () => {
             research: { status: "completed", startedAt: null, completedAt: null },
             script: { status: "completed", startedAt: null, completedAt: null },
             hooks: { status: "completed", startedAt: null, completedAt: null },
+            title: { status: "completed", startedAt: null, completedAt: null },
             packaging: { status: "completed", startedAt: null, completedAt: null },
           },
         })
@@ -420,6 +424,7 @@ describe("VideoProjectService", () => {
           research: { status: "completed", startedAt: null, completedAt: null },
           script: { status: "completed", startedAt: null, completedAt: null },
           hooks: { status: "completed", startedAt: null, completedAt: null },
+          title: { status: "completed", startedAt: null, completedAt: null },
           packaging: { status: "stale", startedAt: null, completedAt: null },
           ...overrides,
         },
@@ -432,6 +437,8 @@ describe("VideoProjectService", () => {
 
       expect(repo.update).toHaveBeenCalledWith("proj-1", {
         "pipeline.packaging.status": "completed",
+        // The reason it went stale no longer applies once it's fresh again.
+        "pipeline.packaging.staleReason": null,
         overallStatus: "completed",
       });
     });
@@ -445,6 +452,7 @@ describe("VideoProjectService", () => {
 
       expect(repo.update).toHaveBeenCalledWith("proj-1", {
         "pipeline.packaging.status": "completed",
+        "pipeline.packaging.staleReason": null,
         overallStatus: "stale",
       });
     });
@@ -729,13 +737,24 @@ describe("VideoProjectService", () => {
       expect(result.currentStep).toBe("hooks");
     });
 
-    it("auto-advances currentStep: hooks -> packaging", async () => {
+    it("auto-advances currentStep: hooks -> title", async () => {
       repo.findById.mockResolvedValue(
         makeProject({ currentStep: "hooks", pipeline: { ...makeProject().pipeline, hooks: { status: "in_progress", startedAt: null, completedAt: null } } })
       );
       repo.update.mockResolvedValue(undefined);
 
       const result = await service.completeStep("proj-1", "hooks", "user-1");
+
+      expect(result.currentStep).toBe("title");
+    });
+
+    it("auto-advances currentStep: title -> packaging", async () => {
+      repo.findById.mockResolvedValue(
+        makeProject({ currentStep: "title", pipeline: { ...makeProject().pipeline, title: { status: "in_progress", startedAt: null, completedAt: null } } })
+      );
+      repo.update.mockResolvedValue(undefined);
+
+      const result = await service.completeStep("proj-1", "title", "user-1");
 
       expect(result.currentStep).toBe("packaging");
     });
@@ -756,6 +775,7 @@ describe("VideoProjectService", () => {
         research: { status: "completed", startedAt: null, completedAt: null },
         script: { status: "completed", startedAt: null, completedAt: null },
         hooks: { status: "completed", startedAt: null, completedAt: null },
+        title: { status: "completed", startedAt: null, completedAt: null },
         packaging: { status: "in_progress", startedAt: null, completedAt: null },
       };
       repo.findById.mockResolvedValue(makeProject({ pipeline: allCompletedPipeline }));
@@ -778,7 +798,108 @@ describe("VideoProjectService", () => {
       await service.completeStep("proj-1", "script", "user-1");
 
       const callArg = repo.update.mock.calls[0][1] as any;
-      expect(callArg.overallStatus).toBeUndefined();
+      expect(callArg.overallStatus).toBe("in_progress");
+    });
+
+    // Completing a STALE step ("Keep as-is") used to leave overallStatus at "stale",
+    // so the dashboard kept its "Needs Update" badge on a project with nothing stale
+    // left in it — and the only way to clear it was to regenerate after all.
+    it("recomputes overallStatus so completing the last stale step clears the badge", async () => {
+      repo.findById.mockResolvedValue(
+        makeProject({
+          overallStatus: "stale",
+          packagingId: "pkg-abc",
+          pipeline: { ...makeProject().pipeline, packaging: { status: "stale", startedAt: null, completedAt: null } },
+        })
+      );
+      repo.update.mockResolvedValue(undefined);
+
+      await service.completeStep("proj-1", "packaging", "user-1");
+
+      const callArg = repo.update.mock.calls[0][1] as any;
+      expect(callArg.overallStatus).not.toBe("stale");
+    });
+
+    // The client patches its cached project from this response; a partial body made
+    // its reducer throw on `payload.pipeline`, so every "Keep as-is" toasted success
+    // and changed nothing on screen.
+    it("returns the updated pipeline and overallStatus, not just {id,currentStep}", async () => {
+      repo.findById.mockResolvedValue(
+        makeProject({ pipeline: { ...makeProject().pipeline, script: { status: "in_progress", startedAt: null, completedAt: null } } })
+      );
+      repo.update.mockResolvedValue(undefined);
+
+      const result = await service.completeStep("proj-1", "script", "user-1");
+
+      expect(result.pipeline).toBeDefined();
+      expect(result.pipeline.script.status).toBe("completed");
+      expect(result.overallStatus).toBe("in_progress");
+    });
+
+    it("returns the same full shape on the idempotent already-completed path", async () => {
+      repo.findById.mockResolvedValue(makeProject()); // research is completed at creation
+
+      const result = await service.completeStep("proj-1", "research", "user-1").catch((e) => e);
+
+      // research isn't a mutable step, so use a genuinely completed mutable one:
+      repo.findById.mockResolvedValue(
+        makeProject({ pipeline: { ...makeProject().pipeline, script: { status: "completed", startedAt: null, completedAt: null } } })
+      );
+      const done = await service.completeStep("proj-1", "script", "user-1");
+
+      expect(done.pipeline).toBeDefined();
+      expect(done.overallStatus).toBeDefined();
+      expect(result).toBeInstanceOf(Error); // guard: research is rejected as immutable
+    });
+
+    // "Keep as-is" on the stale banner. The step goes completed, but the packaging
+    // DOCUMENT carries its own stale markers and the per-card "Outdated" chips read
+    // from those — without this they outlive the banner the creator just dismissed.
+    it("clears the packaging document's stale markers when completing a STALE packaging step", async () => {
+      repo.findById.mockResolvedValue(
+        makeProject({
+          packagingId: "pkg-abc",
+          pipeline: { ...makeProject().pipeline, packaging: { status: "stale", startedAt: null, completedAt: null } },
+        })
+      );
+      repo.update.mockResolvedValue(undefined);
+
+      await service.completeStep("proj-1", "packaging", "user-1");
+
+      expect(packagingRepo.clearStale).toHaveBeenCalledWith("pkg-abc");
+    });
+
+    it("does NOT clear stale markers when the packaging step wasn't stale", async () => {
+      repo.findById.mockResolvedValue(
+        makeProject({
+          packagingId: "pkg-abc",
+          pipeline: { ...makeProject().pipeline, packaging: { status: "in_progress", startedAt: null, completedAt: null } },
+        })
+      );
+      repo.update.mockResolvedValue(undefined);
+
+      await service.completeStep("proj-1", "packaging", "user-1");
+
+      expect(packagingRepo.clearStale).not.toHaveBeenCalled();
+    });
+
+    it("still completes the step when clearing the document's stale markers fails", async () => {
+      repo.findById.mockResolvedValue(
+        makeProject({
+          packagingId: "pkg-abc",
+          pipeline: { ...makeProject().pipeline, packaging: { status: "stale", startedAt: null, completedAt: null } },
+        })
+      );
+      repo.update.mockResolvedValue(undefined);
+      (packagingRepo.clearStale as jest.Mock).mockRejectedValue(new Error("firestore down"));
+
+      await expect(service.completeStep("proj-1", "packaging", "user-1")).resolves.toMatchObject({
+        id: "proj-1",
+      });
+      expect(repo.update).toHaveBeenCalledWith(
+        "proj-1",
+        expect.objectContaining({ "pipeline.packaging.status": "completed" })
+      );
     });
   });
 
@@ -821,7 +942,7 @@ describe("VideoProjectService", () => {
       expect(repo.update).toHaveBeenCalledWith("proj-1", expect.objectContaining({ hooksId: "hooks-abc" }));
     });
 
-    it("sets packagingId AND extracts thumbnailHint (first canonical thumbnail brief)", async () => {
+    it("sets packagingId AND extracts thumbnailHint (defaults to the first brief)", async () => {
       repo.findById.mockResolvedValue(makeProject());
       repo.update.mockResolvedValue(undefined);
       packagingRepo.get.mockResolvedValue({
@@ -833,6 +954,40 @@ describe("VideoProjectService", () => {
       expect(repo.update).toHaveBeenCalledWith(
         "proj-1",
         expect.objectContaining({ packagingId: "pkg-abc", thumbnailHint: "Bold text here" })
+      );
+    });
+
+    // The dashboard card renders thumbnailHint. Pinning it to brief #1 made the
+    // creator's pick invisible everywhere outside the packaging screen.
+    it("uses the SELECTED brief for thumbnailHint, not the first", async () => {
+      repo.findById.mockResolvedValue(makeProject());
+      repo.update.mockResolvedValue(undefined);
+      packagingRepo.get.mockResolvedValue({
+        thumbnail: ["Bold text here", "Second option", "Third option"],
+        selectedThumbnailIndex: 2,
+      } as any);
+
+      await service.linkResource("proj-1", "packaging", "pkg-abc", "user-1");
+
+      expect(repo.update).toHaveBeenCalledWith(
+        "proj-1",
+        expect.objectContaining({ thumbnailHint: "Third option" })
+      );
+    });
+
+    it("falls back to the first brief when the stored selection is out of range", async () => {
+      repo.findById.mockResolvedValue(makeProject());
+      repo.update.mockResolvedValue(undefined);
+      packagingRepo.get.mockResolvedValue({
+        thumbnail: ["Only brief"],
+        selectedThumbnailIndex: 5,
+      } as any);
+
+      await service.linkResource("proj-1", "packaging", "pkg-abc", "user-1");
+
+      expect(repo.update).toHaveBeenCalledWith(
+        "proj-1",
+        expect.objectContaining({ thumbnailHint: "Only brief" })
       );
     });
 
@@ -861,11 +1016,98 @@ describe("VideoProjectService", () => {
     });
   });
 
+  // Deleting a project is the documented way to undo a wrong idea pick. Leaving
+  // `videoProjectId` on the idea left its card stuck on "View Project" pointing at
+  // a deleted project, with no way to start over from that idea.
+  describe("delete(projectId, userId) — idea release", () => {
+    it("clears videoProjectId on the source idea", async () => {
+      repo.findById.mockResolvedValue(makeProject({ ideaId: "idea-9" }));
+      repo.update.mockResolvedValue(undefined);
+      contentRepo.updateIdea.mockResolvedValue(undefined as never);
+
+      await service.delete("proj-1", "user-1");
+
+      expect(contentRepo.updateIdea).toHaveBeenCalledWith("idea-9", { videoProjectId: null });
+    });
+
+    it("still deletes the project when releasing the idea fails", async () => {
+      repo.findById.mockResolvedValue(makeProject({ ideaId: "idea-9" }));
+      repo.update.mockResolvedValue(undefined);
+      (contentRepo.updateIdea as jest.Mock).mockRejectedValue(new Error("firestore down"));
+
+      await expect(service.delete("proj-1", "user-1")).resolves.toMatchObject({ isDeleted: true });
+      expect(repo.update).toHaveBeenCalledWith("proj-1", expect.objectContaining({ isDeleted: true }));
+    });
+
+    it("does not re-delete an already deleted project", async () => {
+      repo.findById.mockResolvedValue(makeProject({ isDeleted: true, ideaId: "idea-9" }));
+
+      await service.delete("proj-1", "user-1");
+
+      expect(contentRepo.updateIdea).not.toHaveBeenCalled();
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+  });
+
+  // A title regeneration invalidates the previous pick — and the project is still
+  // NAMED after it. The step must reopen so the creator is asked to choose again.
+  describe("reopenTitleStep(projectId, userId)", () => {
+    it("moves the title step back to in_progress and clears completedAt", async () => {
+      repo.findById.mockResolvedValue(makeProject());
+      repo.update.mockResolvedValue(undefined);
+
+      await service.reopenTitleStep("proj-1", "user-1");
+
+      expect(repo.update).toHaveBeenCalledWith("proj-1", {
+        "pipeline.title.status": "in_progress",
+        "pipeline.title.completedAt": null,
+      });
+    });
+
+    it("refuses to touch another user's project", async () => {
+      repo.findById.mockResolvedValue(makeProject({ createdBy: "someone-else" }));
+
+      await expect(service.reopenTitleStep("proj-1", "user-1")).rejects.toMatchObject({ statusCode: 403 });
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+  });
+
   // --------------------------------------------------------------------------
   // markStale
   // --------------------------------------------------------------------------
 
   describe("markStale(projectId, fromStep)", () => {
+    // The screens had no source for the cause, so two of them hardcoded
+    // "the script has been regenerated" — a false statement for every cascade
+    // that started anywhere else.
+    it("records WHICH upstream step invalidated each downstream step", async () => {
+      repo.findById.mockResolvedValue(
+        makeProject({
+          pipeline: {
+            research: { status: "completed", startedAt: null, completedAt: null },
+            script: { status: "completed", startedAt: null, completedAt: null },
+            hooks: { status: "completed", startedAt: null, completedAt: null },
+            title: { status: "completed", startedAt: null, completedAt: null },
+            packaging: { status: "completed", startedAt: null, completedAt: null },
+          },
+        })
+      );
+      repo.update.mockResolvedValue(undefined);
+
+      await service.markStale("proj-1", "hooks");
+
+      expect(repo.update).toHaveBeenCalledWith(
+        "proj-1",
+        expect.objectContaining({
+          "pipeline.title.staleReason": "hooks_regenerated",
+          "pipeline.packaging.staleReason": "hooks_regenerated",
+        })
+      );
+      // Upstream of the change is untouched — the script didn't become stale.
+      const written = repo.update.mock.calls[0][1] as Record<string, unknown>;
+      expect(written["pipeline.script.staleReason"]).toBeUndefined();
+    });
+
     it("marks downstream non-not_started steps as stale (script cascade)", async () => {
       repo.findById.mockResolvedValue(
         makeProject({
@@ -873,6 +1115,7 @@ describe("VideoProjectService", () => {
             research: { status: "completed", startedAt: null, completedAt: null },
             script: { status: "completed", startedAt: null, completedAt: null },
             hooks: { status: "completed", startedAt: null, completedAt: null },
+            title: { status: "completed", startedAt: null, completedAt: null },
             packaging: { status: "in_progress", startedAt: null, completedAt: null },
           },
         })
@@ -885,6 +1128,7 @@ describe("VideoProjectService", () => {
         "proj-1",
         expect.objectContaining({
           "pipeline.hooks.status": "stale",
+          "pipeline.title.status": "stale",
           "pipeline.packaging.status": "stale",
         })
       );
@@ -897,6 +1141,7 @@ describe("VideoProjectService", () => {
             research: { status: "completed", startedAt: null, completedAt: null },
             script: { status: "completed", startedAt: null, completedAt: null },
             hooks: { status: "not_started", startedAt: null, completedAt: null },
+            title: { status: "not_started", startedAt: null, completedAt: null },
             packaging: { status: "not_started", startedAt: null, completedAt: null },
           },
         })
@@ -915,6 +1160,7 @@ describe("VideoProjectService", () => {
             research: { status: "completed", startedAt: null, completedAt: null },
             script: { status: "completed", startedAt: null, completedAt: null },
             hooks: { status: "completed", startedAt: null, completedAt: null },
+            title: { status: "completed", startedAt: null, completedAt: null },
             packaging: { status: "completed", startedAt: null, completedAt: null },
           },
         })
@@ -936,6 +1182,7 @@ describe("VideoProjectService", () => {
             research: { status: "completed", startedAt: null, completedAt: null },
             script: { status: "completed", startedAt: null, completedAt: null },
             hooks: { status: "not_started", startedAt: null, completedAt: null },
+            title: { status: "not_started", startedAt: null, completedAt: null },
             packaging: { status: "not_started", startedAt: null, completedAt: null },
           },
         })
@@ -964,6 +1211,7 @@ describe("VideoProjectService", () => {
             research: { status: "completed", startedAt: null, completedAt: null },
             script: { status: "completed", startedAt: null, completedAt: null },
             hooks: { status: "completed", startedAt: null, completedAt: null },
+            title: { status: "not_started", startedAt: null, completedAt: null },
             packaging: { status: "not_started", startedAt: null, completedAt: null },
           },
         })

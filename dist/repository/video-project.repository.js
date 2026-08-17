@@ -2,6 +2,16 @@ import { FieldPath } from "firebase-admin/firestore";
 import { db, firebase } from "../config/firebase.js";
 class VideoProjectRepository {
     constructor() {
+        // Back-compat: projects created before Title became a pipeline step lack
+        // pipeline.title. Default it on read so step logic (STEP_ORDER, stale cascade,
+        // startStep/completeStep) never dereferences an undefined step.
+        this.hydrate = (project) => {
+            const pipeline = project.pipeline;
+            if (pipeline && !pipeline.title) {
+                project.pipeline.title = { status: "not_started", startedAt: null, completedAt: null };
+            }
+            return project;
+        };
         this.create = async (data) => {
             const docRef = this.db.collection(this.collection).doc();
             const dataWithId = { ...data, id: docRef.id };
@@ -12,7 +22,7 @@ class VideoProjectRepository {
             const doc = await this.db.collection(this.collection).doc(projectId).get();
             if (!doc.exists)
                 return null;
-            return doc.data();
+            return this.hydrate(doc.data());
         };
         this.list = async (userId, { status, limit, cursor }) => {
             let query = this.db
@@ -59,7 +69,7 @@ class VideoProjectRepository {
                 .where("ideaId", "==", ideaId)
                 .where("isDeleted", "==", false)
                 .get();
-            return snap.docs.map((doc) => doc.data());
+            return snap.docs.map((doc) => this.hydrate(doc.data()));
         };
         this.findByScriptId = async (scriptId, userId) => {
             const snap = await this.db.collection(this.collection)
@@ -70,7 +80,7 @@ class VideoProjectRepository {
                 .get();
             if (snap.empty)
                 return null;
-            return snap.docs[0].data();
+            return this.hydrate(snap.docs[0].data());
         };
         this.db = db;
         this.collection = "videoProjects" /* COLLECTIONS.VIDEO_PROJECTS */;

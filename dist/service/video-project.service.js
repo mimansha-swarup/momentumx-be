@@ -1,18 +1,14 @@
 import { firebase } from "../config/firebase.js";
 import { BadRequest, Forbidden, NotFound } from "../utlils/errors.js";
 import { formatGeneratedTitle } from "../utlils/content.js";
-const STEP_ORDER = ["research", "script", "hooks", "packaging"];
-const NEXT_STEP = {
-    script: "hooks",
-    hooks: "packaging",
-    packaging: "packaging",
-};
+const STEP_ORDER = ["research", "script", "hooks", "title", "packaging"];
 const STALE_CASCADE = {
-    research: ["script", "hooks", "packaging"],
-    script: ["hooks", "packaging"],
-    hooks: ["packaging"],
+    research: ["script", "hooks", "title", "packaging"],
+    script: ["hooks", "title", "packaging"],
+    hooks: ["title", "packaging"],
+    title: ["packaging"],
 };
-const VALID_MUTABLE_STEPS = ["script", "hooks", "packaging"];
+const VALID_MUTABLE_STEPS = ["script", "hooks", "title", "packaging"];
 // Shared by the generation endpoints' in-flight locks (script stream, hooks
 // generate): an in_progress step with startedAt older than this outlives the
 // Gemini timeout, so it's a crashed run and safe to retry.
@@ -54,6 +50,7 @@ class VideoProjectService {
                     research: { status: "completed", startedAt: null, completedAt: now },
                     script: { status: "not_started", startedAt: null, completedAt: null },
                     hooks: { status: "not_started", startedAt: null, completedAt: null },
+                    title: { status: "not_started", startedAt: null, completedAt: null },
                     packaging: {
                         status: "not_started",
                         startedAt: null,
@@ -123,10 +120,13 @@ class VideoProjectService {
             const linked = {
                 script: project.scriptId != null,
                 hooks: project.selectedHookIndex != null,
-                packaging: project.packagingId != null,
             };
             const pipeline = { ...project.pipeline };
-            ["script", "hooks", "packaging"].forEach((step) => {
+            // packaging is NOT inferred from packagingId: persist-on-generate creates the
+            // packaging doc on the FIRST item (title), so packagingId is set mid-pipeline.
+            // packaging + title completion is authoritative from the stored step status
+            // (title completes on select, packaging auto-completes when its 3 items exist).
+            ["script", "hooks"].forEach((step) => {
                 const s = pipeline[step];
                 if (linked[step] && (s.status === "not_started" || s.status === "in_progress")) {
                     pipeline[step] = { ...s, status: "completed" };
@@ -165,6 +165,7 @@ class VideoProjectService {
             };
             await this.repo.update(projectId, {
                 "pipeline.packaging.status": "completed",
+                "pipeline.packaging.staleReason": null,
                 overallStatus: computeOverallStatus(updatedPipeline),
             });
         };
@@ -197,6 +198,19 @@ class VideoProjectService {
                 isDeleted: true,
                 deletedAt: firebase.firestore.FieldValue.serverTimestamp(),
             });
+            // Release the source idea. It keeps `videoProjectId` otherwise, so the idea
+            // card stays stuck on "View Project" pointing at a deleted project forever —
+            // deleting a project is the documented way to undo a wrong pick, and it was
+            // burning the idea instead of freeing it. Best-effort: the delete already
+            // succeeded and must not fail on this.
+            if (project.ideaId) {
+                try {
+                    await this.contentRepo.updateIdea(project.ideaId, { videoProjectId: null });
+                }
+                catch (unlinkError) {
+                    console.error(JSON.stringify({ event: "idea_unlink_failed", projectId, ideaId: project.ideaId, message: unlinkError?.message }));
+                }
+            }
             return { id: projectId, isDeleted: true };
         };
         this.startStep = async (projectId, stepName, userId) => {
@@ -249,15 +263,25 @@ class VideoProjectService {
             if (currentStatus === "not_started") {
                 throw BadRequest("Cannot complete a step that has not been started");
             }
+            // Idempotent no-op, but it must still answer with the full shape the client
+            // patches from — a partial body here crashes the same reducer.
             if (currentStatus === "completed") {
-                return { id: project.id, currentStep: project.currentStep };
+                return {
+                    id: project.id,
+                    currentStep: project.currentStep,
+                    pipeline: project.pipeline,
+                    overallStatus: project.overallStatus,
+                };
             }
             const updates = {
                 [`pipeline.${step}.status`]: "completed",
                 [`pipeline.${step}.completedAt`]: firebase.firestore.FieldValue.serverTimestamp(),
+                // The step is accepted as current again, so the reason it went stale no
+                // longer applies — leaving it would resurface on the next cascade.
+                [`pipeline.${step}.staleReason`]: null,
             };
-            // Auto-advance currentStep
-            const nextStep = NEXT_STEP[step];
+            // Auto-advance currentStep to the next in STEP_ORDER (terminal step stays put).
+            const nextStep = STEP_ORDER[STEP_ORDER.indexOf(step) + 1] ?? step;
             updates["currentStep"] = nextStep;
             // Check if all steps are completed
             const updatedPipeline = { ...project.pipeline };
@@ -265,12 +289,35 @@ class VideoProjectService {
                 ...updatedPipeline[step],
                 status: "completed",
             };
-            const allCompleted = STEP_ORDER.every((s) => s === step ? true : updatedPipeline[s].status === "completed");
-            if (allCompleted) {
-                updates["overallStatus"] = "completed";
-            }
+            // Recompute unconditionally, not just on "all completed". Completing a STALE
+            // step ("Keep as-is") used to leave overallStatus at "stale", so the dashboard
+            // kept its "Needs Update" badge for a project with nothing stale left in it.
+            const newOverallStatus = computeOverallStatus(updatedPipeline);
+            updates["overallStatus"] = newOverallStatus;
             await this.repo.update(projectId, updates);
-            return { id: projectId, currentStep: nextStep };
+            // "Keep as-is" completes a STALE packaging step without regenerating anything.
+            // The packaging document carries its own stale markers, and the per-card
+            // "Outdated" chips read from those — so without this they'd outlive the banner
+            // the creator just dismissed. Best-effort: the step transition above is the
+            // part that must not fail.
+            if (step === "packaging" && currentStatus === "stale" && project.packagingId) {
+                try {
+                    await this.packagingRepo.clearStale(project.packagingId);
+                }
+                catch (clearError) {
+                    console.error(JSON.stringify({ event: "packaging_stale_clear_failed", projectId, packagingId: project.packagingId, message: clearError?.message }));
+                }
+            }
+            // The client patches its cached project from this response. Returning only
+            // {id,currentStep} left its reducer reading `payload.pipeline.…` on undefined,
+            // which threw and aborted the whole state update — so every "Keep as-is" click
+            // toasted success while the stale banner stayed exactly where it was.
+            return {
+                id: projectId,
+                currentStep: nextStep,
+                pipeline: updatedPipeline,
+                overallStatus: newOverallStatus,
+            };
         };
         this.linkResource = async (projectId, resourceType, resourceId, userId) => {
             const validTypes = ["script", "hooks", "packaging"];
@@ -292,8 +339,12 @@ class VideoProjectService {
             if (resourceType === "packaging") {
                 const packagingDoc = await this.packagingRepo.get(resourceId);
                 if (packagingDoc) {
-                    // Canonical `thumbnail` is a string[] of design briefs; the hint is the first one.
-                    updates["thumbnailHint"] = packagingDoc.thumbnail?.[0] ?? null;
+                    // Canonical `thumbnail` is a string[] of design briefs. The hint is the
+                    // brief the user SELECTED — picking variation 3 and seeing variation 1 on
+                    // the dashboard made the selection look inert. Falls back to the first.
+                    const briefs = packagingDoc.thumbnail;
+                    const picked = packagingDoc.selectedThumbnailIndex ?? 0;
+                    updates["thumbnailHint"] = briefs?.[picked] ?? briefs?.[0] ?? null;
                 }
             }
             await this.repo.update(projectId, updates);
@@ -303,6 +354,18 @@ class VideoProjectService {
             await this.getById(projectId, userId);
             await this.repo.update(projectId, { hooksId, selectedHookIndex: hookIndex });
             return { id: projectId, hooksId, selectedHookIndex: hookIndex };
+        };
+        // Title regeneration invalidates the previous pick the same way a hooks
+        // regeneration does: the variations the creator chose from no longer exist, and
+        // the project is still NAMED after one of them. Move the step back to
+        // "needs a pick" so the UI prompts instead of showing a green step over a title
+        // that isn't in the list any more.
+        this.reopenTitleStep = async (projectId, userId) => {
+            await this.getById(projectId, userId);
+            await this.repo.update(projectId, {
+                "pipeline.title.status": "in_progress",
+                "pipeline.title.completedAt": null,
+            });
         };
         this.clearSelectedHook = async (projectId, userId) => {
             await this.getById(projectId, userId);
@@ -326,9 +389,14 @@ class VideoProjectService {
                 return;
             const stepsToMark = STALE_CASCADE[fromStep] ?? [];
             const updates = {};
+            // Record WHAT invalidated each step alongside the flag. The screens had no
+            // source for this, so they hardcoded "the script has been regenerated" — which
+            // is wrong for every cascade that didn't start at the script.
+            const reason = `${fromStep}_regenerated`;
             for (const step of stepsToMark) {
                 if (project.pipeline[step].status !== "not_started") {
                     updates[`pipeline.${step}.status`] = "stale";
+                    updates[`pipeline.${step}.staleReason`] = reason;
                 }
             }
             if (Object.keys(updates).length === 0)
