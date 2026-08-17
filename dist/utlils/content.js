@@ -106,7 +106,10 @@ export async function resolveChannel(extractService, url) {
         return { id, description, titles };
     }
     catch {
-        return { id: "", description: "", titles: [] };
+        // null, NOT empties. Callers otherwise can't tell "this channel has no
+        // description" from "YouTube refused us" — and a quota-exhausted refresh
+        // then wrote those empties over good stored enrichment, silently.
+        return null;
     }
 }
 export async function formatUserData(data, extractService) {
@@ -124,13 +127,17 @@ export async function formatUserData(data, extractService) {
             record.websiteContent = content;
         })
             .catch(() => {
-            record.websiteContent = "";
+            // Same rule as the channel: don't overwrite stored content with "".
+            delete record.websiteContent;
         }));
     }
     // The user's own channel — id, top titles, and (3.5) the channel description
     // stored separately so the user-submitted `description` is never clobbered.
     if (data.userName) {
         jobs.push(resolveChannel(extractService, data.userName).then((channel) => {
+            // Lookup failed — leave whatever is already stored alone.
+            if (!channel)
+                return;
             record.channelId = channel.id;
             record.channelDescription = channel.description;
             record.userTitle = channel.titles;
@@ -139,7 +146,7 @@ export async function formatUserData(data, extractService) {
     if (data.competitors) {
         jobs.push(Promise.all(data.competitors.map(async (url) => {
             const channel = await resolveChannel(extractService, url);
-            return { url, id: channel.id, titles: channel.titles };
+            return { url, id: channel?.id ?? "", titles: channel?.titles ?? [] };
         })).then((competitors) => {
             record.competitors = competitors;
         }));

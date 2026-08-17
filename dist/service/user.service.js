@@ -1,7 +1,7 @@
 import ExtractRepository from "../repository/extract.repository.js";
 import ExtractService from "./extract.service.js";
 import { formatUserData, resolveChannel } from "../utlils/content.js";
-import { generateStreamingContent } from "../utlils/ai.js";
+import { collectJson, generateStreamingContent } from "../utlils/ai.js";
 import { fillTemplate } from "../utlils/prompt-blocks.js";
 import { ONBOARDING_PREFILL_SYSTEM_PROMPT, ONBOARDING_PREFILL_PROMPT, } from "../constants/prompt.js";
 import { GENERATION_CONFIG_PREFILL } from "../constants/firebase.js";
@@ -28,16 +28,14 @@ class UserService {
         // instead of asking the model to hallucinate from nothing.
         this.prefillFromChannel = async (channelUrl) => {
             const channel = await resolveChannel(this.extractService, channelUrl);
-            const hasSignal = channel.description.trim().length > 0 || channel.titles.length > 0;
-            const suggestions = hasSignal
-                ? await this.inferOnboardingFields(channel.description, channel.titles)
+            const description = channel?.description ?? "";
+            const titles = channel?.titles ?? [];
+            const suggestions = description.trim() || titles.length
+                ? await this.inferOnboardingFields(description, titles)
                 : { niche: "", targetAudience: "", brandName: "" };
             return {
                 suggestions,
-                channel: {
-                    channelDescription: channel.description,
-                    topTitles: channel.titles,
-                },
+                channel: { channelDescription: description, topTitles: titles },
             };
         };
         this.inferOnboardingFields = async (channelDescription, topTitles) => {
@@ -46,13 +44,7 @@ class UserService {
                 "{topTitles}": topTitles.join("\n"),
             });
             const result = await generateStreamingContent(ONBOARDING_PREFILL_SYSTEM_PROMPT, userPrompt, GENERATION_CONFIG_PREFILL);
-            let accumulated = "";
-            for await (const chunk of result.stream) {
-                const part = chunk.text();
-                if (part)
-                    accumulated += part;
-            }
-            const parsed = JSON.parse(accumulated);
+            const parsed = await collectJson(result, "channel suggestions");
             return {
                 niche: parsed.niche ?? "",
                 targetAudience: parsed.targetAudience ?? "",
@@ -63,7 +55,16 @@ class UserService {
             // Completeness (3.4) is computed read-time from the record and never
             // persisted — it drives the FE meter and "add next" nudges.
             const record = await this.repo.get(userId);
-            return { ...(record ?? {}), completeness: computeProfileCompleteness(record) };
+            return {
+                ...(record ?? {}),
+                // Always answer with the uid. The onboarding write (`repo.add`) never
+                // stores it, so profiles created that way came back without one — and the
+                // client treated a uid-less response as "no profile", threw the stored
+                // niche/targetAudience away, and bounced the user back into onboarding
+                // forever. It's `req.userId` here, so this can never be wrong or drift.
+                uid: userId,
+                completeness: computeProfileCompleteness(record),
+            };
         };
         this.updateProfile = async (userId, data) => {
             const record = await formatUserData(data, this.extractService);
@@ -79,22 +80,13 @@ class UserService {
             const record = await this.repo.get(userId);
             if (!record)
                 throw NotFound("User not found");
+            // Only `competitors` needs reshaping; everything else round-trips as stored.
+            const { userName, website, brandName, niche, targetAudience, purpose, description, format } = record;
             const input = {
-                userName: record.userName,
-                website: record.website,
-                brandName: record.brandName,
-                niche: record.niche,
-                targetAudience: record.targetAudience,
-                purpose: record.purpose,
-                description: record.description,
-                format: record.format,
-                competitors: Array.isArray(record.competitors)
-                    ? record.competitors
-                        .map((competitor) => typeof competitor === "string"
-                        ? competitor
-                        : competitor?.url)
-                        .filter((url) => Boolean(url))
-                    : [],
+                userName, website, brandName, niche, targetAudience, purpose, description, format,
+                competitors: (Array.isArray(record.competitors) ? record.competitors : [])
+                    .map((c) => (typeof c === "string" ? c : c?.url))
+                    .filter((url) => Boolean(url)),
             };
             const refreshed = await formatUserData(input, this.extractService);
             await this.repo.update(userId, refreshed);

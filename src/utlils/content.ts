@@ -127,7 +127,7 @@ export function formatCreatorsData(
 export async function resolveChannel(
   extractService: ExtractService,
   url: string,
-): Promise<{ id: string; description: string; titles: string[] }> {
+): Promise<{ id: string; description: string; titles: string[] } | null> {
   try {
     const info = await extractService.retrieveChannelId(url);
     const id = extractChannelField(info, "id");
@@ -135,7 +135,10 @@ export async function resolveChannel(
     const titles = id ? (await extractService.getTopTenTitle(id)) ?? [] : [];
     return { id, description, titles };
   } catch {
-    return { id: "", description: "", titles: [] };
+    // null, NOT empties. Callers otherwise can't tell "this channel has no
+    // description" from "YouTube refused us" — and a quota-exhausted refresh
+    // then wrote those empties over good stored enrichment, silently.
+    return null;
   }
 }
 
@@ -167,7 +170,8 @@ export async function formatUserData(
           record.websiteContent = content;
         })
         .catch(() => {
-          record.websiteContent = "";
+          // Same rule as the channel: don't overwrite stored content with "".
+          delete record.websiteContent;
         }),
     );
   }
@@ -177,6 +181,8 @@ export async function formatUserData(
   if (data.userName) {
     jobs.push(
       resolveChannel(extractService, data.userName).then((channel) => {
+        // Lookup failed — leave whatever is already stored alone.
+        if (!channel) return;
         record.channelId = channel.id;
         record.channelDescription = channel.description;
         record.userTitle = channel.titles;
@@ -189,7 +195,7 @@ export async function formatUserData(
       Promise.all(
         data.competitors.map(async (url: string) => {
           const channel = await resolveChannel(extractService, url);
-          return { url, id: channel.id, titles: channel.titles };
+          return { url, id: channel?.id ?? "", titles: channel?.titles ?? [] };
         }),
       ).then((competitors) => {
         record.competitors = competitors as unknown as typeof record.competitors;

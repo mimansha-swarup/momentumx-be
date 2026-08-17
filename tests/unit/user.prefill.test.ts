@@ -21,6 +21,9 @@ jest.mock("../../src/config/ai", () => ({
 }));
 
 jest.mock("../../src/utlils/ai", () => ({
+  // collectJson stays REAL: it is the empty/malformed-JSON guard, and the fake
+  // streams below are exactly what should be driving it.
+  collectJson: jest.requireActual("../../src/utlils/ai").collectJson,
   generateStreamingContent: jest.fn(),
   generateContent: jest.fn(),
 }));
@@ -125,5 +128,31 @@ describe("UserService.prefillFromChannel", () => {
       targetAudience: "",
       brandName: "",
     });
+  });
+});
+
+// resolveChannel used to swallow every failure into `{id:"",description:"",titles:[]}`,
+// which callers couldn't tell apart from a channel that genuinely has no
+// description — so a quota-exhausted refresh wrote those empties over good
+// stored enrichment. It now returns null on failure.
+describe("UserService.prefillFromChannel — unresolvable channel", () => {
+  let service: UserService;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    service = new UserService(new UserRepository() as never);
+  });
+
+  it("returns blank suggestions without calling the model when resolution fails", async () => {
+    mockResolve.mockResolvedValue(null);
+
+    const result = await service.prefillFromChannel("https://youtube.com/@x");
+
+    expect(result.suggestions).toEqual({
+      niche: "",
+      targetAudience: "",
+      brandName: "",
+    });
+    expect(result.channel).toEqual({ channelDescription: "", topTitles: [] });
   });
 });

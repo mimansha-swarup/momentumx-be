@@ -115,3 +115,55 @@ describe("formatUserData", () => {
     expect(noSite).not.toHaveProperty("websiteContent");
   });
 });
+
+// A failed YouTube/website lookup used to be written out as empty strings and
+// arrays. `refreshContext` re-runs this over the STORED record, so a quota
+// exhaustion (100 units per search — routine) silently blanked a user's
+// channelDescription, userTitle and websiteContent, and dropped their
+// completeness score with it.
+describe("formatUserData — a failed lookup must not blank stored enrichment", () => {
+  it("omits channel fields entirely when the channel can't be resolved", async () => {
+    const extract = makeExtract({
+      retrieveChannelId: jest.fn().mockRejectedValue(new Error("quota exceeded")),
+    });
+
+    const result = await formatUserData({ ...baseOnboarding } as never, extract);
+
+    // Omitted, not empty — the repository skips undefined, so the stored values survive.
+    expect(result).not.toHaveProperty("channelDescription");
+    expect(result).not.toHaveProperty("userTitle");
+    expect(result).not.toHaveProperty("channelId");
+    // The user's own fields still round-trip.
+    expect(result.niche).toBe("N");
+    expect(result.targetAudience).toBe("A");
+  });
+
+  it("omits websiteContent when the site fetch fails", async () => {
+    const extract = makeExtract({
+      getWebsiteContent: jest.fn().mockRejectedValue(new Error("timeout")),
+    });
+
+    const result = await formatUserData(
+      { ...baseOnboarding, website: "https://example.com" } as never,
+      extract
+    );
+
+    expect(result).not.toHaveProperty("websiteContent");
+    expect(result.website).toBe("https://example.com");
+  });
+
+  it("keeps a competitor's URL even when its channel can't be resolved", async () => {
+    const extract = makeExtract({
+      retrieveChannelId: jest.fn().mockRejectedValue(new Error("quota exceeded")),
+    });
+
+    const result = await formatUserData(
+      { ...baseOnboarding, competitors: ["https://youtube.com/@rival"] } as never,
+      extract
+    );
+
+    expect(result.competitors).toEqual([
+      { url: "https://youtube.com/@rival", id: "", titles: [] },
+    ]);
+  });
+});
