@@ -16,6 +16,17 @@ if (allowedOrigins.length === 0) {
     console.warn("ALLOWED_ORIGINS not set — CORS restricted to localhost dev origins");
 }
 app.use(helmet());
+// Every response here is authenticated and scoped to req.userId, so none of it
+// is cacheable. Express ETags each JSON body by default, which meant an endpoint
+// whose body never changes (an empty competitor list, say) answered 304 Not
+// Modified on revalidation — and, more importantly, one user's data was storable
+// by their browser and by any intermediary, since nothing said otherwise.
+// The SSE route overrides this with its own `no-cache` header.
+app.set("etag", false);
+app.use((_req, res, next) => {
+    res.setHeader("Cache-Control", "no-store");
+    next();
+});
 app.use(cors({
     origin: allowedOrigins.length > 0 ? allowedOrigins : [/^https?:\/\/localhost(:\d+)?$/],
     credentials: true,
