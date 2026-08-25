@@ -6,7 +6,8 @@ import { GENERATION_CONFIG_HOOKS } from "../constants/firebase.js";
 import { collectJson, generateStreamingContent } from "../utlils/ai.js";
 import { fillTemplate } from "../utlils/prompt-blocks.js";
 import HooksRepository from "../repository/hooks.repository.js";
-import VideoProjectService, { STEP_LOCK_MS } from "./video-project.service.js";
+import VideoProjectService from "./video-project.service.js";
+import StepRunner from "./step-runner.js";
 import ContextService from "./context.service.js";
 import { IHooksBatch } from "../types/routes/hooks.js";
 import { BadRequest, Conflict, Forbidden, NotFound, ServiceUnavailable } from "../utlils/errors.js";
@@ -33,7 +34,12 @@ class HooksService {
   constructor(
     private repo: HooksRepository,
     private videoProjectService: VideoProjectService,
-    private contextService?: ContextService
+    private contextService: ContextService | undefined,
+    // REQUIRED, deliberately. An optional runner would mean a missing wire
+    // silently skips the lock and (from Phase 08) the debit — failing open on
+    // exactly the concern the seam exists to guarantee. A missing argument
+    // should be a compile error, not a quiet downgrade.
+    private steps: StepRunner
   ) {}
 
   // Body script (if sent) wins; otherwise resolve the project's stored script
@@ -60,70 +66,43 @@ class HooksService {
     videoProjectId: string,
     script?: string
   ): Promise<IHooksBatch> => {
+    // Idempotent replay stays OUTSIDE the seam: returning an existing batch is
+    // not a generation. It must not take the lock and must not spend a credit.
     const project = await this.videoProjectService.getById(videoProjectId, userId);
-
-    if (project.pipeline.script.status !== "completed") {
-      throw BadRequest("Script must be completed before generating hooks");
-    }
-
-    // Idempotent start: a batch already linked to this project is returned
-    // as-is, so auto-starting clients can never double-generate. A fresh batch
-    // is only reachable via the explicit regenerate endpoint.
     if (project.hooksId) {
       const existing = await this.repo.findById(project.hooksId);
       if (existing) return existing;
     }
 
-    // In-flight lock (parity with the script stream): a second generate while
-    // one is running (remount mid-generation, second tab) would mint a second
-    // batch and re-link it, orphaning the first. Stale startedAt = crashed run.
-    // ponytail: same ~ms read-then-start race as the script lock; move both to
-    // a transaction if concurrent tabs become a real pattern.
-    const hooksStep = project.pipeline.hooks;
-    const startedMs = hooksStep.startedAt?.toMillis() ?? 0;
-    if (hooksStep.status === "in_progress" && Date.now() - startedMs < STEP_LOCK_MS) {
-      throw Conflict("Hooks generation already in progress for this project");
-    }
-
     const resolvedScript = await this.resolveScript(userId, videoProjectId, script);
     const userPrompt = fillTemplate(GENERATE_HOOKS_PROMPT, { "{script}": resolvedScript });
 
-    // The generate endpoint owns the in_progress transition (same as script
-    // streaming and packaging save) — clients never PATCH step state themselves.
-    try {
-      await this.videoProjectService.startStep(videoProjectId, "hooks", userId);
-    } catch (stepError) {
-      console.error(JSON.stringify({ event: "pipeline_start_failed", step: "hooks", projectId: videoProjectId, userId, message: (stepError as Error)?.message }));
-    }
+    // Everything the old body hand-rolled — the script precondition, the
+    // read-then-write "lock" that wasn't atomic, the swallowed startStep, and the
+    // abandon-on-failure block — now lives in the seam. `REQUIRES.hooks` carries
+    // the precondition; `acquireStep` enforces it inside the transaction that
+    // takes the lock; `releaseStep` restores prior state on failure (and, unlike
+    // the old abandon, does not clear a stale marker).
+    const hooksBatch = await this.steps.run(
+      { actor: { userId }, kind: "hooks", projectId: videoProjectId },
+      async () => {
+        const result = await generateStreamingContent(
+          HOOKS_SYSTEM_PROMPT,
+          userPrompt,
+          GENERATION_CONFIG_HOOKS
+        );
 
-    let parsed: { hooks: string[] };
-    try {
-      const result = await generateStreamingContent(
-        HOOKS_SYSTEM_PROMPT,
-        userPrompt,
-        GENERATION_CONFIG_HOOKS
-      );
+        const parsed = await collectJson<{ hooks: string[] }>(result, "hooks");
+        assertHooks(parsed);
 
-      parsed = await collectJson<{ hooks: string[] }>(result, "hooks");
-      assertHooks(parsed);
-    } catch (genError) {
-      // Roll the step back (parity with the script stream's empty-output path)
-      // so a failed generation doesn't leave it in_progress — that would 409
-      // retries for the full lock window and read as running on the dashboard.
-      try {
-        await this.videoProjectService.abandonStep(videoProjectId, "hooks");
-      } catch (abandonError) {
-        console.error(JSON.stringify({ event: "pipeline_abandon_failed", step: "hooks", projectId: videoProjectId, userId, message: (abandonError as Error)?.message }));
+        return this.repo.save({
+          videoProjectId,
+          createdBy: userId,
+          hooks: parsed.hooks,
+          hookFeedback: {},
+        });
       }
-      throw genError;
-    }
-
-    const hooksBatch = await this.repo.save({
-      videoProjectId,
-      createdBy: userId,
-      hooks: parsed.hooks,
-      hookFeedback: {},
-    });
+    );
 
     try {
       await this.videoProjectService.linkResource(videoProjectId, "hooks", hooksBatch.id, userId);
@@ -186,14 +165,38 @@ class HooksService {
       ? script
       : await this.resolveScript(userId, hooksBatch.videoProjectId, script);
     const userPrompt = fillTemplate(GENERATE_HOOKS_PROMPT, { "{script}": resolvedScript });
-    const result = await generateStreamingContent(
-      HOOKS_SYSTEM_PROMPT,
-      userPrompt,
-      GENERATION_CONFIG_HOOKS
+
+    // `mode: "regenerate"` — telemetry and (from Phase 08) metering, but NO step
+    // lock and NO precondition.
+    //
+    // An earlier version of this wrapped regenerate identically to generate, on
+    // the theory that it "gains the lock it never had". That broke the primary
+    // regenerate flow: hooks stays `in_progress` from generate until the user
+    // selects one, so the ordinary "try again" click 409'd for three minutes —
+    // and a successful regenerate calls `clearSelectedHook`, which sets the step
+    // back to `in_progress` and re-arms it for the next attempt. The precondition
+    // was wrong for the same reason: after an upstream regen marks `script`
+    // stale, regenerating hooks is exactly what the user needs and it would 400.
+    const parsed = await this.steps.run(
+      {
+        actor: { userId },
+        kind: "hooks",
+        projectId: hooksBatch.videoProjectId,
+        mode: "regenerate",
+      },
+      async () => {
+        const result = await generateStreamingContent(
+          HOOKS_SYSTEM_PROMPT,
+          userPrompt,
+          GENERATION_CONFIG_HOOKS
+        );
+
+        const output = await collectJson<{ hooks: string[] }>(result, "hooks");
+        assertHooks(output);
+        return output;
+      }
     );
 
-    const parsed = await collectJson<{ hooks: string[] }>(result, "hooks");
-    assertHooks(parsed);
     await this.repo.update(hooksId, { hooks: parsed.hooks, hookFeedback: {} });
     try {
       await this.videoProjectService.clearSelectedHook(hooksBatch.videoProjectId, userId);

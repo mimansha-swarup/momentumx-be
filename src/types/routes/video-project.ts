@@ -2,7 +2,12 @@ import { Timestamp } from "firebase-admin/firestore";
 
 export type StepStatus = "not_started" | "in_progress" | "completed" | "stale";
 export type OverallStatus = "in_progress" | "completed" | "stale";
-export type StepName = "research" | "script" | "hooks" | "title" | "packaging";
+
+// StepName is derived from STEP_ORDER in constants/pipeline.ts so the list of
+// steps exists exactly once. Imported and re-exported here because ~20 files
+// already take it from this module, and a rename would be churn with no benefit.
+import type { StepName } from "../../constants/pipeline.js";
+export type { StepName };
 export type ResourceType = "script" | "hooks" | "packaging";
 export type PackagingItemStatus = "not_started" | "completed" | "stale";
 export type StaleReason =

@@ -1,5 +1,6 @@
 import { firebase } from "../config/firebase.js";
 import ContentRepository from "../repository/content.repository.js";
+import HooksRepository from "../repository/hooks.repository.js";
 import PackagingRepository from "../repository/packaging.repository.js";
 import VideoProjectRepository from "../repository/video-project.repository.js";
 import {
@@ -10,22 +11,17 @@ import {
   StepName,
   StepState,
 } from "../types/routes/video-project.js";
+import { IPackaging } from "../types/routes/packaging.js";
+import { STEP_ORDER, STEP_LOCK_MS, downstreamOf } from "../constants/pipeline.js";
 import { BadRequest, Forbidden, NotFound } from "../utlils/errors.js";
-import { formatGeneratedTitle } from "../utlils/content.js";
+import { assertOwner, formatGeneratedTitle } from "../utlils/content.js";
 
-const STEP_ORDER: StepName[] = ["research", "script", "hooks", "title", "packaging"];
-const STALE_CASCADE: Record<string, StepName[]> = {
-  research: ["script", "hooks", "title", "packaging"],
-  script: ["hooks", "title", "packaging"],
-  hooks: ["title", "packaging"],
-  title: ["packaging"],
-};
 const VALID_MUTABLE_STEPS = ["script", "hooks", "title", "packaging"];
 
-// Shared by the generation endpoints' in-flight locks (script stream, hooks
-// generate): an in_progress step with startedAt older than this outlives the
-// Gemini timeout, so it's a crashed run and safe to retry.
-export const STEP_LOCK_MS = 180_000;
+// STEP_ORDER, downstreamOf (was the hand-written STALE_CASCADE map) and
+// STEP_LOCK_MS all live in constants/pipeline.ts now. Re-exported so the existing
+// importers of STEP_LOCK_MS don't all have to change in the same commit.
+export { STEP_LOCK_MS };
 
 // Single source of the overall-status arithmetic, shared by reconcileView (read path)
 // and refreshPackagingStep (write path) so the two can never drift.
@@ -42,7 +38,8 @@ class VideoProjectService {
   constructor(
     private repo: VideoProjectRepository,
     private contentRepo: ContentRepository,
-    private packagingRepo: PackagingRepository
+    private packagingRepo: PackagingRepository,
+    private hooksRepo: HooksRepository
   ) {}
 
   create = async (userId: string, ideaId: string): Promise<IVideoProject> => {
@@ -89,6 +86,7 @@ class VideoProjectService {
   };
 
   createFromTitle = async (userId: string, title: string): Promise<IVideoProject> => {
+    assertOwner(userId);
     if (!title || !title.trim()) {
       throw BadRequest("title is required");
     }
@@ -405,6 +403,26 @@ class VideoProjectService {
 
     await this.getById(projectId, userId);
 
+    // Validating the PROJECT is not enough — the resource id comes straight from the
+    // request body. Without this, anyone holding a leaked scriptId/hooksId/packagingId
+    // could attach it to their own project and read it back: `packaging` copies the
+    // selected thumbnail brief onto the project, `script` is returned near-verbatim by
+    // generate-shorts, and `hooks` feeds five separate generation paths. Becomes routine
+    // after sharing ships — a removed member still knows every id in the channel.
+    const resource =
+      resourceType === "script"
+        ? await this.contentRepo.getScriptById(resourceId)
+        : resourceType === "hooks"
+          ? await this.hooksRepo.findById(resourceId)
+          : await this.packagingRepo.get(resourceId);
+
+    if (!resource) {
+      throw NotFound(`${resourceType} not found`);
+    }
+    if (resource.createdBy !== userId) {
+      throw Forbidden();
+    }
+
     const fieldMap: Record<string, string> = {
       script: "scriptId",
       hooks: "hooksId",
@@ -416,15 +434,13 @@ class VideoProjectService {
     };
 
     if (resourceType === "packaging") {
-      const packagingDoc = await this.packagingRepo.get(resourceId);
-      if (packagingDoc) {
-        // Canonical `thumbnail` is a string[] of design briefs. The hint is the
-        // brief the user SELECTED — picking variation 3 and seeing variation 1 on
-        // the dashboard made the selection look inert. Falls back to the first.
-        const briefs = packagingDoc.thumbnail;
-        const picked = packagingDoc.selectedThumbnailIndex ?? 0;
-        updates["thumbnailHint"] = briefs?.[picked] ?? briefs?.[0] ?? null;
-      }
+      // Canonical `thumbnail` is a string[] of design briefs. The hint is the
+      // brief the user SELECTED — picking variation 3 and seeing variation 1 on
+      // the dashboard made the selection look inert. Falls back to the first.
+      const packagingDoc = resource as IPackaging;
+      const briefs = packagingDoc.thumbnail;
+      const picked = packagingDoc.selectedThumbnailIndex ?? 0;
+      updates["thumbnailHint"] = briefs?.[picked] ?? briefs?.[0] ?? null;
     }
 
     await this.repo.update(projectId, updates);
@@ -478,7 +494,8 @@ class VideoProjectService {
     const project = await this.repo.findById(projectId);
     if (!project) return;
 
-    const stepsToMark = STALE_CASCADE[fromStep] ?? [];
+    // Derived, not written down: everything after `fromStep` in STEP_ORDER.
+    const stepsToMark = downstreamOf(fromStep as StepName);
     const updates: Record<string, unknown> = {};
 
     // Record WHAT invalidated each step alongside the flag. The screens had no
