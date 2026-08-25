@@ -1,12 +1,19 @@
 const MAX_RESULTS = 10;
 const API_KEY = process.env.YT_API;
 
+// Phase 01 item 8. These two calls sit on the onboarding and refresh-context
+// paths and had no timeout, unlike research.repository.ts — a stalled YouTube
+// connection would hang the request indefinitely. Same 8s bound, same reason.
+const YT_TIMEOUT_MS = 8000;
+const ytFetch = (url: string): Promise<Response> =>
+  fetch(url, { signal: AbortSignal.timeout(YT_TIMEOUT_MS) });
+
 class ExtractRepository {
   constructor() {}
 
   getYTChanelTitles = async (channelId: string) => {
     try {
-      const res = await fetch(
+      const res = await ytFetch(
         `https://www.googleapis.com/youtube/v3/search?key=${API_KEY}&channelId=${channelId}&part=snippet,id&order=viewCount&type=video&maxResults=${MAX_RESULTS}`
       );
       const data: {
@@ -26,7 +33,7 @@ class ExtractRepository {
 
   retrieveChannelId = async (param: string) => {
     try {
-      const res = await fetch(
+      const res = await ytFetch(
         `https://www.googleapis.com/youtube/v3/channels?part=id,brandingSettings&${param}&key=${API_KEY}`
       );
       const data: {
