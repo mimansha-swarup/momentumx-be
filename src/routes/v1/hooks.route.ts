@@ -1,31 +1,19 @@
 import { Router } from "express";
 import { authMiddleware } from "../../middleware/auth.js";
-import HooksController from "../../controller/hooks.controller.js";
-import HooksService from "../../service/hooks.service.js";
-import HooksRepository from "../../repository/hooks.repository.js";
-import VideoProjectService from "../../service/video-project.service.js";
-import VideoProjectRepository from "../../repository/video-project.repository.js";
-import ContentRepository from "../../repository/content.repository.js";
-import PackagingRepository from "../../repository/packaging.repository.js";
-import UserRepository from "../../repository/user.repository.js";
-import ContextService from "../../service/context.service.js";
+import { validate } from "../../middleware/validate.js";
+import {
+  generateHooksSchema,
+  regenerateHooksSchema,
+  selectHookSchema,
+} from "../../validation/hooks.validation.js";
+import { hooksController } from "../../container.js";
 
 const router = Router();
 
-const videoProjectRepo = new VideoProjectRepository();
-const contentRepo = new ContentRepository();
-const packagingRepo = new PackagingRepository();
-const userRepo = new UserRepository();
-const videoProjectService = new VideoProjectService(videoProjectRepo, contentRepo, packagingRepo);
-const hooksRepo = new HooksRepository();
-const contextService = new ContextService(userRepo, contentRepo, hooksRepo, videoProjectService);
-const hooksService = new HooksService(hooksRepo, videoProjectService, contextService);
-const hooksController = new HooksController(hooksService);
-
 router.use(authMiddleware);
-router.post("/generate", hooksController.generate);
-router.post("/:hooksId/select", hooksController.select);
-router.post("/:hooksId/regenerate", hooksController.regenerate);
+router.post("/generate", validate(generateHooksSchema), hooksController.generate);
+router.post("/:hooksId/select", validate(selectHookSchema), hooksController.select);
+router.post("/:hooksId/regenerate", validate(regenerateHooksSchema), hooksController.regenerate);
 router.get("/:hooksId/export", hooksController.exportHooks);
 // Registered after /export so the literal segment wins the match.
 router.get("/:hooksId", hooksController.getById);

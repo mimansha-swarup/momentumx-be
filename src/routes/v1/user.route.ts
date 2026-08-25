@@ -1,7 +1,4 @@
 import { Router } from "express";
-import UserController from "../../controller/user.controller.js";
-import UserService from "../../service/user.service.js";
-import UserRepository from "../../repository/user.repository.js";
 import { authMiddleware } from "../../middleware/auth.js";
 import { validate } from "../../middleware/validate.js";
 import {
@@ -9,12 +6,9 @@ import {
   prefillSchema,
   profileUpdateSchema,
 } from "../../validation/user.validation.js";
+import { userController } from "../../container.js";
 
 const router = Router();
-
-const userRepository = new UserRepository();
-const userService = new UserService(userRepository);
-const userController = new UserController(userService);
 
 router.use(authMiddleware);
 router.post("/onboarding/prefill", validate(prefillSchema), userController.prefill);
@@ -25,4 +19,5 @@ router.post("/refresh-context", userController.refreshContext);
 router.get("/profile", userController.getProfile);
 
 router.patch("/profile", validate(profileUpdateSchema), userController.updateProfile);
+
 export default router;
