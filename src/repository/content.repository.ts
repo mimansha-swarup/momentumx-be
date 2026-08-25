@@ -31,11 +31,12 @@ class ContentRepository {
         // Active batch only — archived ideas must never appear in the list
         .where("archived", "==", false);
 
-      // Optional filtering
-      if (
-        filters.hasOwnProperty("isScriptGenerated") &&
-        filters?.isScriptGenerated
-      ) {
+      // Optional filtering. Test the TYPE, not truthiness: the previous guard
+      // (`hasOwnProperty(...) && filters.isScriptGenerated`) could not represent a
+      // deliberate `false`, so "ideas I haven't scripted yet" silently fell
+      // through and returned everything. Absent → no filter; false → only
+      // unscripted; true → only scripted.
+      if (typeof filters.isScriptGenerated === "boolean") {
         query = query.where(
           "isScriptGenerated",
           "==",
@@ -44,11 +45,30 @@ class ContentRepository {
       }
 
       if (filters.searchText) {
-        // Prefix search using title \u2014 must order by the field it ranges over.
-        query = query.orderBy("title");
+        // Prefix search on title. Firestore requires the range field to be the
+        // first ordering, so this branch orders by `title` — which means it needs
+        // a DIFFERENT cursor from the default branch. `(createdAt, docId)` is
+        // meaningless against a title ordering.
+        //
+        // That mismatch is why this branch used to ignore the cursor entirely and
+        // re-return page 1 forever: the cursor it was handed did not fit its sort.
         query = query
-          .startAt(filters.searchText)
-          .endAt(filters.searchText + "\uf8ff");
+          .orderBy("title")
+          .orderBy(firebase.firestore.FieldPath.documentId());
+
+        // `endAt` keeps the prefix bound; `startAfter` moves past the previous
+        // page's last row. Both apply together — the upper bound is what makes it
+        // a prefix search, the lower bound is what makes it page.
+        //
+        // docId is the tiebreaker: two ideas can share a title, and without it
+        // `startAfter(title)` would skip every duplicate after the first.
+        if (cursor?.title && cursor?.docId) {
+          query = query.startAfter(cursor.title, cursor.docId);
+        } else {
+          query = query.startAt(filters.searchText);
+        }
+
+        query = query.endAt(filters.searchText + "\uf8ff");
       } else {
         // ONE ordering for page 1 and every cursor page. This orderBy used to live
         // only in the cursor branch, so page 1 came back in Firestore's default
@@ -169,32 +189,57 @@ class ContentRepository {
     });
   };
 
+  // Phase 01 item 4. This used to take ONE snapshot of everything active and then
+  // archive it in chunks. An idea created after that snapshot — a concurrent
+  // generation, or simply a slow archive over many chunks — was never seen, stayed
+  // active, and surfaced mixed into the next batch.
+  //
+  // Re-querying per chunk closes that: each pass asks for what is *still* active,
+  // so records that appeared mid-run are picked up by a later pass. The loop
+  // terminates because every pass archives the page it just read, which
+  // permanently removes those documents from `archived == false`.
   archiveUserIdeas = async (userId: string, excludeBatchId?: string) => {
-    const snapshot = await this.db
-      .collection(this.collection)
-      .where("createdBy", "==", userId)
-      .where("archived", "==", false)
-      .select("batchId")
-      .get();
-
-    const toArchive = snapshot.docs.filter(
-      (doc) => !excludeBatchId || doc.data().batchId !== excludeBatchId
-    );
-
-    if (toArchive.length === 0) return;
-
-    // Firestore caps a batch at 500 ops — chunk so large batches never throw.
+    // Firestore caps a batch at 500 ops — stay under it so a commit never throws.
     const CHUNK_SIZE = 450;
-    for (let i = 0; i < toArchive.length; i += CHUNK_SIZE) {
+    // A generation writes 10 ideas, so this is far more headroom than any real
+    // run needs; it exists so a bug can't spin here forever.
+    const MAX_PASSES = 200;
+
+    for (let pass = 0; pass < MAX_PASSES; pass++) {
+      const snapshot = await this.db
+        .collection(this.collection)
+        .where("createdBy", "==", userId)
+        .where("archived", "==", false)
+        .select("batchId")
+        .limit(CHUNK_SIZE)
+        .get();
+
+      if (snapshot.empty) return;
+
+      const toArchive = snapshot.docs.filter(
+        (doc) => !excludeBatchId || doc.data().batchId !== excludeBatchId
+      );
+
+      // Everything still active belongs to the excluded batch — nothing left to do.
+      // Without this the loop would re-read the same page forever.
+      if (toArchive.length === 0) return;
+
       const batch = db.batch();
-      toArchive.slice(i, i + CHUNK_SIZE).forEach((doc) => {
+      toArchive.forEach((doc) => {
         batch.update(doc.ref, {
           archived: true,
           updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
         });
       });
       await batch.commit();
+
+      // A short page means we reached the end of what matched.
+      if (snapshot.size < CHUNK_SIZE) return;
     }
+
+    console.warn(
+      JSON.stringify({ event: "archive_max_passes_reached", userId, maxPasses: MAX_PASSES })
+    );
   };
 
   updateIdea = async (ideaId: string, data: Record<string, unknown>) => {

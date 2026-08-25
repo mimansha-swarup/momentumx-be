@@ -72,12 +72,26 @@ class PackagingRepository {
         // can't both skip completion. Returns whether it created the doc and whether
         // the whole set is now complete (so the service can drive the pipeline step).
         this.upsertGeneratedItem = async (videoProjectId, userId, field, item, canonical) => {
-            const existing = await this.findByVideoProject(videoProjectId);
-            const ref = this.db
-                .collection(this.collection)
-                .doc(existing?.id ?? videoProjectId);
             return this.db.runTransaction(async (txn) => {
-                const snap = await txn.get(ref);
+                // Phase 01 item 3. This lookup used to run OUTSIDE the transaction, which
+                // defeated the point of having one: persist-on-generate fires four item
+                // writes concurrently, and the document this call decided to write to could
+                // be created by a sibling in the gap. Reading the query inside the
+                // transaction puts the choice of document under the same consistency
+                // guarantee as the write to it.
+                const locate = this.db
+                    .collection(this.collection)
+                    .where("videoProjectId", "==", videoProjectId)
+                    .limit(1);
+                const found = await txn.get(locate);
+                // Deterministic id for a new document (id === videoProjectId), so two
+                // concurrent first-generations converge on ONE doc instead of racing two
+                // auto-id creates. Legacy/door docs may still carry an auto-id, which is
+                // why the query above locates rather than assuming.
+                const ref = found.empty
+                    ? this.db.collection(this.collection).doc(videoProjectId)
+                    : found.docs[0].ref;
+                const snap = found.empty ? await txn.get(ref) : found.docs[0];
                 const statuses = {
                     title: "not_started",
                     description: "not_started",
@@ -136,45 +150,48 @@ class PackagingRepository {
         // Inverse of markStale, for the "Keep as-is" path: the creator accepted the
         // content as-is, so the doc must stop reporting stale or every card keeps an
         // "Outdated" chip under a banner they already dismissed.
+        // Phase 01 item 3. Both of these used to read `itemStatuses`, rebuild it in
+        // memory and write the WHOLE map back. Any item that changed in the gap — a
+        // regenerate completing mid-cascade — was reverted by the write, because the
+        // map being written was computed from a snapshot that no longer matched.
+        //
+        // Two changes: the read and the write now share a transaction, and only the
+        // keys that actually flip are written, as dotted paths. `upsertGeneratedItem`
+        // already used dotted paths; these two just didn't follow the pattern. An item
+        // this call doesn't touch is now untouched in the write, not rewritten to the
+        // value it happened to have when we looked.
+        this.transitionItemStatuses = async (packagingId, from, to, docFields) => {
+            const ref = this.db.collection(this.collection).doc(packagingId);
+            await this.db.runTransaction(async (txn) => {
+                const doc = await txn.get(ref);
+                if (!doc.exists)
+                    return;
+                const currentStatuses = (doc.data()?.itemStatuses ?? {});
+                const updates = { ...docFields };
+                for (const key of ["title", "description", "thumbnail", "shorts"]) {
+                    if ((currentStatuses[key] ?? "not_started") === from) {
+                        updates[`itemStatuses.${key}`] = to;
+                    }
+                }
+                txn.update(ref, updates);
+            });
+        };
+        // Inverse of markStale, for the "Keep as-is" path: the creator accepted the
+        // content as-is, so the doc must stop reporting stale or every card keeps an
+        // "Outdated" chip under a banner they already dismissed.
         this.clearStale = async (packagingId) => {
-            const doc = await this.db.collection(this.collection).doc(packagingId).get();
-            if (!doc.exists)
-                return;
-            const currentStatuses = (doc.data()?.itemStatuses ?? {});
-            const updatedStatuses = {};
-            for (const key of ["title", "description", "thumbnail", "shorts"]) {
-                const current = currentStatuses[key] ?? "not_started";
-                updatedStatuses[key] = current === "stale" ? "completed" : current;
-            }
-            await this.db.collection(this.collection).doc(packagingId).update({
-                itemStatuses: updatedStatuses,
+            await this.transitionItemStatuses(packagingId, "stale", "completed", {
                 isStale: false,
                 staleReason: null,
                 staleSince: null,
             });
         };
         this.markStale = async (packagingId, reason) => {
-            try {
-                const doc = await this.db.collection(this.collection).doc(packagingId).get();
-                if (!doc.exists)
-                    return;
-                const data = doc.data();
-                const currentStatuses = (data?.itemStatuses ?? {});
-                const updatedStatuses = {};
-                for (const key of ["title", "description", "thumbnail", "shorts"]) {
-                    const current = currentStatuses[key] ?? "not_started";
-                    updatedStatuses[key] = current === "completed" ? "stale" : current;
-                }
-                await this.db.collection(this.collection).doc(packagingId).update({
-                    itemStatuses: updatedStatuses,
-                    isStale: true,
-                    staleReason: reason,
-                    staleSince: firebase.firestore.FieldValue.serverTimestamp(),
-                });
-            }
-            catch (error) {
-                throw error;
-            }
+            await this.transitionItemStatuses(packagingId, "completed", "stale", {
+                isStale: true,
+                staleReason: reason,
+                staleSince: firebase.firestore.FieldValue.serverTimestamp(),
+            });
         };
         this.db = db;
         this.collection = "packaging" /* COLLECTIONS.PACKAGING */;

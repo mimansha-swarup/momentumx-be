@@ -468,9 +468,29 @@ class PackagingService {
             if (item === "title") {
                 updateData.selectedTitleIndex = null;
             }
-            // Check if clearing stale flag is needed
-            const allItems = ["title", "description", "thumbnail", "shorts"];
-            const anyStillStale = allItems.some((k) => k !== statusKey && currentStatuses[k] === "stale");
+            // Check if clearing stale flag is needed.
+            //
+            // THREE items, not four — `title` is deliberately excluded. Since P6A, Title
+            // is its own pipeline step: it starts on generate-title and completes on
+            // select-title, and the Packaging step covers description + thumbnail +
+            // shorts. The completion check below (`packagingComplete`) already uses those
+            // three; this condition used all four, and the mismatch deadlocked the stale
+            // banner.
+            //
+            // How it deadlocked: `markStale` flips EVERY completed item to stale,
+            // title included. The client then regenerates only the packaging-owned items
+            // (`ProjectPackaging/index.tsx:223` filters `item !== "title"`, correctly —
+            // regenerating title there would discard the user's selected title and
+            // collide with the Title screen's own flow). So `itemStatuses.title` stayed
+            // "stale" forever, `anyStillStale` stayed true, `isStale` was never cleared
+            // and `refreshPackagingStep` never ran. The user regenerated all three items,
+            // watched them succeed, and the amber "needs update" banner never went away.
+            // Only "Keep as-is" could dismiss it.
+            //
+            // Title staleness is not lost — it lives on `pipeline.title` and is cleared
+            // by select-title / reopenTitleStep, which is the step that owns it.
+            const PACKAGING_OWNED_ITEMS = ["description", "thumbnail", "shorts"];
+            const anyStillStale = PACKAGING_OWNED_ITEMS.some((k) => k !== statusKey && currentStatuses[k] === "stale");
             if (!anyStillStale) {
                 updateData.isStale = false;
                 updateData.staleReason = null;

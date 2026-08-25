@@ -2,6 +2,40 @@ import { randomUUID } from "crypto";
 import { kmeans } from "ml-kmeans";
 import { embeddingModel } from "../config/ai.js";
 import { firebase } from "../config/firebase.js";
+import { Unauthorized } from "./errors.js";
+// Phase 01 item 1. Every generated record is stamped with an owner, and an empty
+// owner is worse than a missing one: `""` is a real value that EVERY such record
+// across EVERY user shares, so Phase 04's backfill would copy it into `accountId`
+// and drop unrelated users into one bucket that reads as a tenancy leak.
+//
+// This asserts at SERVICE ENTRY, never inside the formatters. `regenerateAll`
+// archives the previous batch before formatting, and the `Promise.allSettled`
+// that follows drops rejected results silently — so a throw from a formatter
+// would archive the old ideas, save zero new ones, and return 200. That trades a
+// bad write for silent data loss.
+export function assertOwner(userId) {
+    if (typeof userId !== "string" || userId.trim() === "") {
+        throw Unauthorized("Missing authenticated user");
+    }
+}
+// Both idea-formatting sites use `Promise.allSettled` and then keep only the
+// fulfilled results. That is the right call — one failed embedding shouldn't sink
+// a whole batch — but it discarded the rejections without a trace, so a partial
+// generation was indistinguishable from a complete one. Log what was dropped and
+// why; the caller still decides whether the survivors are enough.
+export function logDroppedFormats(label, userId, results) {
+    const rejected = results.filter((r) => r.status === "rejected");
+    if (rejected.length === 0)
+        return;
+    console.error(JSON.stringify({
+        event: "idea_format_dropped",
+        label,
+        userId,
+        dropped: rejected.length,
+        total: results.length,
+        reasons: rejected.slice(0, 3).map((r) => r.reason?.message ?? String(r.reason)),
+    }));
+}
 function extractChannelField(value, field) {
     if (typeof value === "string")
         return field === "id" ? value : "";
@@ -16,7 +50,11 @@ export const formatGeneratedTitle = async (title, userId, batchId) => {
     return {
         id: randomUUID(),
         title,
-        createdBy: userId || "",
+        // No `|| ""` fallback: callers are guarded by assertOwner at service entry,
+        // and if one ever isn't, `ignoreUndefinedProperties` drops the field entirely.
+        // An ABSENT owner is quarantined by Phase 04's backfill; an EMPTY-STRING one
+        // is a valid value that every orphaned record shares.
+        createdBy: userId,
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         isScriptGenerated: false,
         embedding: embedding.embedding.values,
@@ -42,7 +80,11 @@ export const formatGeneratedScript = (title, scriptId, ideaId, videoProjectId, s
     return {
         id: scriptId,
         title,
-        createdBy: userId || "",
+        // No `|| ""` fallback: callers are guarded by assertOwner at service entry,
+        // and if one ever isn't, `ignoreUndefinedProperties` drops the field entirely.
+        // An ABSENT owner is quarantined by Phase 04's backfill; an EMPTY-STRING one
+        // is a valid value that every orphaned record shares.
+        createdBy: userId,
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         script,
         ideaId,

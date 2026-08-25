@@ -3,7 +3,7 @@ import { SCRIPT_SYSTEM_PROMPT, SCRIPT_USER_PROMPT, IDEA_SYSTEM_PROMPT, IDEA_USER
 import { STEP_LOCK_MS } from "./video-project.service.js";
 import { collectJson, generateContent, generateStreamingContent } from "../utlils/ai.js";
 import { SCRIPT_FORMAT_STYLE, fillTemplate, resolveVideoFormat } from "../utlils/prompt-blocks.js";
-import { formatCreatorsData, formatGeneratedScript, formatGeneratedIdea, getClusteredTitles, } from "../utlils/content.js";
+import { assertOwner, logDroppedFormats, formatCreatorsData, formatGeneratedScript, formatGeneratedIdea, getClusteredTitles, } from "../utlils/content.js";
 import { GENERATION_CONFIG_SCRIPTS, GENERATION_CONFIG_IDEAS, } from "../constants/firebase.js";
 import { firebase } from "../config/firebase.js";
 import { BadRequest, Conflict, Forbidden, NotFound, ServiceUnavailable } from "../utlils/errors.js";
@@ -45,12 +45,21 @@ class ContentService {
                 filters,
             });
             const lastDoc = docs[docs.length - 1];
-            const nextCursor = lastDoc
-                ? {
-                    createdAt: lastDoc.createdAt.toDate().toISOString(),
-                    docId: lastDoc.id,
-                }
-                : null;
+            // The cursor must match the ORDERING the repository used, and search orders
+            // by title while the default orders by createdAt. Emitting a createdAt cursor
+            // for a title-ordered page is what left search paging stuck on page 1: the
+            // repository was handed a cursor it could not apply, so it applied none.
+            //
+            // The client is opaque to this — it echoes back whatever `nextCursor` it was
+            // given, so the two shapes never have to be understood on the frontend.
+            const nextCursor = !lastDoc
+                ? null
+                : filters.searchText
+                    ? { title: lastDoc.title, docId: lastDoc.id }
+                    : {
+                        createdAt: lastDoc.createdAt.toDate().toISOString(),
+                        docId: lastDoc.id,
+                    };
             return {
                 meta: {
                     nextCursor,
@@ -70,6 +79,7 @@ class ContentService {
         // step, never here. Research signals are an enhancer: their failure
         // degrades to channel-context-only generation, it never blocks.
         this.generateIdeas = async (userId, countTowardStats = true, override) => {
+            assertOwner(userId);
             const [similarTitles, userRecord] = await Promise.all([
                 getClusteredTitles(userId, this.repo),
                 this.userRepo.get(userId),
@@ -174,6 +184,7 @@ class ContentService {
             return updates;
         };
         this.generateScripts = async (userId, projectId, res) => {
+            assertOwner(userId);
             try {
                 // Project is mandatory now — load it first (throws NotFound/Forbidden).
                 const vps = this.videoProjectService;
@@ -315,6 +326,9 @@ class ContentService {
             }
         };
         this.regenerateAll = async (userId) => {
+            // Before the archive below — this method destroys the previous batch, so an
+            // owner problem must surface while there is still something to lose.
+            assertOwner(userId);
             const activeIdeas = await this.repo.getActiveBatch(userId);
             for (const idea of activeIdeas) {
                 await this.cascadeIdeaStale(idea.id, userId);
@@ -328,9 +342,16 @@ class ContentService {
             const formatted = formattedResults
                 .filter((r) => r.status === "fulfilled")
                 .map((r) => r.value);
+            logDroppedFormats("regenerateAll", userId, formattedResults);
+            // The batch is already archived by this point, so returning an empty slate
+            // here is silent data loss rather than a failed regeneration.
+            if (!formatted.length) {
+                throw ServiceUnavailable("Couldn't regenerate your ideas. Please try again.");
+            }
             return this.saveBatchIdeas(formatted);
         };
         this.regenerateOne = async (userId, ideaId) => {
+            assertOwner(userId);
             const idea = await this.repo.getIdea(ideaId);
             if (!idea) {
                 throw NotFound("Idea not found");
