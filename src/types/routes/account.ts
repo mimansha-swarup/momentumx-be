@@ -2,8 +2,15 @@ import { Timestamp } from "firebase-admin/firestore";
 
 /**
  * Multi-account schema (Phase 02). TYPES ONLY — nothing reads or writes these
- * yet. They exist ahead of the code so the indexes, the backfill and the API
- * are all written against one declared shape rather than three guesses.
+ * yet. They exist ahead of the code so the indexes, the backfill and the API are
+ * written against one declared shape rather than three guesses.
+ *
+ * The reasoning behind this shape — why the context is a subcollection, why
+ * membership is three fields, why ids are UUID v4 — lives in
+ * `docs/multi-account/phase-02-accounts-schema-and-indexes.md`. It is NOT
+ * repeated here; two copies of an argument drift, and the doc is the one Phase
+ * 05/06b are written from. What stays below is only what a caller can get wrong
+ * at the point of use.
  */
 
 export type AccountRole = "owner" | "editor" | "viewer";
@@ -13,44 +20,23 @@ export interface AccountMember {
   addedAt: Timestamp;
 }
 
-/**
- * `accounts/{accountId}` — a channel.
- *
- * READ ON EVERY AUTHENTICATED REQUEST (Phase 05 checks membership here), which
- * is why the bulky channel context lives in a subcollection instead. See
- * `IChannelContext`.
- *
- * `accountId` is a UUID v4 and NEVER equals a uid — including for a user's first
- * and only channel. See the README decision (2026-08-25): reusing the uid made
- * deletion un-real and made a `userId`-where-`accountId`-belongs bug isolate
- * correctly and therefore stay invisible.
- */
+/** `accounts/{accountId}` — a channel. Read on every authenticated request. */
 export interface IAccount {
+  /** UUID v4. NEVER equals a uid, including for a user's first channel. */
   id: string;
 
   /**
-   * What the channel switcher renders. Required, because a user can finish
-   * onboarding today with no channel URL at all, leaving nothing else to show.
-   * Computed once at `ensureDefaultAccount` and editable afterwards:
-   *   brandName → userTitle → handle(userName) → niche → "Untitled channel"
+   * What the switcher renders. Required — a user can finish onboarding with no
+   * channel URL at all, so there is not always a handle to fall back on.
    */
   displayName: string;
   /** "@foo", derived from the channel URL. Null until onboarded. */
   handle: string | null;
 
   /**
-   * THE THREE MEMBERSHIP FIELDS ARE DELIBERATE REDUNDANCY, and the rule is that
-   * they are always written together, in one operation, by one helper. Never let
-   * a caller assemble them — that is how you get a member who can query an
-   * account but has no role.
-   *
-   * Why three and not one: Firestore cannot query inside a map, so answering
-   * "which channels can I see?" needs a plain array for `array-contains`. The map
-   * carries the roles. `ownerUids` is separate because a query may contain only
-   * ONE `array-contains` clause — so it cannot be expressed as a second condition
-   * on `memberUids`, and it makes two rules cheap to enforce: an account always
-   * keeps at least one owner, and you cannot delete your login while you are the
-   * last owner of any account.
+   * Deliberate redundancy: always written together, in one operation, by one
+   * helper. A caller assembling these by hand is how you get a member who can
+   * query an account but has no role.
    */
   memberUids: string[];
   ownerUids: string[];
@@ -58,11 +44,7 @@ export interface IAccount {
 
   billingOwnerUid: string;
 
-  /**
-   * Tombstone, not a hard delete (Phase 05). It distinguishes "this channel was
-   * deleted" (410 Gone) from "this id never existed" (404), which is what stops a
-   * stale bookmark or a shared link reading as a bug.
-   */
+  /** Tombstone, not a hard delete — distinguishes 410 Gone from 404. */
   deletedAt: Timestamp | null;
 
   createdAt: Timestamp;
@@ -70,16 +52,10 @@ export interface IAccount {
 }
 
 /**
- * `accounts/{accountId}/context/channel` — READ ONLY WHEN GENERATING.
+ * `accounts/{accountId}/context/channel` — read only when generating.
  *
- * Split out of the account document on purpose. `websiteContent` is scraped page
- * text; co-located with the membership fields, a large scrape would make
- * *membership writes* fail against the 1 MiB document limit, and the failure
- * would read as "can't add a member to this channel" with nothing pointing at a
- * website scrape. Subcollections are excluded from the parent's limit.
- *
- * The split is free: Firestore bills per document read, not per byte, and the
- * generation sites read exactly one document either way.
+ * Kept out of the account document so an unbounded `websiteContent` scrape can
+ * never make a *membership* write fail against the 1 MiB limit.
  */
 export interface IChannelContext {
   /** Channel URL. Legacy field name from `users/{uid}`, kept deliberately. */

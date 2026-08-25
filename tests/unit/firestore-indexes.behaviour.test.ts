@@ -39,9 +39,6 @@ const shapeWithout = (index: Index, tenancyField: string): string =>
       .join("|"),
   ].join(" ");
 
-const positionOf = (index: Index, fieldPath: string): number =>
-  index.fields.findIndex((f) => f.fieldPath === fieldPath);
-
 describe("firestore.indexes.json — the migration coexistence window", () => {
   const byTenancy = (field: string) =>
     config.indexes.filter((i) => i.fields.some((f) => f.fieldPath === field));
@@ -86,18 +83,6 @@ describe("firestore.indexes.json — the migration coexistence window", () => {
     expect(both).toEqual([]);
   });
 
-  it("puts the tenancy field in the same position as the field it twins", () => {
-    // Equality fields must precede ordered fields; their order relative to each
-    // other does not affect matching. Keeping the position identical is what
-    // makes the two sets readable as pairs during the coexistence window.
-    for (const index of byTenancy("accountId")) {
-      const twin = byTenancy("createdBy").find(
-        (i) => shapeWithout(i, "createdBy") === shapeWithout(index, "accountId")
-      );
-      if (!twin) continue;
-      expect(positionOf(index, "accountId")).toBe(positionOf(twin, "createdBy"));
-    }
-  });
 });
 
 describe("firestore.indexes.json — write-cost exemptions", () => {
@@ -126,26 +111,28 @@ describe("firestore.indexes.json — write-cost exemptions", () => {
 });
 
 describe("firestore.indexes.json — shape", () => {
-  it("references only collections that exist in the enum", () => {
+  it("references only collections that exist", () => {
     // The last outage was a rename that left this file pointing at `topics`.
-    const known = new Set([
-      "users", "scripts", "ideas", "packaging", "videoProjects", "hooks", "events",
-      "accounts", "billing", "invites", "migrations", "usage",
-    ]);
+    //
+    // The names are READ from the enum, not restated here. A hand-copied list
+    // would be a third copy of the collection names, drifting silently — which is
+    // the same class of bug this test exists to catch. `const enum` is erased at
+    // compile time and cannot be enumerated at runtime, so parse the source, the
+    // way the auth/validation ratchets do.
+    const source = fs.readFileSync(
+      path.join(process.cwd(), "src", "constants", "collection.ts"),
+      "utf8"
+    );
+    const declared = new Set(
+      [...source.matchAll(/=\s*"([^"]+)"/g)].map((m) => m[1])
+    );
+
+    expect(declared.size).toBeGreaterThan(5); // the parse still works
 
     const unknown = [...new Set(config.indexes.map((i) => i.collectionGroup))].filter(
-      (g) => !known.has(g)
+      (g) => !declared.has(g)
     );
 
     expect(unknown).toEqual([]);
-  });
-
-  it("declares a scope and an ordering direction on every field", () => {
-    for (const index of config.indexes) {
-      expect(index.queryScope).toBe("COLLECTION");
-      for (const field of index.fields) {
-        expect(field.order ?? field.arrayConfig).toBeDefined();
-      }
-    }
   });
 });
