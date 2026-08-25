@@ -39,7 +39,13 @@ Generates 5 hook variations from a script. Saves the batch to the `hooks` Firest
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `videoProjectId` | `string` | Yes | ID of the video project |
-| `script` | `string` | Yes | Full video script text |
+| `script` | `string` | **No** | Full video script text. Omit it — the server resolves the script from the project. |
+
+> `script` was previously documented as required. It is optional and has been for a
+> while: the controller resolves the script server-side from the project when the
+> field is absent. Sending it is unnecessary, and sending a *stale* copy is worse
+> than sending nothing — the stored script is the source of truth. Same principle as
+> the `videoProjectId` note on `/select` below.
 
 ### Response — `200`
 

@@ -92,7 +92,7 @@ List all Video Projects for the authenticated user. Powers the dashboard.
 | Param | Type | Default | Description |
 |---|---|---|---|
 | `status` | `string` | — | Filter by `overallStatus`: `in_progress`, `completed`, `stale` |
-| `limit` | `number` | `20` | Max results. Maximum: 50. |
+| `limit` | `number` | `20` | Max results. Maximum: 50 — clamped server-side (`utlils/pagination.ts`), not rejected: an out-of-range or unparseable value silently falls back rather than failing the page. |
 | `cursor` | `string` | — | Firestore document ID of last item from previous page |
 
 ### Response — `200`
@@ -214,35 +214,20 @@ Idempotent — if already deleted, returns 200.
 
 ---
 
-## PATCH `/v1/video-projects/:projectId/step/:stepName/start`
+## ~~PATCH `/v1/video-projects/:projectId/step/:stepName/start`~~ — REMOVED
 
-Mark a step as `in_progress`. Called when creator first opens a step.
+**This route no longer exists and must not be re-added.** It is a 404, pinned by
+`tests/integration/video-project.route.test.ts`.
 
-**Valid `stepName` values:** `script`, `hooks`, `packaging` (never `research` — always completed at creation)
+A client-callable "start" is a lock the client can decline to take. Marking a step
+`in_progress` now happens **server-side**, inside the generation endpoints, via the
+transactional `acquireStep` — which takes the lock, checks ownership and enforces the
+step's preconditions in the same transaction that writes. The old read-then-write pair
+let two requests both read "free" and both proceed; that is a duplicate Gemini call
+today and a double charge once credits land.
 
-Idempotent — if step is already `in_progress` or `completed`, returns 200 with no write.
-
-### Response — `200`
-```json
-{
-  "success": true,
-  "data": {
-    "id": "string",
-    "currentStep": "script",
-    "pipeline": {
-      "script": { "status": "in_progress", "startedAt": "<timestamp>", "completedAt": null }
-    },
-    "updatedAt": "<timestamp>"
-  }
-}
-```
-
-### Error Cases
-| Status | Condition |
-|---|---|
-| `400` | Invalid `stepName` or attempting to start `research` |
-| `403` | Not owner |
-| `404` | Not found or soft-deleted |
+See `.claude/rules/api-design.md` (the "no /start route" note) and
+`docs/multi-account/phase-01b-generation-seam.md`.
 
 ---
 

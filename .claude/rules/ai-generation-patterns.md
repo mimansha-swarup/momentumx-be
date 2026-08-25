@@ -133,15 +133,24 @@ Non-negotiable:
 
 ## KMeans — Guards and Preprocessing
 
-```typescript
-// 1. Filter archived ideas and cap at 200
-const activeTitles = (titleRecord || []).filter((doc) => !doc.archived);
-const capped = activeTitles.slice(0, 200);
+**The guards span two layers.** Earlier versions of this rule showed all of them as
+in-memory steps inside `getClusteredTitles` and stated that all KMeans logic lives
+in that one file. It does not, and looking only there will miss two of the four.
 
-// 2. Calculate k
+```typescript
+// 1+2. Filter archived and cap at 200 — IN THE QUERY, not in memory.
+//      src/repository/content.repository.ts → getIdeasForClustering()
+db.collection(COLLECTIONS.IDEAS)
+  .where("createdBy", "==", userId)
+  .where("archived", "==", false)   // ← archived filter
+  .limit(200)                        // ← the cap
+  .select("title", "embedding")      // projected: never read whole idea docs
+  .get();
+
+// 3. Calculate k — src/utlils/content.ts → getClusteredTitles()
 const k = Math.min(8, Math.ceil(capped.length / 20));
 
-// 3. Guard — skip clustering if too few titles
+// 4. Guard — skip clustering if too few titles (same file)
 if (titles.length <= k) return [titles];
 ```
 
@@ -151,7 +160,20 @@ Non-negotiable:
 - Guard `titles.length <= k` prevents clustering crash when `k > n`
 - Never remove any of these guards
 
-All KMeans logic is in `src/utlils/content.ts` → `getClusteredTitles`.
+**Where each one lives:**
+
+| Guard | Enforced in |
+|---|---|
+| archived filter | `content.repository.ts` → `getIdeasForClustering` (query) |
+| 200 cap | `content.repository.ts` → `getIdeasForClustering` (query) |
+| `k` calculation | `utlils/content.ts` → `getClusteredTitles` |
+| `titles.length <= k` skip | `utlils/content.ts` → `getClusteredTitles` |
+
+`getClusteredTitles` clusters whatever the repository hands it, **untouched** — it
+does no filtering and no slicing of its own. So weakening the query silently
+removes two guards with no change to the util and no type error. Both are pinned
+by `tests/unit/repository/content.repository.behaviour.test.ts`; if you change
+that query, those tests are the ones that must still pass.
 
 ---
 

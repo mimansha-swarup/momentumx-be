@@ -195,7 +195,7 @@ interface VideoProject {
   };
 
   overallStatus: "in_progress" | "completed" | "stale";
-  currentStep: "research" | "script" | "hooks" | "packaging";
+  currentStep: "research" | "script" | "hooks" | "title" | "packaging";
 
   isDeleted: boolean;
   deletedAt: Timestamp | null;

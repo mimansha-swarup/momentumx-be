@@ -208,7 +208,41 @@ Internally ordered by risk: **additive first (1A, 1B — separate PR, zero behav
 
 ---
 
-## Phase 5 — Billing, metering & enforcement
+## Phase 5 — Billing, metering & enforcement — ⚠️ SUPERSEDED
+
+> **Superseded by [multi-account Phase 08](./docs/multi-account/phase-08-credits-and-metering.md).**
+> Do not implement 5B or 5C as written. This phase was designed for one user with one
+> channel: its quotas are per-*user* (`5 ideas/day`), which has no answer once a person owns
+> or shares several channels. Phase 08 replaces the model — one credit balance in
+> `billing/{uid}`, a price list keyed on `GenerationKind`, per-channel reporting counters in
+> `accounts/{accountId}/usage/{YYYY-MM}`, and `billingOwnerUid` on the account deciding
+> whose balance pays.
+>
+> Three specific reversals, so nobody implements the older half by accident:
+>
+> - **5B's `usage.daily.{YYYY-MM-DD}` map on the user document is rejected.** It is an
+>   unbounded map on the document read most often, growing one key per day forever, with
+>   every key auto-indexed. Phase 02 exempts `accounts.members` for this exact reason.
+>   Phase 08's dated subcollection documents replace it. `FieldValue.increment` remains
+>   correct *there* — it is only wrong for the gate, which must read before it writes.
+> - **5C's "check-then-consume race: acceptable, don't over-engineer with transactions" is
+>   rejected.** That reasoning assumed one person per account. Phase 09 makes two editors on
+>   one channel ordinary, so concurrent debits stop being rare precisely when sharing ships.
+>   Phase 08 requires the transaction.
+> - **"Fail open on infrastructure errors" is rejected — Phase 08 fails closed.** The stated
+>   fear (a Firestore blip locking everyone out of generation) does not apply: the debit is a
+>   Firestore transaction, and so is persisting the generated output. If Firestore is down,
+>   generation is already broken. Failing closed costs nothing that was not already lost;
+>   failing open gives away paid product on every blip.
+>
+> **What survives, and is still needed:** 5A (payment provider, webhook signature
+> verification, raw-body handling, auth-allowlist bypass) — Phase 08 specifies how credits
+> are *spent* and never how they are *bought*, so 5A is the missing half, not a duplicate.
+> 5D likewise: the per-instance in-memory rate limiter still has to go, and multi-account
+> Phase 05 adds a second reason (per-IP limits punish several members of one channel sharing
+> an office). 5D's scheduled context refresh is permitted, but it is Blaze-only and must stay
+> non-load-bearing — stale context is a degraded experience, which is a different class of
+> failure from the credit reset the multi-account README forbids a scheduler for.
 
 **Goal:** GA §11 — greenfield monetization. Last of the big builds because every quota it enforces (ideas/day, images/mo, free-project wall) needs the features from P1–P4 to exist and be stable.
 

@@ -269,7 +269,7 @@ videoProjects/{videoProjectId}
   }
 
   overallStatus: "in_progress" | "completed" | "stale"
-  currentStep: "research" | "script" | "hooks" | "packaging"
+  currentStep: "research" | "script" | "hooks" | "title" | "packaging"
   createdAt: Timestamp       // server-side
   updatedAt: Timestamp       // server-side
 ```

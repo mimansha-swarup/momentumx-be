@@ -135,7 +135,9 @@ Packaging documents are saved with the client-provided fields plus server-set fi
     thumbnail: PackagingItemStatus,
     shorts: PackagingItemStatus,
   },
-  isStale: boolean,              // true if ANY item is "stale"
+  isStale: boolean,              // true if any PACKAGING-OWNED item is "stale"
+                                 // (description | thumbnail | shorts). NOT title —
+                                 // see "Stale Clearing" below.
   staleReason: "script_regenerated" | "hooks_regenerated" | null,
   staleSince: Timestamp | null,
 }
@@ -226,7 +228,9 @@ When an upstream dependency is regenerated, the packaging document is marked sta
 
 ### Stale Clearing
 
-After any `regenerateItem` completes, the service checks all `itemStatuses`. If no items remain `"stale"`, the document-level stale fields are cleared: `isStale: false`, `staleReason: null`, `staleSince: null`.
+After any `regenerateItem` completes, the service checks the **three packaging-owned** items — `description`, `thumbnail`, `shorts`. If none remain `"stale"`, the document-level stale fields are cleared: `isStale: false`, `staleReason: null`, `staleSince: null`.
+
+**`title` is deliberately excluded from that count**, and this section used to say "all `itemStatuses`" (four items), which described a deadlock rather than a design. Since P6A, Title is its own pipeline step: its staleness lives on `pipeline.title` and is cleared by `selectTitle` / `reopenTitleStep`, not by anything in this document. Counting it here made the banner permanently undismissable — completion counted three items while un-staling counted four, so regenerating every item the Packaging screen offers still left `isStale: true` forever. The code (`packaging.service.ts` → `PACKAGING_OWNED_ITEMS`) is correct; this doc was not.
 
 ### Atomic Writes
 

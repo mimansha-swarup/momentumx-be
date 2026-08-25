@@ -101,9 +101,30 @@ JSON-encoding the chunk keeps embedded newlines in multi-line content (scripts) 
 | Successful read | 200 |
 | Successful create | 201 |
 | Bad request / missing fields | 400 |
-| Unauthorized / invalid token | 403 |
+| Not authenticated — missing, malformed or invalid token | **401** |
+| Authenticated, but not allowed to touch this resource | **403** |
 | Resource not found | 404 |
 | Server error / service failure | 500 |
+| Upstream (Gemini / YouTube) produced nothing usable | 503 |
+
+**401 and 403 are not interchangeable, and this table used to say otherwise** — it
+listed "Unauthorized / invalid token → 403". The code was always right:
+`authMiddleware` and `sseAuthMiddleware` return **401** for a missing, malformed or
+invalid token, which is correct HTTP semantics — *who are you?* — while **403** means
+*I know who you are, and no*.
+
+Keeping them distinct is load-bearing, not pedantry:
+
+- `Forbidden()` (`utlils/errors.ts`) is 403 and is what every ownership check throws.
+- The multi-account plan builds its whole client contract on 403 meaning permission:
+  `account_forbidden`, `wrong_account` and `role_forbidden` are all 403 with different
+  `code` values, and the frontend branches on them (eject to the channel list vs. offer
+  a switch vs. show an inline message). A 401 in that set would mean "log in again" and
+  send the user somewhere completely different.
+- `error_handler.ts`'s `STRING_SENTINELS` map is a legacy fallback for bare
+  `throw new Error("...")` calls. It does **not** fire for auth failures — `auth.ts`
+  calls `res.sendError` directly rather than throwing — and an `HttpError` always wins
+  over it, so the `Unauthorized()` factory's 401 is what reaches the client.
 
 ---
 
@@ -117,6 +138,20 @@ const userId = req.userId;
 const userId = req.body.userId;
 const userId = req.query.userId as string;
 ```
+
+---
+
+## Query Params — Always a String by the Time You Read Them
+
+`req.query.x as string` is a lie Express is happy to tell: `?q=a&q=b` parses to an
+array and `?q[x]=1` to an object. `queryNormalizer` (`src/middleware/query_normalizer.ts`,
+mounted in `app.ts` before the routes) collapses both to a single string — last
+occurrence wins — so the casts in the controllers are true at runtime.
+
+Before it existed, `GET /v1/research/keywords?query=a&query=b` reached
+`query.trim()` as an array and returned **500 "Something went wrong"** for what is
+a client-side mistake. If a route ever needs a genuine array or a typed query,
+give that route a zod schema — do not widen the normalizer.
 
 ---
 
@@ -166,7 +201,10 @@ Snapshot of the API surface. When exact behavior matters, verify against `src/ro
   PATCH /profile               — update profile
 
 /v1/ideas
-  POST  /generate              — generate 10 ideas
+  POST  /generate              — ADD 10 ideas to the active list ("Generate More").
+                                 ADDITIVE BY DESIGN: it does NOT archive what's already
+                                 there. Only /regenerate-all archives. The missing
+                                 archiveUserIdeas call is intentional — do not "fix" it.
   GET   /                      — list saved ideas
   GET   /export                — export active batch as text
   POST  /regenerate-all        — archive + regenerate full batch

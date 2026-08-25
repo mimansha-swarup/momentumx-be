@@ -36,18 +36,39 @@ Idempotent — re-submitting overwrites previous onboarding data and re-runs all
 
 ### Request Body
 
+**Every field is individually optional.** The requirement is a *cross-field* one,
+enforced by `onboardingSchema` (`src/validation/user.validation.ts`):
+
+> Provide a **YouTube channel URL**, or **both a niche and a target audience**.
+
+Two entry paths, deliberately low-friction — with a channel URL we enrich the rest
+from it, so the fastest onboarding is a single field.
+
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `userName` | `string` | Yes | Creator's YouTube channel URL |
-| `brandName` | `string` | Yes | Brand or channel name |
-| `niche` | `string` | Yes | Content niche |
-| `purpose` | `string` | Yes | Channel purpose / mission |
-| `targetAudience` | `string` | Yes | Target audience description |
+| `userName` | `string` | Conditional | Creator's YouTube channel URL. Satisfies the requirement on its own. |
+| `niche` | `string` | Conditional | Content niche. Required only when `userName` is absent, together with `targetAudience`. |
+| `targetAudience` | `string` | Conditional | Target audience description. Same condition as `niche`. |
+| `brandName` | `string` | No | Brand or channel name |
+| `purpose` | `string` | No | Channel purpose / mission |
 | `competitors` | `string[]` | Yes | Array of competitor YouTube channel URLs |
 | `description` | `string` | Yes | Channel description |
 | `website` | `string` | No | Brand/personal website URL |
 
-**No server-side validation** — missing required fields will produce degraded AI generation output, not a 400 error.
+**Server-side validation is enforced.** This section previously said there was none —
+that is no longer true. `validate(onboardingSchema)` runs before the controller:
+
+- Failing the cross-field rule above returns **400** with a field-prefixed message.
+- Every field is length-capped (`brandName`/`niche` 200, `targetAudience` 500,
+  `purpose` 1000, `description` 5000, URLs 2000, `competitors` max 20).
+- `userName` and each `competitors[]` entry must look like a YouTube channel URL;
+  `website` must be a valid `http(s)` URL or an empty string.
+- `format` must be `talking_head` or `faceless`.
+- **Unknown keys are stripped**, so derived/enrichment fields cannot be injected by
+  a client.
+
+What is still true: supplying only the bare minimum yields thinner AI output. That is
+a quality consequence, not a validation error.
 
 ### Response — `200`
 
