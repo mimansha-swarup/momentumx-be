@@ -3,6 +3,7 @@ import VideoProjectService from "../service/video-project.service.js";
 import { ICreateVideoProjectBody, ILinkResourceBody, IUpdateVideoProjectBody } from "../types/routes/video-project.js";
 import { asyncHandler } from "../middleware/async_handler.js";
 import { BadRequest } from "../utlils/errors.js";
+import { parseListLimit, PROJECTS_PAGE } from "../utlils/pagination.js";
 import { eventService } from "../service/event.service.js";
 import { EventType } from "../types/routes/event.js";
 
@@ -33,7 +34,7 @@ class VideoProjectController {
     };
     const data = await this.service.list(req.userId, {
       status: status as "in_progress" | "completed" | "stale" | undefined,
-      limit: limit ? parseInt(limit, 10) : undefined,
+      limit: parseListLimit(limit, PROJECTS_PAGE),
       cursor,
     });
     res.sendSuccess({ data, message: "Video projects retrieved successfully" });

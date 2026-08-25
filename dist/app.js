@@ -4,6 +4,7 @@ import helmet from "helmet";
 import { responseFormatter } from "./middleware/response_formatter.js";
 import loggerMiddleware from "./middleware/logger_middleware.js";
 import rateLimiter from "./middleware/rate_limit.js";
+import queryNormalizer from "./middleware/query_normalizer.js";
 import { errorHandler } from "./middleware/error_handler.js";
 import rootRouter from "./routes/index.js";
 const app = express();
@@ -39,6 +40,9 @@ app.use(responseFormatter);
 app.use(express.json());
 app.use(rateLimiter);
 app.use(loggerMiddleware);
+// Before any route reads req.query — see query_normalizer.ts for why every
+// `req.query.x as string` in the controllers was a lie.
+app.use(queryNormalizer);
 app.get("/", (_req, res) => {
     res.sendSuccess({ statusCode: 200, message: "Hello World!" });
 });

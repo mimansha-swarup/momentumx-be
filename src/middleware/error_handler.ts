@@ -5,7 +5,14 @@ import { HttpError } from "../utlils/errors.js";
 // to the HTTP status it should resolve to during the migration window.
 const STRING_SENTINELS: Record<string, number> = {
   Forbidden: 403,
-  Unauthorized: 403,
+  // 401, not 403 — "Unauthorized" means NOT AUTHENTICATED (who are you?), while
+  // 403 means authenticated-but-not-allowed. This entry said 403 and contradicted
+  // both `Unauthorized()` in utlils/errors.ts and what authMiddleware actually
+  // sends. It is currently unreachable for auth failures (auth.ts calls
+  // res.sendError directly, and an HttpError always outranks this map), but a
+  // wrong fallback is worse than no fallback the day something does throw the
+  // bare string.
+  Unauthorized: 401,
   "Not found": 404,
   "Idea not found": 404,
   "Script not found": 404,

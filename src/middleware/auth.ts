@@ -21,6 +21,13 @@ export const authMiddleware = (
     .auth()
     .verifyIdToken(token)
     .then((decodedToken) => {
+      // verifyIdToken should always yield a uid, but an empty one would be written
+      // as a real owner value that every such record shares (Phase 01 item 1).
+      // Refusing here keeps that impossible for every route at once.
+      if (!decodedToken.uid) {
+        res.sendError({ message: "Unauthorized", statusCode: 401 });
+        return;
+      }
       req.userId = decodedToken.uid;
       next();
     })
@@ -45,6 +52,13 @@ export const sseAuthMiddleware = (
     .auth()
     .verifyIdToken(token)
     .then((decodedToken) => {
+      // verifyIdToken should always yield a uid, but an empty one would be written
+      // as a real owner value that every such record shares (Phase 01 item 1).
+      // Refusing here keeps that impossible for every route at once.
+      if (!decodedToken.uid) {
+        res.sendError({ message: "Unauthorized", statusCode: 401 });
+        return;
+      }
       req.userId = decodedToken.uid;
       next();
     })

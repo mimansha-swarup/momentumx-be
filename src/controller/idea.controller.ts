@@ -1,7 +1,9 @@
 import { randomUUID } from "crypto";
 import { Request, Response } from "express";
 import ContentService from "../service/content.service.js";
-import { formatGeneratedIdea } from "../utlils/content.js";
+import { formatGeneratedIdea, logDroppedFormats } from "../utlils/content.js";
+import { ServiceUnavailable } from "../utlils/errors.js";
+import { IDEAS_PAGE, parseListLimit } from "../utlils/pagination.js";
 import { asyncHandler } from "../middleware/async_handler.js";
 import { eventService } from "../service/event.service.js";
 import { EventType } from "../types/routes/event.js";
@@ -18,21 +20,38 @@ class IdeaController {
       limit = "9",
       createdAt = "",
       docId = "",
+      title = "",
       searchText = "",
       isScriptGenerated = "",
     } = req.query;
+    // Both cursor shapes are accepted; which one is meaningful depends on the
+    // ordering the repository picks (createdAt for the default list, title for a
+    // prefix search). The client just echoes back the `nextCursor` it was given.
     const cursor = {
       createdAt: createdAt as string,
+      title: title as string,
       docId: docId as string,
     };
+    // Query params are strings, so `Boolean(isScriptGenerated)` made
+    // `?isScriptGenerated=false` mean TRUE — Boolean("false") is true — and the
+    // filter returned the exact opposite set. Absent must stay distinct from
+    // false: absent means "don't filter", false means "only ideas without a
+    // script", which is the more useful of the two and was unreachable.
+    const scriptFilter =
+      isScriptGenerated === "true"
+        ? true
+        : isScriptGenerated === "false"
+          ? false
+          : undefined;
+
     const filters = {
       searchText: searchText as string,
-      isScriptGenerated: Boolean(isScriptGenerated),
+      ...(scriptFilter !== undefined && { isScriptGenerated: scriptFilter }),
     };
 
     const data = await this.service.getPaginatedUsersIdeas({
       userId: req.userId,
-      limit: parseInt(limit as string, 10),
+      limit: parseListLimit(limit, IDEAS_PAGE),
       cursor,
       filters,
     });
@@ -61,8 +80,13 @@ class IdeaController {
       .filter((result) => result.status === "fulfilled")
       .map((result) => result.value);
 
+    logDroppedFormats("generateIdeas", req.userId, modifiedDataResults);
+
     if (!modifiedData?.length) {
-      throw new Error("Unable to generate at the moment");
+      // A bare Error resolves to 500 "Something went wrong". Every realistic cause
+      // here is upstream (embedding call failed for every idea), which is a retry,
+      // not a defect in the request.
+      throw ServiceUnavailable("Couldn't generate ideas right now. Please try again.");
     }
     const updatedData = await this.service.saveBatchIdeas(modifiedData);
     res.sendSuccess({

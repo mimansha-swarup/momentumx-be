@@ -1,5 +1,6 @@
 import { asyncHandler } from "../middleware/async_handler.js";
 import { BadRequest } from "../utlils/errors.js";
+import { parseListLimit, PROJECTS_PAGE } from "../utlils/pagination.js";
 import { eventService } from "../service/event.service.js";
 class VideoProjectController {
     constructor(service) {
@@ -23,7 +24,7 @@ class VideoProjectController {
             const { status, limit, cursor } = req.query;
             const data = await this.service.list(req.userId, {
                 status: status,
-                limit: limit ? parseInt(limit, 10) : undefined,
+                limit: parseListLimit(limit, PROJECTS_PAGE),
                 cursor,
             });
             res.sendSuccess({ data, message: "Video projects retrieved successfully" });
