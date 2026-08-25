@@ -56,6 +56,14 @@ const mockBatch = {
   createdAt: {} as any,
 };
 
+// The lock and preconditions are the seam's job and are tested in
+// tests/unit/service/hooks.flow.behaviour.test.ts and the repository suite. Here
+// a pass-through runner keeps these tests focused on hook iteration itself.
+import { makeTestStepRunner } from "../helpers/step-runner";
+
+const passThroughRunner = () =>
+  ({ run: (_spec: unknown, generate: () => unknown) => generate() }) as never;
+
 describe("HooksService — regenerate", () => {
   let service: HooksService;
   let mockRepo: jest.Mocked<HooksRepository>;
@@ -63,8 +71,8 @@ describe("HooksService — regenerate", () => {
 
   beforeEach(() => {
     mockRepo = new MockHooksRepo() as jest.Mocked<HooksRepository>;
-    mockVpService = new MockVideoProjectService(null as any, null as any, null as any) as jest.Mocked<VideoProjectService>;
-    service = new HooksService(mockRepo, mockVpService);
+    mockVpService = new MockVideoProjectService(null as any, null as any, null as any, null as any) as jest.Mocked<VideoProjectService>;
+    service = new HooksService(mockRepo, mockVpService, undefined, passThroughRunner());
     mockGenerate.mockResolvedValue(makeStream(HOOKS_JSON));
   });
 
@@ -106,6 +114,72 @@ describe("HooksService — regenerate", () => {
   });
 });
 
+// Regression guard. The generation seam once wrapped `regenerate` exactly like
+// `generate`, which took the step lock and enforced REQUIRES.hooks. Both are
+// wrong for regeneration, and both broke the primary user flow:
+//
+//  - hooks stays `in_progress` from generate until the user SELECTS one, so the
+//    ordinary "try again" click 409'd for the full 3-minute lock window;
+//  - a successful regenerate calls clearSelectedHook, which sets the step back to
+//    `in_progress`, re-arming the false lock for the next attempt;
+//  - after an upstream regen marks `script` stale, regenerating hooks is exactly
+//    what the user needs, and the precondition would 400 it.
+//
+// `pipeline.<step>.status` means "the user is working on this step", not "a
+// generation is in flight". Do not reuse it as a lock.
+describe("HooksService — regenerate is not blocked by step state", () => {
+  let service: HooksService;
+  let mockRepo: jest.Mocked<HooksRepository>;
+  let mockVpService: jest.Mocked<VideoProjectService>;
+
+  const setup = (project: Record<string, unknown>) => {
+    mockRepo = new MockHooksRepo() as jest.Mocked<HooksRepository>;
+    mockVpService = new MockVideoProjectService(null as any, null as any, null as any, null as any) as jest.Mocked<VideoProjectService>;
+    service = new HooksService(
+      mockRepo,
+      mockVpService,
+      undefined,
+      makeTestStepRunner({ project: project as never })
+    );
+    mockGenerate.mockResolvedValue(makeStream(HOOKS_JSON));
+    mockRepo.findById = jest.fn().mockResolvedValue(mockBatch);
+    mockRepo.update = jest.fn().mockResolvedValue(undefined);
+    mockVpService.clearSelectedHook = jest.fn().mockResolvedValue(undefined);
+    mockVpService.markStale = jest.fn().mockResolvedValue(undefined);
+    mockVpService.markPackagingDocumentStale = jest.fn().mockResolvedValue(undefined);
+  };
+
+  it("succeeds while the hooks step is still in_progress (the ordinary retry)", async () => {
+    setup({
+      createdBy: "user-1",
+      pipeline: {
+        script: { status: "completed", startedAt: null },
+        hooks: { status: "in_progress", startedAt: { toMillis: () => Date.now() } },
+      },
+    });
+
+    const result = await service.regenerate("user-1", "hooks-1", "my script");
+
+    expect(result.hooks).toHaveLength(5);
+    expect(mockGenerate).toHaveBeenCalled();
+  });
+
+  it("succeeds while the script step is stale (upstream regen cascaded down)", async () => {
+    setup({
+      createdBy: "user-1",
+      pipeline: {
+        script: { status: "stale", startedAt: null },
+        hooks: { status: "stale", startedAt: null },
+      },
+    });
+
+    const result = await service.regenerate("user-1", "hooks-1", "my script");
+
+    expect(result.hooks).toHaveLength(5);
+    expect(mockGenerate).toHaveBeenCalled();
+  });
+});
+
 describe("HooksService — select", () => {
   let service: HooksService;
   let mockRepo: jest.Mocked<HooksRepository>;
@@ -113,8 +187,8 @@ describe("HooksService — select", () => {
 
   beforeEach(() => {
     mockRepo = new MockHooksRepo() as jest.Mocked<HooksRepository>;
-    mockVpService = new MockVideoProjectService(null as any, null as any, null as any) as jest.Mocked<VideoProjectService>;
-    service = new HooksService(mockRepo, mockVpService);
+    mockVpService = new MockVideoProjectService(null as any, null as any, null as any, null as any) as jest.Mocked<VideoProjectService>;
+    service = new HooksService(mockRepo, mockVpService, undefined, passThroughRunner());
   });
 
   it("binds the hook to the STORED project (videoProjectId from the batch, never the client) and completes the step", async () => {
@@ -193,8 +267,8 @@ describe("HooksService — exportHooks", () => {
 
   beforeEach(() => {
     mockRepo = new MockHooksRepo() as jest.Mocked<HooksRepository>;
-    mockVpService = new MockVideoProjectService(null as any, null as any, null as any) as jest.Mocked<VideoProjectService>;
-    service = new HooksService(mockRepo, mockVpService);
+    mockVpService = new MockVideoProjectService(null as any, null as any, null as any, null as any) as jest.Mocked<VideoProjectService>;
+    service = new HooksService(mockRepo, mockVpService, undefined, passThroughRunner());
   });
 
   it("throws 404 if batch not found", async () => {
@@ -238,8 +312,8 @@ describe("HooksService — generate (idempotency, lock, rollback)", () => {
 
   beforeEach(() => {
     mockRepo = new MockHooksRepo() as jest.Mocked<HooksRepository>;
-    mockVpService = new MockVideoProjectService(null as any, null as any, null as any) as jest.Mocked<VideoProjectService>;
-    service = new HooksService(mockRepo, mockVpService);
+    mockVpService = new MockVideoProjectService(null as any, null as any, null as any, null as any) as jest.Mocked<VideoProjectService>;
+    service = new HooksService(mockRepo, mockVpService, undefined, passThroughRunner());
     mockGenerate.mockResolvedValue(makeStream(HOOKS_JSON));
     mockVpService.getById = jest.fn().mockResolvedValue(makeProj()) as any;
     mockVpService.startStep = jest.fn().mockResolvedValue(undefined) as any;
@@ -260,29 +334,59 @@ describe("HooksService — generate (idempotency, lock, rollback)", () => {
     expect(mockRepo.save).not.toHaveBeenCalled();
   });
 
-  it("409s while a generation is in flight (fresh startedAt), before any AI call", async () => {
-    mockVpService.getById = jest.fn().mockResolvedValue(
-      makeProj({
-        pipeline: {
-          script: { status: "completed" },
-          hooks: { status: "in_progress", startedAt: { toMillis: () => Date.now() } },
-        },
-      })
-    ) as any;
+  // The lock and the rollback moved into the generation seam (Phase 01b).
+  //
+  // The lock ITSELF is tested in `tests/unit/repository/step-lock.behaviour.test.ts`
+  // against the real transaction — asserting a 409 here would only assert the
+  // status code this file's own fake throws, which is what the earlier version of
+  // this test did. What belongs here is the service's half of the contract: when
+  // the seam refuses, nothing is generated and nothing is written.
+  it("spends no generation when the seam refuses an in-flight step", async () => {
+    const inFlight = makeProj({
+      createdBy: "user-1",
+      pipeline: {
+        script: { status: "completed" },
+        hooks: { status: "in_progress", startedAt: { toMillis: () => Date.now() } },
+      },
+    });
+    mockVpService.getById = jest.fn().mockResolvedValue(inFlight) as any;
+    service = new HooksService(
+      mockRepo,
+      mockVpService,
+      undefined,
+      makeTestStepRunner({ project: inFlight as never })
+    );
 
-    const err = await service.generate("user-1", "proj-1", "my script").catch((e) => e);
+    await service.generate("user-1", "proj-1", "my script").catch(() => undefined);
 
-    expect(err.statusCode).toBe(409);
     expect(mockGenerate).not.toHaveBeenCalled();
+    expect(mockRepo.save).not.toHaveBeenCalled();
   });
 
-  it("rolls the step back (abandonStep) when generation fails, then rethrows", async () => {
+  it("restores the step when generation fails, then rethrows", async () => {
+    const project = makeProj({ createdBy: "user-1" });
+    mockVpService.getById = jest.fn().mockResolvedValue(project) as any;
+    const released: Array<{ step: string; prior: unknown }> = [];
+    service = new HooksService(
+      mockRepo,
+      mockVpService,
+      undefined,
+      makeTestStepRunner({
+        project: project as never,
+        onRelease: (step, prior) => released.push({ step, prior }),
+      })
+    );
     mockGenerate.mockResolvedValue(makeStream("not json"));
 
     const err = await service.generate("user-1", "proj-1", "my script").catch((e) => e);
 
     expect(err).toBeInstanceOf(Error);
-    expect(mockVpService.abandonStep).toHaveBeenCalledWith("proj-1", "hooks");
+    // releaseStep restores CAPTURED prior state. The old abandonStep hardcoded
+    // "not_started", which silently cleared a stale marker when the step being
+    // abandoned was stale.
+    expect(released).toHaveLength(1);
+    expect(released[0].step).toBe("hooks");
+    expect(released[0].prior).toMatchObject({ status: "not_started" });
     expect(mockRepo.save).not.toHaveBeenCalled();
   });
 });

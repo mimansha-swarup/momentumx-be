@@ -25,5 +25,10 @@ module.exports = {
       },
     ],
   },
+  // NOTE: `clearMocks` (mockClear) resets call history but does NOT drain a
+  // queued `mockResolvedValueOnce`. See the `beforeEach` in the integration
+  // suites, which drain it explicitly. `resetMocks: true` would drain it globally
+  // but also wipes module-scope `mockImplementation`s that ~11 unit suites depend
+  // on (126 failures when tried), so the fix is local to the suites that queue.
   clearMocks: true,
 };

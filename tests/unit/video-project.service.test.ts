@@ -28,6 +28,11 @@ jest.mock("../../src/config/firebase", () => ({
 }));
 
 jest.mock("../../src/utlils/content", () => ({
+  // Everything REAL except the one function this suite needs to stub out.
+  // `assertOwner` in particular must be the real guard: it used to be a
+  // hand-written copy here, and the 401 assertion below passed with the real
+  // implementation's throw deleted — it was testing the copy.
+  ...jest.requireActual("../../src/utlils/content"),
   formatGeneratedTitle: jest.fn(),
 }));
 
@@ -35,6 +40,7 @@ import VideoProjectService from "../../src/service/video-project.service";
 import VideoProjectRepository from "../../src/repository/video-project.repository";
 import ContentRepository from "../../src/repository/content.repository";
 import PackagingRepository from "../../src/repository/packaging.repository";
+import HooksRepository from "../../src/repository/hooks.repository";
 import { IVideoProject } from "../../src/types/routes/video-project";
 import { IIdea } from "../../src/types/routes/content";
 import { formatGeneratedTitle } from "../../src/utlils/content";
@@ -102,11 +108,20 @@ function makeMockRepo(): jest.Mocked<VideoProjectRepository> {
 }
 
 function makeMockContentRepo(): jest.Mocked<ContentRepository> {
-  return { getIdea: jest.fn(), updateIdea: jest.fn(), batchSaveIdeas: jest.fn() } as unknown as jest.Mocked<ContentRepository>;
+  return {
+    getIdea: jest.fn(),
+    updateIdea: jest.fn(),
+    batchSaveIdeas: jest.fn(),
+    getScriptById: jest.fn(),
+  } as unknown as jest.Mocked<ContentRepository>;
 }
 
 function makeMockPackagingRepo(): jest.Mocked<PackagingRepository> {
   return { get: jest.fn(), clearStale: jest.fn() } as unknown as jest.Mocked<PackagingRepository>;
+}
+
+function makeMockHooksRepo(): jest.Mocked<HooksRepository> {
+  return { findById: jest.fn() } as unknown as jest.Mocked<HooksRepository>;
 }
 
 // ---------------------------------------------------------------------------
@@ -118,12 +133,14 @@ describe("VideoProjectService", () => {
   let repo: jest.Mocked<VideoProjectRepository>;
   let contentRepo: jest.Mocked<ContentRepository>;
   let packagingRepo: jest.Mocked<PackagingRepository>;
+  let hooksRepo: jest.Mocked<HooksRepository>;
 
   beforeEach(() => {
     repo = makeMockRepo();
     contentRepo = makeMockContentRepo();
     packagingRepo = makeMockPackagingRepo();
-    service = new VideoProjectService(repo, contentRepo, packagingRepo);
+    hooksRepo = makeMockHooksRepo();
+    service = new VideoProjectService(repo, contentRepo, packagingRepo, hooksRepo);
   });
 
   // --------------------------------------------------------------------------
@@ -218,6 +235,15 @@ describe("VideoProjectService", () => {
 
     it("throws 400 on a blank/whitespace title and does not create anything", async () => {
       await expect(service.createFromTitle("user-1", "   ")).rejects.toMatchObject({ statusCode: 400 });
+      expect(formatGeneratedTitle).not.toHaveBeenCalled();
+      expect(contentRepo.batchSaveIdeas).not.toHaveBeenCalled();
+      expect(repo.create).not.toHaveBeenCalled();
+    });
+
+    // Phase 01 item 1: an empty owner is a real value that every orphaned record
+    // would share, so it must be refused before anything is written.
+    it("refuses an empty userId before writing anything", async () => {
+      await expect(service.createFromTitle("", "My Idea")).rejects.toMatchObject({ statusCode: 401 });
       expect(formatGeneratedTitle).not.toHaveBeenCalled();
       expect(contentRepo.batchSaveIdeas).not.toHaveBeenCalled();
       expect(repo.create).not.toHaveBeenCalled();
@@ -927,6 +953,7 @@ describe("VideoProjectService", () => {
     it("sets scriptId for resourceType 'script'", async () => {
       repo.findById.mockResolvedValue(makeProject());
       repo.update.mockResolvedValue(undefined);
+      contentRepo.getScriptById.mockResolvedValue({ createdBy: "user-1" } as any);
 
       await service.linkResource("proj-1", "script", "script-abc", "user-1");
 
@@ -936,16 +963,58 @@ describe("VideoProjectService", () => {
     it("sets hooksId for resourceType 'hooks'", async () => {
       repo.findById.mockResolvedValue(makeProject());
       repo.update.mockResolvedValue(undefined);
+      hooksRepo.findById.mockResolvedValue({ createdBy: "user-1" } as any);
 
       await service.linkResource("proj-1", "hooks", "hooks-abc", "user-1");
 
       expect(repo.update).toHaveBeenCalledWith("proj-1", expect.objectContaining({ hooksId: "hooks-abc" }));
     });
 
+    // ------------------------------------------------------------------------
+    // Ownership of the RESOURCE, not just the project (Phase 01 item 6).
+    // The project was always checked; the resource id came straight from the body.
+    // One assertion per type, because each leaks something different: packaging
+    // copies the selected thumbnail brief onto the project, script comes back
+    // near-verbatim via generate-shorts, and hooks feed five generation paths.
+    // ------------------------------------------------------------------------
+    it("throws 403 when the script belongs to another user", async () => {
+      repo.findById.mockResolvedValue(makeProject());
+      contentRepo.getScriptById.mockResolvedValue({ createdBy: "someone-else" } as any);
+
+      await expect(
+        service.linkResource("proj-1", "script", "script-abc", "user-1")
+      ).rejects.toMatchObject({ statusCode: 403 });
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+
+    it("throws 403 when the hooks batch belongs to another user", async () => {
+      repo.findById.mockResolvedValue(makeProject());
+      hooksRepo.findById.mockResolvedValue({ createdBy: "someone-else" } as any);
+
+      await expect(
+        service.linkResource("proj-1", "hooks", "hooks-abc", "user-1")
+      ).rejects.toMatchObject({ statusCode: 403 });
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+
+    it("throws 403 when the packaging doc belongs to another user", async () => {
+      repo.findById.mockResolvedValue(makeProject());
+      packagingRepo.get.mockResolvedValue({
+        createdBy: "someone-else",
+        thumbnail: ["Leaked brief"],
+      } as any);
+
+      await expect(
+        service.linkResource("proj-1", "packaging", "pkg-abc", "user-1")
+      ).rejects.toMatchObject({ statusCode: 403 });
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+
     it("sets packagingId AND extracts thumbnailHint (defaults to the first brief)", async () => {
       repo.findById.mockResolvedValue(makeProject());
       repo.update.mockResolvedValue(undefined);
       packagingRepo.get.mockResolvedValue({
+        createdBy: "user-1",
         thumbnail: ["Bold text here", "Second option", "Third option"],
       } as any);
 
@@ -963,6 +1032,7 @@ describe("VideoProjectService", () => {
       repo.findById.mockResolvedValue(makeProject());
       repo.update.mockResolvedValue(undefined);
       packagingRepo.get.mockResolvedValue({
+        createdBy: "user-1",
         thumbnail: ["Bold text here", "Second option", "Third option"],
         selectedThumbnailIndex: 2,
       } as any);
@@ -979,6 +1049,7 @@ describe("VideoProjectService", () => {
       repo.findById.mockResolvedValue(makeProject());
       repo.update.mockResolvedValue(undefined);
       packagingRepo.get.mockResolvedValue({
+        createdBy: "user-1",
         thumbnail: ["Only brief"],
         selectedThumbnailIndex: 5,
       } as any);
@@ -994,7 +1065,7 @@ describe("VideoProjectService", () => {
     it("sets thumbnailHint to null when packaging doc has no thumbnail", async () => {
       repo.findById.mockResolvedValue(makeProject());
       repo.update.mockResolvedValue(undefined);
-      packagingRepo.get.mockResolvedValue({} as any);
+      packagingRepo.get.mockResolvedValue({ createdBy: "user-1" } as any);
 
       await service.linkResource("proj-1", "packaging", "pkg-abc", "user-1");
 
@@ -1004,15 +1075,17 @@ describe("VideoProjectService", () => {
       );
     });
 
-    it("sets thumbnailHint to null when packagingRepo.get returns null", async () => {
+    // Previously a missing resource linked successfully with no thumbnailHint.
+    // Linking a document that doesn't exist is never correct, and tolerating it
+    // is what let an unowned id through unnoticed.
+    it("throws 404 when the resource does not exist", async () => {
       repo.findById.mockResolvedValue(makeProject());
-      repo.update.mockResolvedValue(undefined);
       packagingRepo.get.mockResolvedValue(null as any);
 
-      await service.linkResource("proj-1", "packaging", "pkg-abc", "user-1");
-
-      const callArg = repo.update.mock.calls[0][1] as any;
-      expect(callArg.thumbnailHint).toBeUndefined(); // only set when doc exists
+      await expect(
+        service.linkResource("proj-1", "packaging", "pkg-abc", "user-1")
+      ).rejects.toMatchObject({ statusCode: 404 });
+      expect(repo.update).not.toHaveBeenCalled();
     });
   });
 

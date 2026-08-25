@@ -62,10 +62,27 @@ jest.mock("../../src/service/video-project.service", () => ({
 
 import request from "supertest";
 import app from "../../src/app";
+import { useSharedServer } from "./shared-server";
+
+// One HTTP server for the whole file. `request(app)` starts and tears down a
+// FRESH ephemeral server per call; across ~113 requests that intermittently
+// produced connection-level failures (a 501 from Node with an empty body, once a
+// socket hang up) on an arbitrary test, never reproducible in isolation.
+const server = useSharedServer(app);
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+// Drain any queued `mockResolvedValueOnce` between tests. `clearMocks: true`
+// calls mockClear(), which resets call history but LEAVES the once-queue intact
+// — so a test whose request short-circuits before reaching the service (a 400
+// from validation, a 404 thrown upstream) leaves its queued value for whichever
+// test calls that mock next. That produced intermittent, order-dependent
+// failures on a different test each run. mockReset() drains the queue.
+beforeEach(() => {
+  Object.values(mockServiceInstance).forEach((fn) => (fn as jest.Mock).mockReset());
+});
 
 function getService() {
   return mockServiceInstance;
@@ -108,7 +125,7 @@ describe("POST /v1/video-projects", () => {
   it("returns 201 with project data on success", async () => {
     getService().create.mockResolvedValueOnce(PROJECT_STUB as any);
 
-    const res = await request(app)
+    const res = await request(server())
       .post("/v1/video-projects")
       .send({ ideaId: "idea-1" });
 
@@ -120,7 +137,7 @@ describe("POST /v1/video-projects", () => {
   it("returns 201 creating from a title (project-first, no pre-existing idea)", async () => {
     getService().createFromTitle.mockResolvedValueOnce({ ...PROJECT_STUB, title: "My Idea" } as any);
 
-    const res = await request(app)
+    const res = await request(server())
       .post("/v1/video-projects")
       .send({ title: "My Idea" });
 
@@ -131,7 +148,7 @@ describe("POST /v1/video-projects", () => {
   });
 
   it("returns 400 when neither ideaId nor title is provided", async () => {
-    const res = await request(app)
+    const res = await request(server())
       .post("/v1/video-projects")
       .send({});
 
@@ -140,7 +157,7 @@ describe("POST /v1/video-projects", () => {
   });
 
   it("returns 400 when both ideaId and title are provided", async () => {
-    const res = await request(app)
+    const res = await request(server())
       .post("/v1/video-projects")
       .send({ ideaId: "idea-1", title: "My Idea" });
 
@@ -151,7 +168,7 @@ describe("POST /v1/video-projects", () => {
   it("returns 403 when service throws Forbidden", async () => {
     getService().create.mockRejectedValueOnce(makeServiceError("Forbidden", 403));
 
-    const res = await request(app)
+    const res = await request(server())
       .post("/v1/video-projects")
       .send({ ideaId: "idea-1" });
 
@@ -162,7 +179,7 @@ describe("POST /v1/video-projects", () => {
   it("returns 404 when idea is not found", async () => {
     getService().create.mockRejectedValueOnce(makeServiceError("Idea not found", 404));
 
-    const res = await request(app)
+    const res = await request(server())
       .post("/v1/video-projects")
       .send({ ideaId: "idea-missing" });
 
@@ -183,17 +200,56 @@ describe("GET /v1/video-projects", () => {
       nextCursor: null,
     } as any);
 
-    const res = await request(app).get("/v1/video-projects");
+    const res = await request(server()).get("/v1/video-projects");
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.data.projects).toHaveLength(1);
   });
 
+  // api.md documents "Maximum: 50" for `limit`. Nothing enforced it: the value
+  // went parseInt → service → `query.limit(limit + 1)`, so `?limit=1000000` was a
+  // million-document read inside a Vercel time budget.
+  it("enforces the documented maximum page size, and falls back on a nonsense one", async () => {
+    getService().list.mockResolvedValue({ projects: [], hasMore: false, nextCursor: null } as any);
+
+    await request(server()).get("/v1/video-projects?limit=1000000");
+    expect(getService().list).toHaveBeenLastCalledWith(
+      "test-user-id",
+      expect.objectContaining({ limit: 50 })
+    );
+
+    await request(server()).get("/v1/video-projects?limit=abc");
+    expect(getService().list).toHaveBeenLastCalledWith(
+      "test-user-id",
+      expect.objectContaining({ limit: 20 })
+    );
+
+    await request(server()).get("/v1/video-projects");
+    expect(getService().list).toHaveBeenLastCalledWith(
+      "test-user-id",
+      expect.objectContaining({ limit: 20 })
+    );
+  });
+
+  // The other route `query_normalizer`'s comment names. A repeated `?status=`
+  // would reach `service.list` as an array, sail past the `validStatuses.includes`
+  // check as "not a valid status", and 400 a request that named a real status.
+  it("collapses a repeated status param instead of passing an array to the service", async () => {
+    getService().list.mockResolvedValue({ projects: [], hasMore: false, nextCursor: null } as any);
+
+    const res = await request(server()).get("/v1/video-projects?status=stale&status=completed");
+
+    expect(res.status).toBe(200);
+    const [, opts] = getService().list.mock.calls.at(-1)!;
+    expect(typeof (opts as { status?: unknown }).status).toBe("string");
+    expect((opts as { status?: unknown }).status).toBe("completed");
+  });
+
   it("returns 400 when service throws for invalid status", async () => {
     getService().list.mockRejectedValueOnce(makeServiceError("Invalid status value", 400));
 
-    const res = await request(app).get("/v1/video-projects?status=bad");
+    const res = await request(server()).get("/v1/video-projects?status=bad");
 
     expect(res.status).toBe(400);
     expect(res.body.success).toBe(false);
@@ -202,7 +258,7 @@ describe("GET /v1/video-projects", () => {
   it("passes status, limit, cursor query params to service", async () => {
     getService().list.mockResolvedValueOnce({ projects: [], hasMore: false, nextCursor: null } as any);
 
-    await request(app).get("/v1/video-projects?status=completed&limit=5&cursor=abc");
+    await request(server()).get("/v1/video-projects?status=completed&limit=5&cursor=abc");
 
     expect(getService().list).toHaveBeenCalledWith(
       "test-user-id",
@@ -213,7 +269,7 @@ describe("GET /v1/video-projects", () => {
   it("passes hasMore and nextCursor in response", async () => {
     getService().list.mockResolvedValueOnce({ projects: [], hasMore: true, nextCursor: "next" } as any);
 
-    const res = await request(app).get("/v1/video-projects");
+    const res = await request(server()).get("/v1/video-projects");
 
     expect(res.body.data.hasMore).toBe(true);
     expect(res.body.data.nextCursor).toBe("next");
@@ -228,7 +284,7 @@ describe("GET /v1/video-projects/:projectId", () => {
   it("returns 200 with project data", async () => {
     getService().getReconciledById.mockResolvedValueOnce(PROJECT_STUB as any);
 
-    const res = await request(app).get("/v1/video-projects/proj-1");
+    const res = await request(server()).get("/v1/video-projects/proj-1");
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
@@ -238,7 +294,7 @@ describe("GET /v1/video-projects/:projectId", () => {
   it("returns 404 when project not found", async () => {
     getService().getReconciledById.mockRejectedValueOnce(makeServiceError("Not found", 404));
 
-    const res = await request(app).get("/v1/video-projects/missing");
+    const res = await request(server()).get("/v1/video-projects/missing");
 
     expect(res.status).toBe(404);
     expect(res.body.success).toBe(false);
@@ -247,7 +303,7 @@ describe("GET /v1/video-projects/:projectId", () => {
   it("returns 403 when user does not own the project", async () => {
     getService().getReconciledById.mockRejectedValueOnce(makeServiceError("Forbidden", 403));
 
-    const res = await request(app).get("/v1/video-projects/proj-other");
+    const res = await request(server()).get("/v1/video-projects/proj-other");
 
     expect(res.status).toBe(403);
     expect(res.body.success).toBe(false);
@@ -262,7 +318,7 @@ describe("PATCH /v1/video-projects/:projectId", () => {
   it("returns 200 with updated title", async () => {
     getService().update.mockResolvedValueOnce({ title: "New Title" } as any);
 
-    const res = await request(app)
+    const res = await request(server())
       .patch("/v1/video-projects/proj-1")
       .send({ title: "New Title" });
 
@@ -273,7 +329,7 @@ describe("PATCH /v1/video-projects/:projectId", () => {
   it("returns 400 when title missing (service throws 400)", async () => {
     getService().update.mockRejectedValueOnce(makeServiceError("title is required", 400));
 
-    const res = await request(app)
+    const res = await request(server())
       .patch("/v1/video-projects/proj-1")
       .send({});
 
@@ -284,7 +340,7 @@ describe("PATCH /v1/video-projects/:projectId", () => {
   it("returns 404 when project not found", async () => {
     getService().update.mockRejectedValueOnce(makeServiceError("Not found", 404));
 
-    const res = await request(app)
+    const res = await request(server())
       .patch("/v1/video-projects/missing")
       .send({ title: "Title" });
 
@@ -300,7 +356,7 @@ describe("DELETE /v1/video-projects/:projectId", () => {
   it("returns 200 on success", async () => {
     getService().delete.mockResolvedValueOnce({ id: "proj-1", isDeleted: true } as any);
 
-    const res = await request(app).delete("/v1/video-projects/proj-1");
+    const res = await request(server()).delete("/v1/video-projects/proj-1");
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
@@ -309,7 +365,7 @@ describe("DELETE /v1/video-projects/:projectId", () => {
   it("returns 404 when project not found", async () => {
     getService().delete.mockRejectedValueOnce(makeServiceError("Not found", 404));
 
-    const res = await request(app).delete("/v1/video-projects/missing");
+    const res = await request(server()).delete("/v1/video-projects/missing");
 
     expect(res.status).toBe(404);
   });
@@ -317,7 +373,7 @@ describe("DELETE /v1/video-projects/:projectId", () => {
   it("returns 403 when user does not own the project", async () => {
     getService().delete.mockRejectedValueOnce(makeServiceError("Forbidden", 403));
 
-    const res = await request(app).delete("/v1/video-projects/proj-other");
+    const res = await request(server()).delete("/v1/video-projects/proj-other");
 
     expect(res.status).toBe(403);
   });
@@ -329,7 +385,7 @@ describe("DELETE /v1/video-projects/:projectId", () => {
 
 describe("PATCH /v1/video-projects/:projectId/step/:stepName/start (removed)", () => {
   it("404s — generation endpoints own the in_progress transition server-side", async () => {
-    const res = await request(app).patch("/v1/video-projects/proj-1/step/script/start");
+    const res = await request(server()).patch("/v1/video-projects/proj-1/step/script/start");
 
     expect(res.status).toBe(404);
     expect(getService().startStep).not.toHaveBeenCalled();
@@ -344,7 +400,7 @@ describe("PATCH /v1/video-projects/:projectId/step/:stepName/complete", () => {
   it("returns 200 on success", async () => {
     getService().completeStep.mockResolvedValueOnce({ id: "proj-1", currentStep: "hooks" } as any);
 
-    const res = await request(app).patch("/v1/video-projects/proj-1/step/script/complete");
+    const res = await request(server()).patch("/v1/video-projects/proj-1/step/script/complete");
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
@@ -355,7 +411,7 @@ describe("PATCH /v1/video-projects/:projectId/step/:stepName/complete", () => {
       makeServiceError("Cannot complete a step that has not been started", 400)
     );
 
-    const res = await request(app).patch("/v1/video-projects/proj-1/step/script/complete");
+    const res = await request(server()).patch("/v1/video-projects/proj-1/step/script/complete");
 
     expect(res.status).toBe(400);
     expect(res.body.success).toBe(false);
@@ -364,7 +420,7 @@ describe("PATCH /v1/video-projects/:projectId/step/:stepName/complete", () => {
   it("returns 400 for invalid stepName", async () => {
     getService().completeStep.mockRejectedValueOnce(makeServiceError("Invalid step", 400));
 
-    const res = await request(app).patch("/v1/video-projects/proj-1/step/research/complete");
+    const res = await request(server()).patch("/v1/video-projects/proj-1/step/research/complete");
 
     expect(res.status).toBe(400);
   });
@@ -372,7 +428,7 @@ describe("PATCH /v1/video-projects/:projectId/step/:stepName/complete", () => {
   it("returns 404 when project not found", async () => {
     getService().completeStep.mockRejectedValueOnce(makeServiceError("Not found", 404));
 
-    const res = await request(app).patch("/v1/video-projects/missing/step/script/complete");
+    const res = await request(server()).patch("/v1/video-projects/missing/step/script/complete");
 
     expect(res.status).toBe(404);
   });
@@ -380,7 +436,7 @@ describe("PATCH /v1/video-projects/:projectId/step/:stepName/complete", () => {
   it("passes projectId, stepName, userId to service", async () => {
     getService().completeStep.mockResolvedValueOnce({ id: "proj-42", currentStep: "packaging" } as any);
 
-    await request(app).patch("/v1/video-projects/proj-42/step/hooks/complete");
+    await request(server()).patch("/v1/video-projects/proj-42/step/hooks/complete");
 
     expect(getService().completeStep).toHaveBeenCalledWith("proj-42", "hooks", "test-user-id");
   });
@@ -394,7 +450,7 @@ describe("PATCH /v1/video-projects/:projectId/link/:resourceType", () => {
   it("returns 200 on success", async () => {
     getService().linkResource.mockResolvedValueOnce({ id: "proj-1", scriptId: "script-abc" } as any);
 
-    const res = await request(app)
+    const res = await request(server())
       .patch("/v1/video-projects/proj-1/link/script")
       .send({ resourceId: "script-abc" });
 
@@ -403,7 +459,7 @@ describe("PATCH /v1/video-projects/:projectId/link/:resourceType", () => {
   });
 
   it("returns 400 when resourceId is missing", async () => {
-    const res = await request(app)
+    const res = await request(server())
       .patch("/v1/video-projects/proj-1/link/script")
       .send({});
 
@@ -415,7 +471,7 @@ describe("PATCH /v1/video-projects/:projectId/link/:resourceType", () => {
   it("returns 400 for invalid resourceType (service throws 400)", async () => {
     getService().linkResource.mockRejectedValueOnce(makeServiceError("Invalid resourceType", 400));
 
-    const res = await request(app)
+    const res = await request(server())
       .patch("/v1/video-projects/proj-1/link/invalid")
       .send({ resourceId: "res-1" });
 
@@ -425,7 +481,7 @@ describe("PATCH /v1/video-projects/:projectId/link/:resourceType", () => {
   it("returns 403 when user does not own the project", async () => {
     getService().linkResource.mockRejectedValueOnce(makeServiceError("Forbidden", 403));
 
-    const res = await request(app)
+    const res = await request(server())
       .patch("/v1/video-projects/proj-1/link/script")
       .send({ resourceId: "script-abc" });
 
@@ -435,7 +491,7 @@ describe("PATCH /v1/video-projects/:projectId/link/:resourceType", () => {
   it("returns 404 when project not found", async () => {
     getService().linkResource.mockRejectedValueOnce(makeServiceError("Not found", 404));
 
-    const res = await request(app)
+    const res = await request(server())
       .patch("/v1/video-projects/missing/link/script")
       .send({ resourceId: "script-abc" });
 
@@ -445,7 +501,7 @@ describe("PATCH /v1/video-projects/:projectId/link/:resourceType", () => {
   it("passes projectId, resourceType, resourceId, userId to service", async () => {
     getService().linkResource.mockResolvedValueOnce({ id: "proj-1", packagingId: "pkg-xyz" } as any);
 
-    await request(app)
+    await request(server())
       .patch("/v1/video-projects/proj-1/link/packaging")
       .send({ resourceId: "pkg-xyz" });
 

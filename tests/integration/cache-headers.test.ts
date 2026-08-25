@@ -29,6 +29,13 @@ jest.mock("../../src/config/ai", () => ({
 
 import request from "supertest";
 import app from "../../src/app";
+import { useSharedServer } from "./shared-server";
+
+// One HTTP server for the whole file. `request(app)` starts and tears down a
+// FRESH ephemeral server per call; across ~113 requests that intermittently
+// produced connection-level failures (a 501 from Node with an empty body, once a
+// socket hang up) on an arbitrary test, never reproducible in isolation.
+const server = useSharedServer(app);
 
 /**
  * Responses are authenticated and scoped to a single user, so none may be stored.
@@ -40,25 +47,25 @@ import app from "../../src/app";
  */
 describe("cache headers", () => {
   it("sends Cache-Control: no-store on API responses", async () => {
-    const res = await request(app).get("/");
+    const res = await request(server()).get("/");
     expect(res.headers["cache-control"]).toBe("no-store");
   });
 
   it("sends no ETag, so a repeated identical body can't answer 304", async () => {
-    const res = await request(app).get("/");
+    const res = await request(server()).get("/");
     expect(res.headers.etag).toBeUndefined();
   });
 
   it("keeps the headers on error responses too", async () => {
     // Unauthenticated /v1 route → 4xx from authMiddleware, still uncacheable.
-    const res = await request(app).get("/v1/research/competitors");
+    const res = await request(server()).get("/v1/research/competitors");
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect(res.headers["cache-control"]).toBe("no-store");
     expect(res.headers.etag).toBeUndefined();
   });
 
   it("does not answer 304 when the client revalidates with a stale validator", async () => {
-    const res = await request(app).get("/").set("If-None-Match", 'W/"anything"');
+    const res = await request(server()).get("/").set("If-None-Match", 'W/"anything"');
     expect(res.status).toBe(200);
   });
 });

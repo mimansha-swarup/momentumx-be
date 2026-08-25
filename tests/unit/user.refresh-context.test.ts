@@ -113,6 +113,68 @@ describe("UserService.refreshContext", () => {
   });
 });
 
+// `updateProfile` is the OTHER path that re-runs enrichment, and it had no test
+// of its own — only a route test against a fully-mocked UserService. The pair
+// deserves pinning together, because the difference between them is easy to
+// erase by accident in either direction.
+describe("UserService.updateProfile", () => {
+  let service: UserService;
+  let repo: jest.Mocked<UserRepository>;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    repo = new UserRepository() as jest.Mocked<UserRepository>;
+    repo.update = jest.fn().mockResolvedValue(undefined);
+    service = new UserService(repo as never);
+  });
+
+  it("enriches the submitted form before storing it, rather than persisting raw input", async () => {
+    mockFormat.mockResolvedValue({ niche: "AI tools", websiteContent: "scraped" });
+
+    const result = await service.updateProfile("user-1", {
+      niche: "AI tools",
+      website: "https://site.io",
+    } as never);
+
+    expect(mockFormat).toHaveBeenCalledWith(
+      { niche: "AI tools", website: "https://site.io" },
+      expect.anything()
+    );
+    expect(repo.update).toHaveBeenCalledWith("user-1", {
+      niche: "AI tools",
+      websiteContent: "scraped",
+    });
+    expect(result).toMatchObject({ websiteContent: "scraped" });
+  });
+
+  it("writes to the authenticated uid it was given", async () => {
+    mockFormat.mockResolvedValue({ niche: "n" });
+
+    await service.updateProfile("user-1", { niche: "n" } as never);
+
+    expect(repo.update.mock.calls[0][0]).toBe("user-1");
+  });
+
+  it("does not attach a completeness score — unlike refreshContext and getProfile", async () => {
+    // Deliberate asymmetry, pinned so a refactor that "harmonises" the three
+    // has to do it on purpose. The FE reads completeness from GET /profile.
+    mockFormat.mockResolvedValue({ niche: "n" });
+
+    const result = await service.updateProfile("user-1", { niche: "n" } as never);
+
+    expect(result).not.toHaveProperty("completeness");
+  });
+
+  it("propagates an enrichment failure instead of storing a half-written profile", async () => {
+    mockFormat.mockRejectedValue(new Error("scrape timed out"));
+
+    await expect(service.updateProfile("user-1", { website: "x" } as never)).rejects.toThrow(
+      "scrape timed out"
+    );
+    expect(repo.update).not.toHaveBeenCalled();
+  });
+});
+
 describe("UserService.createOnboardingData (fast save)", () => {
   let service: UserService;
   let repo: jest.Mocked<UserRepository>;
