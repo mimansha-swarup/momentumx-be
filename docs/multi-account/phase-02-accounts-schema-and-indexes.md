@@ -2,8 +2,8 @@
 title: "Phase 02 — Accounts Schema and Indexes"
 description: "Create the accounts collection and deploy every new index before any code needs them."
 date: 2026-08-19
-last_updated: 2026-08-19
-status: "planned"
+last_updated: 2026-08-25
+status: "complete"
 tags: ["multi-account", "phase-02", "schema", "indexes"]
 ---
 
@@ -330,6 +330,31 @@ curl -s -H "Authorization: Bearer $(gcloud auth print-access-token)" \
 - Every new index reports `READY`.
 - Every old index is **still present** — this is the rollback path.
 - The app behaves identically. Nothing reads the new indexes yet.
+
+### Measured after the deploy — 2026-08-25
+
+```
+states:    {'READY': 17}
+createdBy: 9      accountId: 8      topics: 0
+fieldOverrides (live): accounts.{members,websiteContent,channelDescription,competitors}, ideas.embedding
+                       — all with indexes: 0
+```
+
+Deployed in two passes so each production change was verified alone: first the
+`--force` deletion of the eight orphaned `topics` indexes (17 → 9, all `createdBy`
+survivors intact), then the eight `accountId` twins and the five exemptions
+(9 → 17). Nothing in `src/` reads `accountId` — every occurrence is a type or a
+forward-looking comment — so the third criterion holds by construction.
+
+`tests/unit/firestore-indexes.behaviour.test.ts` now enforces the coexistence rule
+that the whole rollback story rests on: a `createdBy` → `accountId` search-and-replace
+fails the suite instead of silently deleting the rollback path.
+
+**One deviation from the deploy order below:** step 1 prescribes deleting the
+orphaned indexes as its *own commit*. The deletion was deployed on its own and
+verified on its own, but the file change landed in the same commit as the new
+index set. The end state and the verification are identical; only the commit
+boundary differs.
 
 ---
 
