@@ -347,6 +347,36 @@ class PackagingService {
     return "Untitled video";
   };
 
+  /**
+   * The project's packaging document.
+   *
+   * Phase 05a made the id deterministic (`id === videoProjectId`), so the normal
+   * case is a point read. The query fallback finds documents written by the old
+   * auto-ID save path and is TRANSITIONAL: drop it, and `findByVideoProject`,
+   * in the delete commit once the re-key migration reports clean.
+   *
+   * Order matters. Point read first means a re-keyed document is found by id even
+   * while its superseded twin still exists — the migration deliberately leaves the
+   * old document in place as the rollback path, so both are readable for a while
+   * and the id must win.
+   */
+  private locateForProject = async (projectId: string) => {
+    const byId = await this.repo.get(projectId);
+    if (byId) return byId;
+
+    const legacy = await this.repo.findByVideoProject(projectId);
+    if (legacy) {
+      console.warn(
+        JSON.stringify({
+          event: "packaging_legacy_autoid_read",
+          projectId,
+          packagingId: legacy.id,
+        })
+      );
+    }
+    return legacy;
+  };
+
   savePackaging = async (userId: string, data: Record<string, unknown>, videoProjectId?: string) => {
     // Coerce any present content field to its canonical stored shape so the
     // persisted doc matches what regenerateItem and the readers expect.
@@ -404,7 +434,7 @@ class PackagingService {
     // "stale" item back to "completed" — and with auto-save firing on every edit
     // and thumbnail click, an ordinary keystroke would silently un-stale the whole
     // package. Generation/regeneration own those statuses after creation.
-    const existing = await this.repo.findByVideoProject(projectId);
+    const existing = await this.locateForProject(projectId);
     let result: Record<string, unknown>;
     if (existing) {
       result = await this.repo.update(existing.id as string, {
@@ -412,7 +442,7 @@ class PackagingService {
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
     } else {
-      result = await this.repo.save({
+      result = await this.repo.saveWithId(projectId, {
         ...packagingData,
         itemStatuses: this.buildItemStatuses(normalized),
         ...freshStaleFlags,

@@ -400,14 +400,18 @@ describe("PackagingService — savePackaging with videoProjectId", () => {
     mockRepo = new MockPackagingRepo() as jest.Mocked<PackagingRepository>;
     mockVp = makeVp();
     service = new PackagingService(mockRepo, mockVp, makeContextService(), makeTestAccountService());
-    mockRepo.save = jest.fn().mockResolvedValue({ id: "pkg-new" });
-    // savePackaging upserts by project: no existing doc -> save path
+    // Phase 05a: creates go to doc(videoProjectId), so the id IS the project id.
+    mockRepo.saveWithId = jest.fn(async (id: string, _data: Record<string, unknown>) => ({ id }));
+    // savePackaging upserts by project: no existing doc -> create path. The
+    // point read is what the locator tries first; the legacy query is the
+    // transitional fallback and must also miss.
+    mockRepo.get = jest.fn().mockResolvedValue(null);
     mockRepo.findByVideoProject = jest.fn().mockResolvedValue(null);
   });
 
   it("saves videoProjectId on the document when provided", async () => {
     await service.savePackaging("user-1", { title: "t" }, "proj-1");
-    const packagingData = (mockRepo.save as jest.Mock).mock.calls[0][0];
+    const packagingData = (mockRepo.saveWithId as jest.Mock).mock.calls[0][1];
     expect(packagingData).toMatchObject({ videoProjectId: "proj-1" });
   });
 
@@ -420,7 +424,7 @@ describe("PackagingService — savePackaging with videoProjectId", () => {
       { title: "t", createdBy: "attacker", accountId: "attacker-account" } as never,
       "proj-1"
     );
-    const packagingData = (mockRepo.save as jest.Mock).mock.calls[0][0];
+    const packagingData = (mockRepo.saveWithId as jest.Mock).mock.calls[0][1];
     expect(packagingData.createdBy).toBe("user-1");
     expect(packagingData.accountId).toBe(TEST_ACCOUNT_ID);
   });
@@ -431,7 +435,7 @@ describe("PackagingService — savePackaging with videoProjectId", () => {
       { title: "t", script: "full script text", hooks: ["h1", "h2"] },
       "proj-1"
     );
-    const packagingData = (mockRepo.save as jest.Mock).mock.calls[0][0];
+    const packagingData = (mockRepo.saveWithId as jest.Mock).mock.calls[0][1];
     expect(packagingData).not.toHaveProperty("script");
     expect(packagingData).not.toHaveProperty("hooks");
   });
@@ -443,9 +447,13 @@ describe("PackagingService — savePackaging with videoProjectId", () => {
       titles: [{ title: "My Title", characterCount: 8 }],
     });
     expect(mockVp.createFromTitle).toHaveBeenCalledWith("user-1", "My Title");
-    const packagingData = (mockRepo.save as jest.Mock).mock.calls[0][0];
+    const [keyedOn, packagingData] = (mockRepo.saveWithId as jest.Mock).mock.calls[0];
     expect(packagingData).toMatchObject({ videoProjectId: "shallow-proj" });
-    expect(mockVp.linkResource).toHaveBeenCalledWith("shallow-proj", "packaging", "pkg-new", "user-1");
+    // Phase 05a: the packaging document id IS the videoProjectId. This used to be
+    // an auto-ID, which is why `findByVideoProject` had to exist at all — two
+    // creation paths with two different keys meant no reader could assume the id.
+    expect(keyedOn).toBe("shallow-proj");
+    expect(mockVp.linkResource).toHaveBeenCalledWith("shallow-proj", "packaging", "shallow-proj", "user-1");
     // ...but a title-only package has NOT finished the packaging step. Completion is
     // earned by content (description + thumbnail + shorts), never by the act of
     // saving — the Title screen auto-saves through this same endpoint, and
@@ -478,7 +486,7 @@ describe("PackagingService — savePackaging with videoProjectId", () => {
       thumbnail: { descriptions: ["Brief one", "Brief two"] },
       shorts: { segments: [{ startTime: "0:00", endTime: "0:05", content: "Hook", type: "hook" }], totalDuration: "1:00" },
     });
-    const packagingData = (mockRepo.save as jest.Mock).mock.calls[0][0];
+    const packagingData = (mockRepo.saveWithId as jest.Mock).mock.calls[0][1];
     expect(packagingData.titles).toEqual([{ title: "A", characterCount: 30 }]);
     expect(packagingData.description).toBe("Desc text");
     expect(packagingData.thumbnail).toEqual(["Brief one", "Brief two"]);
@@ -491,7 +499,7 @@ describe("PackagingService — savePackaging with videoProjectId", () => {
       titles: [{ title: "A", characterCount: 30 }],
       thumbnail: ["Brief one"],
     });
-    const packagingData = (mockRepo.save as jest.Mock).mock.calls[0][0];
+    const packagingData = (mockRepo.saveWithId as jest.Mock).mock.calls[0][1];
     expect(packagingData.titles).toEqual([{ title: "A", characterCount: 30 }]);
     expect(packagingData.thumbnail).toEqual(["Brief one"]);
   });
@@ -499,21 +507,21 @@ describe("PackagingService — savePackaging with videoProjectId", () => {
   it("rejects with 400 when a content field has a malformed shape", async () => {
     const err = await service.savePackaging("user-1", { titles: 42 }).catch((e) => e);
     expect(err.statusCode).toBe(400);
-    expect(mockRepo.save).not.toHaveBeenCalled();
+    expect(mockRepo.saveWithId).not.toHaveBeenCalled();
   });
 
   it("sets stale flags fresh on create (no existing doc)", async () => {
-    mockRepo.findByVideoProject = jest.fn().mockResolvedValue(null);
+    mockRepo.get = jest.fn().mockResolvedValue(null);
     await service.savePackaging("user-1", { title: "t" }, "proj-1");
-    const saved = (mockRepo.save as jest.Mock).mock.calls[0][0];
+    const saved = (mockRepo.saveWithId as jest.Mock).mock.calls[0][1];
     expect(saved).toMatchObject({ isStale: false, staleReason: null, staleSince: null });
   });
 
   it("does NOT touch stale flags on update (re-save must not un-stale)", async () => {
-    mockRepo.findByVideoProject = jest.fn().mockResolvedValue({ id: "pkg-1" });
+    mockRepo.get = jest.fn().mockResolvedValue({ id: "pkg-1" });
     mockRepo.update = jest.fn().mockResolvedValue({ id: "pkg-1" });
     await service.savePackaging("user-1", { title: "t" }, "proj-1");
-    expect(mockRepo.save).not.toHaveBeenCalled();
+    expect(mockRepo.saveWithId).not.toHaveBeenCalled();
     const updatePayload = (mockRepo.update as jest.Mock).mock.calls[0][1];
     expect(updatePayload).not.toHaveProperty("isStale");
     expect(updatePayload).not.toHaveProperty("staleReason");
@@ -541,7 +549,7 @@ describe("PackagingService — savePackaging with videoProjectId", () => {
     };
 
     beforeEach(() => {
-      mockRepo.findByVideoProject = jest.fn().mockResolvedValue(staleDoc);
+      mockRepo.get = jest.fn().mockResolvedValue(staleDoc);
       mockRepo.update = jest.fn().mockResolvedValue({ id: "pkg-1" });
     });
 

@@ -273,9 +273,11 @@ describe("Door flow — a save with no videoProjectId creates exactly one projec
     (vpRepo.update as jest.Mock).mockResolvedValue(undefined);
 
     const packagingRepoForSave = {
-      save: jest.fn().mockResolvedValue({ id: "pkg-door-1" }),
+      // Phase 05a: creates are keyed on the project id.
+      saveWithId: jest.fn(async (id: string, _data: Record<string, unknown>) => ({ id })),
       findByVideoProject: jest.fn().mockResolvedValue(null),
-      get: jest.fn().mockResolvedValue({ createdBy: "user-1", thumbnail: [] }),
+      // No packaging doc exists yet for a brand-new door project.
+      get: jest.fn().mockResolvedValue(null),
       update: jest.fn(),
     } as unknown as PackagingRepository;
 
@@ -304,10 +306,10 @@ describe("Door flow — a save with no videoProjectId creates exactly one projec
     (vpRepo.update as jest.Mock).mockResolvedValue(undefined);
 
     const packagingRepoForSave = {
-      save: jest.fn().mockResolvedValue({ id: "pkg-door-1" }),
+      saveWithId: jest.fn(async (id: string, _data: Record<string, unknown>) => ({ id })),
       findByVideoProject: jest.fn().mockResolvedValue(null),
-      get: jest.fn().mockResolvedValue({ createdBy: "user-1", thumbnail: [] }),
-      update: jest.fn().mockResolvedValue({ id: "pkg-door-1" }),
+      get: jest.fn().mockResolvedValue(null),
+      update: jest.fn().mockResolvedValue({ id: "shallow-1" }),
     } as unknown as PackagingRepository;
 
     const contentRepo = { getIdea: jest.fn(), updateIdea: jest.fn(), batchSaveIdeas: jest.fn(), getScriptById: jest.fn() } as unknown as ContentRepository;
@@ -316,7 +318,8 @@ describe("Door flow — a save with no videoProjectId creates exactly one projec
     const createSpy = vpRepo.create as jest.Mock;
 
     // Client adopts the id from the first save and passes it explicitly this time.
-    (packagingRepoForSave.findByVideoProject as jest.Mock).mockResolvedValue({ id: "pkg-door-1" });
+    // Post-05a the packaging id IS the project id, so this is a point read hit.
+    (packagingRepoForSave.get as jest.Mock).mockResolvedValue({ id: "shallow-1" });
     await service.savePackaging("user-1", { description: "edit" }, "shallow-1");
 
     expect(createSpy).not.toHaveBeenCalled();

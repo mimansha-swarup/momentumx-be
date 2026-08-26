@@ -2,8 +2,8 @@
 title: "Phase 05a — Packaging: One Deterministic Key"
 description: "Make every packaging document keyed on videoProjectId, and delete the lookup query."
 date: 2026-08-24
-last_updated: 2026-08-24
-status: "planned"
+last_updated: 2026-08-26
+status: "code-complete — migration not run"
 tags: ["multi-account", "phase-05a", "data-shape"]
 ---
 
@@ -12,6 +12,39 @@ tags: ["multi-account", "phase-05a", "data-shape"]
 **Size:** small, but it is a data-shape migration.
 **Depends on:** Phase 05.
 **Blocks:** Phase 06.
+
+---
+
+## Where this stands (2026-08-26)
+
+Code done, **migration not run**. This phase is deliberately TWO commits and only
+the first has landed.
+
+| | |
+|---|---|
+| `savePackaging` writes `doc(videoProjectId)` (`repo.saveWithId`) | done |
+| Auto-ID `repo.save()` deleted, with its no-op try/catch | done |
+| `mergePackaging` + `src/scripts/rekey-packaging.ts` | done, 9 tests, merge canary-verified |
+| `.claude/rules/firestore-conventions.md` rewritten | done, same change |
+| **Migration run, collisions triaged** | **outstanding** |
+| **Delete commit** — remove `findByVideoProject` + the locator fallback | **outstanding, gated on the run** |
+
+**`findByVideoProject` is still here on purpose.** `PackagingService.locateForProject`
+point-reads `doc(videoProjectId)` first and falls back to the query, logging
+`packaging_legacy_autoid_read` when it fires. Deleting the fallback before the re-key runs
+sends every legacy document's project down the create path, writing a fresh empty package
+over the top — the user's packaging silently disappears. That is the same data-loss ordering
+the "order matters" section below describes, reached from inside this phase rather than from
+Phase 06.
+
+The log line is the signal for when the delete is safe: once a full run of the migration is
+clean and nothing emits `packaging_legacy_autoid_read`, there is nothing left for the query
+to find.
+
+```bash
+node dist/scripts/rekey-packaging.js --dry-run   # counts + collisions, writes nothing
+node dist/scripts/rekey-packaging.js             # exits 2 if any collision was logged
+```
 
 ---
 

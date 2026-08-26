@@ -1,16 +1,22 @@
 import { db, firebase } from "../config/firebase.js";
 class PackagingRepository {
     constructor() {
-        this.save = async (data) => {
-            try {
-                const docRef = this.db.collection(this.collection).doc();
-                const dataWithId = { ...data, id: docRef.id };
-                await docRef.set(dataWithId);
-                return dataWithId;
-            }
-            catch (error) {
-                throw error;
-            }
+        /**
+         * Create the packaging document for a project, keyed on `videoProjectId`.
+         *
+         * Phase 05a. This replaced an auto-ID `doc()` create. Two creation paths with
+         * two different keys is what made `findByVideoProject` necessary at all:
+         * `upsertGeneratedItem` has always used `doc(videoProjectId)`, while the save
+         * path minted auto-IDs, so nothing could assume `id === videoProjectId`.
+         *
+         * `merge: true` because persist-on-generate may already have created the
+         * document for this project — overwriting would drop the generated items.
+         */
+        this.saveWithId = async (videoProjectId, data) => {
+            const docRef = this.db.collection(this.collection).doc(videoProjectId);
+            const dataWithId = { ...data, id: videoProjectId };
+            await docRef.set(dataWithId, { merge: true });
+            return dataWithId;
         };
         this.get = async (packagingId) => {
             try {
@@ -136,6 +142,20 @@ class PackagingRepository {
                 return { packagingId: ref.id, created: !snap.exists, statuses };
             });
         };
+        /**
+         * LEGACY locator, retained only until the Phase 05a re-key migration has run.
+         *
+         * Every document created from Phase 05a onward has `id === videoProjectId`, so
+         * `get(videoProjectId)` finds it. This query exists solely to still find the
+         * auto-ID documents written by the old save path.
+         *
+         * DELETE THIS, and the fallback in `PackagingService.locateForProject`, once
+         * `migrations/packaging-rekey` reports a clean run — that is the delete commit
+         * the phase plan keeps separate, and it is the point after which this phase
+         * stops being reversible. Deleting it before the migration would send every
+         * legacy document's project down the create path, writing a fresh empty
+         * package over the top and silently losing the user's work.
+         */
         this.findByVideoProject = async (videoProjectId) => {
             try {
                 const snapshot = await this.db

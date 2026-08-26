@@ -169,7 +169,7 @@ Each phase is a separate document and is meant to be shippable on its own.
 | [03](./phase-03-dual-write-account-tag.md) | Dual-write the account tag | Start stamping `accountId` on new records; nothing reads it yet | Yes | 🟡 merged, **not deployed** |
 | [04](./phase-04-backfill.md) | Backfill existing data | Copy `createdBy` into `accountId` on every existing record | Yes | 🟡 script written, not run |
 | [05](./phase-05-account-context-api.md) | Account context in the API | `X-Account-Id` header, membership check, `req.accountId`, the error-code contract | Yes | 🟡 built, not deployed |
-| [05a](./phase-05a-packaging-deterministic-key.md) | **Packaging: one deterministic key** | Every packaging doc keyed on `videoProjectId`; delete the lookup query | Yes, until its delete commit | — |
+| [05a](./phase-05a-packaging-deterministic-key.md) | **Packaging: one deterministic key** | Every packaging doc keyed on `videoProjectId`; delete the lookup query | Yes, until its delete commit | 🟡 code done, migration not run |
 | [06](./phase-06-switch-reads-and-permissions.md) | Switch reads and permissions | Queries and permission checks move from `createdBy` to `accountId` | Yes, until Phase 07 | — |
 | [06a](./phase-06a-accounts-api.md) | **The Accounts API** | List, create and activate channels — the endpoints the switcher talks to | Yes | — |
 | [06b](./phase-06b-move-channel-context.md) | Move channel context to the account | Generation reads niche/competitors/website from the channel, not the person | ⚠️ Step 4 is a second door | — |
@@ -313,7 +313,7 @@ the plan (07) lands on the codebase with the least coverage. Phase 07 names the 
 one test over the root reducer and the account-switch reset, which is the only cheap way to
 catch the two failure modes that fail *open* and are invisible until a second channel exists.
 
-**Backend suite status, measured 2026-08-26:** 897 tests, 59 suites, **all passing.** An earlier draft of Phase 01 claimed the suite "fails about one
+**Backend suite status, measured 2026-08-26:** 906 tests, 60 suites, **all passing.** An earlier draft of Phase 01 claimed the suite "fails about one
 run in three". That is **not currently reproducible** — thirteen consecutive clean runs
 have now been observed across two sessions. The claim has been removed rather than
 repeated. If intermittent failures return, treat it as a Phase 01 blocker for the reason

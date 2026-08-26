@@ -52,15 +52,25 @@ const id = randomUUID();
 
 // users → Firebase UID (req.userId from authMiddleware)
 
-// packaging → DETERMINISTIC id = videoProjectId, written in a transaction
-// (repo.upsertGeneratedItem). Persist-on-generate fires the item writes
-// concurrently (round 1 title+shorts, round 2 desc+thumbnail); a deterministic
-// id makes concurrent first-generations converge on ONE doc instead of racing
-// two auto-id creates, and the transaction makes the "all four done?" check see
-// a consistent snapshot. doc(videoProjectId).set(...) on create.
+// packaging → DETERMINISTIC id = videoProjectId. ALWAYS. Both creation paths.
+// Persist-on-generate fires item writes concurrently (round 1 title+shorts,
+// round 2 desc+thumbnail); a deterministic id makes concurrent first-generations
+// converge on ONE doc instead of racing two auto-id creates, and the transaction
+// makes the "all four done?" check see a consistent snapshot.
 const ref = db.collection(COLLECTIONS.PACKAGING).doc(videoProjectId);
-// Legacy/door docs may still have auto-IDs — always LOCATE by findByVideoProject
-// (query on the videoProjectId field), never assume id === videoProjectId on read.
+// READ IT AS A POINT READ: repo.get(videoProjectId). No lookup query.
+//
+// This section used to say the opposite — "legacy/door docs may still have
+// auto-IDs, always LOCATE by findByVideoProject, never assume id ===
+// videoProjectId". That was true while the SAVE path minted auto-IDs and only
+// persist-on-generate used the deterministic key. Phase 05a made the save path
+// deterministic too (repo.saveWithId) and re-keyed the existing documents, which
+// is what retired the warning.
+//
+// TRANSITIONAL, until the Phase 05a delete commit: PackagingService.locateForProject
+// still falls back to findByVideoProject and logs `packaging_legacy_autoid_read`
+// when it fires. Both go away once migrations/packaging-rekey reports a clean run.
+// Do not reintroduce the query anywhere else.
 ```
 
 ---
