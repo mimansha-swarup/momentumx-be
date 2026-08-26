@@ -161,10 +161,35 @@ describe("AccountRepository.findByMember", () => {
   it("returns every account the user belongs to", async () => {
     whereFn.mockReturnValue({
       get: jest.fn().mockResolvedValue({
-        docs: [{ data: () => ({ id: "acc-1" }) }, { data: () => ({ id: "acc-2" }) }],
+        docs: [
+          { id: "acc-1", data: () => ({ displayName: "One" }) },
+          { id: "acc-2", data: () => ({ displayName: "Two" }) },
+        ],
       }),
     });
 
-    expect(await repo.findByMember("uid-1")).toEqual([{ id: "acc-1" }, { id: "acc-2" }]);
+    expect(await repo.findByMember("uid-1")).toEqual([
+      { id: "acc-1", displayName: "One" },
+      { id: "acc-2", displayName: "Two" },
+    ]);
+  });
+
+  it("takes id from the document, not from a stored field", async () => {
+    // This previously returned bare `doc.data()`, so `account.id` was whatever
+    // the document happened to store. A missing or blank field gave callers
+    // `undefined`, which becomes "channel not found" on EVERY request for that
+    // user and never self-heals — a membership was found, so nothing re-mints.
+    //
+    // The old fixture supplied the id inside `data()`, which is why the test
+    // could not see it.
+    whereFn.mockReturnValue({
+      get: jest.fn().mockResolvedValue({
+        docs: [{ id: "acc-real", data: () => ({ id: "", memberUids: ["uid-1"] }) }],
+      }),
+    });
+
+    const [found] = await repo.findByMember("uid-1");
+
+    expect(found.id).toBe("acc-real");
   });
 });

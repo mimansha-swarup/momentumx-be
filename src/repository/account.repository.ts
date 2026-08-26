@@ -35,13 +35,21 @@ class AccountRepository {
    * `members` map — which is the whole reason that array exists alongside it.
    * A query may carry only ONE `array-contains`, so ownership is a separate
    * field rather than a second condition here.
+   *
+   * `id` comes from the DOCUMENT, exactly as `findById` does it. Returning bare
+   * `doc.data()` made the id depend on a stored field that a restore or a
+   * hand-written document can be missing, and a caller reading `account.id` then
+   * got `undefined` — which resolves to "channel not found" on every request that
+   * user makes, with no path back, because a membership was found so nothing
+   * re-mints. `account.service.ts` carried a guard for this; the middleware did
+   * not.
    */
   findByMember = async (uid: string): Promise<IAccount[]> => {
     const snap = await this.db
       .collection(this.collection)
       .where("memberUids", "array-contains", uid)
       .get();
-    return snap.docs.map((doc) => doc.data() as IAccount);
+    return snap.docs.map((doc) => ({ ...(doc.data() as IAccount), id: doc.id }));
   };
 
   /**
