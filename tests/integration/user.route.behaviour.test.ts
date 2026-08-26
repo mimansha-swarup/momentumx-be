@@ -16,6 +16,14 @@
 // newer .claude/rules/api-design.md route summary. Tests below follow the
 // current, more-recently-synced contract (api-design.md + the actual schema).
 
+// Route suites mock Firestore away, so the real account middleware (which reads
+// the account document to verify membership) cannot run. Membership behaviour is
+// tested in tests/integration/account-middleware.behaviour.test.ts; that each
+// router still MOUNTS it is pinned by tests/unit/auth-coverage.test.ts.
+jest.mock("../../src/middleware/account", () =>
+  require("../helpers/account").passthroughAccountMiddleware()
+);
+
 jest.mock("firebase-admin", () => ({
   apps: [],
   initializeApp: jest.fn(),

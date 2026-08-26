@@ -36,7 +36,11 @@ app.use(cors({
   origin: allowedOrigins.length > 0 ? allowedOrigins : [/^https?:\/\/localhost(:\d+)?$/],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  // 'X-Account-Id' is load-bearing: omit it and the browser strips the header on
+  // every preflighted request, the server silently falls back to the default
+  // account, and the whole suite still passes. Same shape as the stale-index
+  // outage — configuration outside the code path under test.
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Account-Id']
 }));
 // responseFormatter runs before express.json/rateLimiter so res.sendError
 // exists when those middlewares error (e.g. malformed JSON body).

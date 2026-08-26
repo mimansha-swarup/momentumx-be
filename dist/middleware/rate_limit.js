@@ -28,6 +28,21 @@ const rateLimiter = rateLimit({
     // would mostly be testing express-rate-limit rather than us. What is ours is the
     // config above; if that ever grows real logic (per-account limits in Phase 08),
     // extract the options object and test it directly instead of the middleware.
+    // PHASE 05, NOT DONE — and it cannot be done here.
+    //
+    // The phase doc asks for this limiter to be keyed on `userId` rather than IP,
+    // so that several members of one shared channel behind one office NAT don't
+    // share a budget. A `keyGenerator: (req) => req.userId || req.ip` looks like it
+    // does that and does not: `app.use(rateLimiter)` runs at `app.ts:49`, before
+    // `app.use(rootRouter)` at `:61`, and `authMiddleware` lives INSIDE the
+    // routers. So `req.userId` is always undefined at key time — the fallback fires
+    // on every request and the limiter stays per-IP while reading as per-user.
+    //
+    // Doing it properly means either moving this limiter after auth (which leaves
+    // the unauthenticated surface unlimited) or mounting a second per-user limiter
+    // at router level. Both are real changes; neither belongs in a phase whose own
+    // doc calls this "not a blocker". Revisit with Phase 09, when shared channels
+    // actually exist.
     skip: () => process.env.NODE_ENV === "test",
 });
 export default rateLimiter;

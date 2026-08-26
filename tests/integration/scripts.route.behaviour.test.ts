@@ -13,6 +13,14 @@
 // headers. ContentService is mocked at the module boundary; container.ts wires
 // the real controller.
 
+// Route suites mock Firestore away, so the real account middleware (which reads
+// the account document to verify membership) cannot run. Membership behaviour is
+// tested in tests/integration/account-middleware.behaviour.test.ts; that each
+// router still MOUNTS it is pinned by tests/unit/auth-coverage.test.ts.
+jest.mock("../../src/middleware/account", () =>
+  require("../helpers/account").passthroughAccountMiddleware()
+);
+
 jest.mock("firebase-admin", () => ({
   apps: [],
   initializeApp: jest.fn(),

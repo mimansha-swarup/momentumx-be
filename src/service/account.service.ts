@@ -96,7 +96,13 @@ class AccountService {
     // into one bucket. Skip the malformed document and mint instead.
     const existing = await this.repo.findByMember(userId);
     const found = existing.find(
-      (account) => typeof account?.id === "string" && account.id.trim()
+      (account) =>
+        typeof account?.id === "string" &&
+        account.id.trim() &&
+        // A tombstoned channel must not be adopted here. Doing so hands the
+        // caller an account that `accountMiddleware` will immediately 410, on
+        // every request, with no way out of the loop.
+        !account.deletedAt
     );
     if (found) {
       await this.userRepo.update(userId, { lastActiveAccountId: found.id });
@@ -131,6 +137,25 @@ class AccountService {
     );
     accountIdCache.set(userId, accountId);
     return accountId;
+  };
+
+  /**
+   * Drop the user's pointer at a channel that can no longer be entered.
+   *
+   * The repair path for a tombstone. Without it the pointer keeps naming a dead
+   * account, `ensureDefaultAccount` keeps returning it from the pointer branch,
+   * and the user gets 410 on every request forever. Evicting the process cache
+   * matters as much as the stored pointer — that cache is checked first.
+   *
+   * Guarded on the id matching so a stale request cannot clear a pointer the user
+   * has since moved somewhere live.
+   */
+  clearActiveAccount = async (userId: string, accountId: string): Promise<void> => {
+    if (accountIdCache.get(userId) === accountId) accountIdCache.delete(userId);
+
+    const user = (await this.userRepo.get(userId)) as Record<string, unknown> | null;
+    if (user?.lastActiveAccountId !== accountId) return;
+    await this.userRepo.update(userId, { lastActiveAccountId: null });
   };
 }
 

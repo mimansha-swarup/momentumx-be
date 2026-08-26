@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { authMiddleware } from "../../middleware/auth.js";
+import { accountMiddleware } from "../../middleware/account.js";
 import { validate } from "../../middleware/validate.js";
 import {
   createVideoProjectSchema,
@@ -11,6 +12,7 @@ import { videoProjectController } from "../../container.js";
 const router = Router();
 
 router.use(authMiddleware);
+router.use(accountMiddleware);
 router.post("/", validate(createVideoProjectSchema), videoProjectController.create);
 router.get("/", videoProjectController.list);
 router.get("/:projectId", videoProjectController.getById);

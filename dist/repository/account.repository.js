@@ -3,6 +3,19 @@ import { db, firebase } from "../config/firebase.js";
 class AccountRepository {
     constructor() {
         /**
+         * One account by id. Read once per request by `accountMiddleware` (Phase 05) to
+         * check membership — the id came from a client header, so nothing about it is
+         * trusted until this read confirms the caller is in `memberUids`.
+         */
+        this.findById = async (accountId) => {
+            if (!accountId)
+                return null;
+            const doc = await this.db.collection(this.collection).doc(accountId).get();
+            if (!doc.exists)
+                return null;
+            return { ...doc.data(), id: doc.id };
+        };
+        /**
          * The channels this user can see.
          *
          * `array-contains` on `memberUids`, because Firestore cannot query inside the

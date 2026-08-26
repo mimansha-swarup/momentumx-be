@@ -47,16 +47,26 @@ All routes protected with `authMiddleware` at router level:
 ```typescript
 // ✅ Every new router
 const router = express.Router();
-router.use(authMiddleware);
+router.use(authMiddleware);      // identity  → req.userId
+router.use(accountMiddleware);   // tenancy   → req.accountId, req.role
 router.get('/ideas', controller.getIdeas);
 ```
+
+Order matters: `accountMiddleware` reads `req.userId`, so mounted first it would resolve the
+account for `undefined` on every request. Both mounts, and their order, are pinned by
+`tests/unit/auth-coverage.test.ts`.
 
 **SSE exception:** `GET /v1/scripts/stream/:projectId` uses `?token=` query param.
 Reason: browser EventSource API cannot send Authorization headers.
 The token is verified by `sseAuthMiddleware` (from `src/middleware/auth.ts`), applied per-route before the controller:
 
 ```typescript
-router.get("/stream/:projectId", sseAuthMiddleware, scriptController.generateScript);
+router.get(
+  "/stream/:projectId",
+  sseAuthMiddleware,          // ?token= → req.userId
+  resolveAccountFromProject,  // the PROJECT → req.accountId, req.role
+  scriptController.generateScript
+);
 ```
 
 No router ships without auth. A router left unprotected "temporarily for testing" is a Critical review finding.
@@ -70,14 +80,69 @@ No router ships without auth. A router left unprotected "temporarily for testing
 { success: true, data: unknown, message?: string, meta?: object }
 
 // Error
-{ success: false, message: string, detail?: unknown }
+{ success: false, message: string, code?: ErrorCode, detail?: unknown }
 ```
 
 Achieved via response helpers — never construct this shape manually:
 ```typescript
 res.sendSuccess({ data, message?, statusCode?, meta? })
-res.sendError({ message, statusCode?, detail? })
+res.sendError({ message, statusCode?, code?, detail? })
 ```
+
+### `code` — the machine-readable reason (Phase 05)
+
+`statusCode` is the HTTP status. `code` is a **separate body field** that says *which*
+failure this is, because **403 cannot mean one thing**:
+
+| `code` | Meaning | What the client does |
+|---|---|---|
+| `account_forbidden` | Not a member of this channel at all | Clear the active account, go to the channel list |
+| `wrong_account` | Member of the resource's channel, but acting in a different one | Offer a one-click switch — `detail` carries `{ accountId, displayName }` |
+| `role_forbidden` | Member, but the role doesn't allow it | Inline message, stay put |
+| `insufficient_credits` | Phase 08 | Show the balance and the reset date |
+
+Without the discriminator a viewer clicking a button the UI failed to disable gets
+**ejected from the channel**, and a bookmarked project living in the user's other channel
+renders as *"Project not found. It may have been deleted."* — when it is one switch away.
+
+Use the named factories in `utlils/errors.ts` (`AccountForbidden()`, `WrongAccount()`,
+`RoleForbidden()`), never a `code` argument on `Forbidden()`: `message`, `detail` and `code`
+would be three loosely-typed trailing parameters in a row, which is the positional trap that
+put a `batchId` in an `accountId` slot during Phase 03.
+
+`code` and `detail` are forwarded **only for 4xx `HttpError`s**. An unexpected throw gets
+neither, so nothing internal leaks and no caller can forge a `code` that drives the client's
+branch.
+
+---
+
+## Account Context — `X-Account-Id` (Phase 05)
+
+Every protected router mounts `accountMiddleware` immediately after `authMiddleware`:
+
+```typescript
+router.use(authMiddleware);      // who are you        → req.userId
+router.use(accountMiddleware);   // which channel      → req.accountId, req.role
+```
+
+The header is client-supplied and therefore **forgeable** — all of the safety is the
+unconditional membership check inside that one middleware. Never read an account id from
+`req.headers`, `req.body`, `req.query` or `req.params` anywhere else; doing so bypasses the
+check, which is precisely how one user reads another's channel. Pinned by
+`tests/unit/dual-write-coverage.test.ts`.
+
+A missing header falls back to the caller's own channel rather than 400ing, so
+already-loaded browser tabs keep working across the deploy. **Phase 07 flips
+`FALLBACK_ALLOWS_WRITES` to `false`** in the same commit that makes the frontend send the
+header, at which point the fallback becomes read-only.
+
+**SSE exception.** `GET /v1/scripts/stream/:projectId` cannot send headers (`EventSource`),
+so it mounts `resolveAccountFromProject` instead, which derives the account from the
+**project** and takes nothing account-related from the query string. It sets `req.role` too —
+Phase 09 gates exactly this route on it.
+
+**CORS:** `X-Account-Id` must stay in `allowedHeaders` in `app.ts`. Drop it and the browser
+strips the header on every preflighted request while the entire test suite still passes.
 
 ---
 
@@ -104,6 +169,7 @@ JSON-encoding the chunk keeps embedded newlines in multi-line content (scripts) 
 | Not authenticated — missing, malformed or invalid token | **401** |
 | Authenticated, but not allowed to touch this resource | **403** |
 | Resource not found | 404 |
+| Channel tombstoned (existed, now deleted) | **410** |
 | Server error / service failure | 500 |
 | Upstream (Gemini / YouTube) produced nothing usable | 503 |
 

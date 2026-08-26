@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { authMiddleware } from "../../middleware/auth.js";
+import { accountMiddleware } from "../../middleware/account.js";
 import { validate } from "../../middleware/validate.js";
 import { editIdeaSchema, generateIdeasSchema } from "../../validation/content.validation.js";
 import { ideaController } from "../../container.js";
@@ -7,6 +8,7 @@ import { ideaController } from "../../container.js";
 const router = Router();
 
 router.use(authMiddleware);
+router.use(accountMiddleware);
 
 router.post("/generate", validate(generateIdeasSchema), ideaController.generateIdeas);
 

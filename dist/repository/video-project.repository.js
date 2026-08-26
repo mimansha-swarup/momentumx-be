@@ -114,6 +114,15 @@ class VideoProjectRepository {
             await docRef.set(dataWithId);
             return dataWithId;
         };
+        /**
+         * The SSE account-bootstrap read, deliberately NOT account-filtered.
+         *
+         * `resolveAccountFromProject` has to read the project before it can know which
+         * account to check, so this one read cannot be scoped. It has its own name so
+         * that when Phase 06 makes `findById` account-filtered, the exception is
+         * visible at the call site instead of being silently inherited.
+         */
+        this.findByIdUnchecked = async (projectId) => this.findById(projectId);
         this.findById = async (projectId) => {
             const doc = await this.db.collection(this.collection).doc(projectId).get();
             if (!doc.exists)

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { authMiddleware } from "../../middleware/auth.js";
+import { accountMiddleware } from "../../middleware/account.js";
 import { validate } from "../../middleware/validate.js";
 import {
   onboardingSchema,
@@ -11,6 +12,7 @@ import { userController } from "../../container.js";
 const router = Router();
 
 router.use(authMiddleware);
+router.use(accountMiddleware);
 router.post("/onboarding/prefill", validate(prefillSchema), userController.prefill);
 router.patch("/onboarding", validate(onboardingSchema), userController.saveOnboarding);
 

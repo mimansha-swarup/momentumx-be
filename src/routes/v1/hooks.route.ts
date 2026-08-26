@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { authMiddleware } from "../../middleware/auth.js";
+import { accountMiddleware } from "../../middleware/account.js";
 import { validate } from "../../middleware/validate.js";
 import {
   generateHooksSchema,
@@ -11,6 +12,7 @@ import { hooksController } from "../../container.js";
 const router = Router();
 
 router.use(authMiddleware);
+router.use(accountMiddleware);
 router.post("/generate", validate(generateHooksSchema), hooksController.generate);
 router.post("/:hooksId/select", validate(selectHookSchema), hooksController.select);
 router.post("/:hooksId/regenerate", validate(regenerateHooksSchema), hooksController.regenerate);

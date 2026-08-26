@@ -73,12 +73,16 @@ describe("phase 03 — no permission check moves to accountId", () => {
   });
 });
 
-describe("phase 03 — no API surface change", () => {
-  it("nothing reads an account id from the request", () => {
-    // "No X-Account-Id yet" — Phase 05 introduces it with accountMiddleware. A
-    // route reading one early would let a client choose its own tenancy against
-    // permission checks that are still uid-based.
+describe("phase 05 — the account id enters at exactly one place", () => {
+  it("only accountMiddleware reads an account id from the request", () => {
+    // Phase 03's version of this asserted NOTHING read the header. Phase 05 is
+    // the phase that introduces it, so the invariant narrows rather than
+    // disappears: the header is forgeable, and it is only safe because one
+    // middleware checks membership unconditionally before anything trusts it.
+    // A controller or route reading it directly would bypass that check — which
+    // is the single way a user reads another's channel by editing their browser.
     const roots = ["src/routes", "src/middleware", "src/controller"];
+    const ENTRY_POINT = "src/middleware/account.ts";
     const offenders: string[] = [];
 
     for (const root of roots) {
@@ -87,9 +91,11 @@ describe("phase 03 — no API surface change", () => {
           const full = path.join(dir, entry.name);
           if (entry.isDirectory()) walk(full);
           else if (entry.name.endsWith(".ts")) {
+            const rel = path.relative(process.cwd(), full);
+            if (rel === ENTRY_POINT) continue;
             const source = fs.readFileSync(full, "utf8");
             if (/x-account-id/i.test(source) || /req\.(body|query|params|headers)\W+accountId/.test(source)) {
-              offenders.push(path.relative(process.cwd(), full));
+              offenders.push(rel);
             }
           }
         }
