@@ -82,10 +82,23 @@ export const errorHandler: ErrorRequestHandler = (
     return;
   }
 
-  // 4xx: do not log (avoid spam); echo the curated message. Never forward detail.
+  // 4xx: do not log (avoid spam); echo the curated message.
+  //
+  // `code` and `detail` ARE forwarded here, unlike the 5xx branch. That is the
+  // whole point of Phase 05's contract: the client has to tell `account_forbidden`
+  // (eject to the channel list) from `role_forbidden` (stay put) from
+  // `wrong_account` (offer a switch), and `wrong_account` carries the owning
+  // account in `detail` so it can name the channel. Dropping either here leaves
+  // Phase 07 rendering every 403 identically — and, for a bookmarked project in
+  // the user's other channel, rendering it as "may have been deleted".
+  //
+  // Only author-written HttpErrors carry these; an unexpected throw has neither,
+  // so nothing internal leaks by forwarding them.
+  const code = err instanceof HttpError ? err.code : undefined;
+  const detail = err instanceof HttpError ? err.detail : undefined;
   if (typeof res.sendError === "function") {
-    res.sendError({ message: rawMessage, statusCode });
+    res.sendError({ message: rawMessage, statusCode, code, detail });
   } else {
-    res.status(statusCode).json({ success: false, message: rawMessage });
+    res.status(statusCode).json({ success: false, message: rawMessage, code, detail });
   }
 };

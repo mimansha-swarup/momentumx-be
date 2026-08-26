@@ -8,11 +8,14 @@ export const responseFormatter = (_req, res, next) => {
             warning,
         });
     };
-    res.sendError = ({ message, statusCode, detail }) => {
-        const code = Number(statusCode) || 500;
-        res.status(code).json({
+    res.sendError = ({ message, statusCode, detail, code }) => {
+        // `status` is the HTTP code; `code` is the machine-readable reason (Phase 05).
+        // They were both called `code` here before, which is why this reads oddly.
+        const status = Number(statusCode) || 500;
+        res.status(status).json({
             success: false,
             message,
+            code,
             detail,
         });
     };
