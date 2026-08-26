@@ -112,7 +112,13 @@ export const verifyDoc = (
 const progressRef = (collection: string) =>
   db.collection(COLLECTIONS.MIGRATIONS).doc(collection);
 
-type Counts = { scanned: number; patched: number; orphaned: number; skipped: number };
+type Counts = {
+  scanned: number;
+  patched: number;
+  orphaned: number;
+  skipped: number;
+  failed: number;
+};
 
 /**
  * One collection, paged by document id.
@@ -126,7 +132,7 @@ export const backfillCollection = async (
   { dryRun = false, resume = true }: { dryRun?: boolean; resume?: boolean } = {}
 ): Promise<Counts> => {
   const ref = progressRef(collection);
-  const counts: Counts = { scanned: 0, patched: 0, orphaned: 0, skipped: 0 };
+  const counts: Counts = { scanned: 0, patched: 0, orphaned: 0, skipped: 0, failed: 0 };
 
   let cursor: string | undefined;
   if (resume && !dryRun) {
@@ -143,6 +149,36 @@ export const backfillCollection = async (
   }
 
   const writer = dryRun ? null : db.bulkWriter();
+
+  // `patched` counts writes ATTEMPTED, which is what the loop below can know. So
+  // without this the summary reports a clean run while writes were failing, and
+  // the individual `set()` promises — discarded, since the loop does not await
+  // them — reject unhandled, which on Node 18+ takes the process down mid-scan.
+  // `--verify` is still the real gate; this is what makes the failure legible
+  // when someone reads the log instead of running step 4.
+  //
+  // Installing a handler REPLACES BulkWriter's own, so this one has to reproduce
+  // its policy rather than invent a friendlier-looking one: retry only the two
+  // transient codes, and keep the full ten attempts. A generic
+  // `failedAttempts < 3` reads like a safe default and is worse in both
+  // directions — it burns attempts on permanent errors like PERMISSION_DENIED,
+  // and it gives up on a passing UNAVAILABLE blip that the default would have
+  // ridden out, on a one-shot job over records that have no other copy.
+  const RETRYABLE = new Set([10 /* ABORTED */, 14 /* UNAVAILABLE */]);
+  const MAX_ATTEMPTS = 10;
+  writer?.onWriteError((error) => {
+    if (RETRYABLE.has(error.code) && error.failedAttempts < MAX_ATTEMPTS) return true;
+    counts.failed++;
+    console.error(
+      JSON.stringify({
+        event: "backfill_write_failed",
+        path: error.documentRef.path,
+        code: error.code,
+        attempts: error.failedAttempts,
+      })
+    );
+    return false;
+  });
 
   for (;;) {
     let query = db
@@ -177,10 +213,22 @@ export const backfillCollection = async (
       }
 
       counts.patched++;
-      writer?.set(doc.ref, { accountId }, { merge: true });
+      // Swallowed here only because onWriteError above has already counted and
+      // logged it; an uncaught rejection would kill the run instead.
+      void writer?.set(doc.ref, { accountId }, { merge: true }).catch(() => undefined);
     }
 
     cursor = snap.docs[snap.docs.length - 1].id;
+    // BEFORE the cursor, always. `set()` only enqueues — BulkWriter batches, rate
+    // limits and retries on its own schedule — so storing `lastCursor` for a page
+    // whose writes are still in flight makes the cursor claim durability the data
+    // does not have. Kill the process there and `--verify` reports those documents
+    // `missing`, while the obvious repair (re-run the job) resumes PAST them and
+    // fixes nothing; you would have to know to clear `lastCursor` by hand. `flush`
+    // waits for previously-issued writes, retries included, and never rejects —
+    // the per-write promises carry the errors, and `onWriteError` above has
+    // already counted them.
+    await writer?.flush();
     if (!dryRun) await ref.set({ lastCursor: cursor, ...counts }, { merge: true });
     if (snap.size < PAGE_SIZE) break;
   }
@@ -257,14 +305,30 @@ export const loadOwnerMap = async (): Promise<Map<string, string>> => {
   );
 };
 
+/**
+ * `--collection=` must name one of the five, and the check is not pedantry.
+ *
+ * The value went straight to `db.collection(...)`, so a typo or a plausible
+ * guess pointed the scan at a collection that has no `createdBy` — `users` being
+ * the obvious one — where every document resolves to ORPHAN and the job writes
+ * `accountId: "__orphan"` across all of them. This is a script run by hand,
+ * against production, usually at the worst possible hour.
+ */
+export const pickCollections = (only?: string): string[] => {
+  const all = BACKFILL_COLLECTIONS as readonly string[];
+  if (!only) return all.slice();
+  if (!all.includes(only)) {
+    throw new Error(`--collection must be one of: ${all.join(", ")}`);
+  }
+  return [only];
+};
+
 const main = async () => {
   const args = process.argv.slice(2);
   const dryRun = args.includes("--dry-run");
   const verify = args.includes("--verify");
   const only = args.find((a) => a.startsWith("--collection="))?.split("=")[1];
-  const collections = only
-    ? [only]
-    : (BACKFILL_COLLECTIONS as readonly string[]).slice();
+  const collections = pickCollections(only);
 
   const ownerToAccount = await loadOwnerMap();
   console.log(JSON.stringify({ event: "owner_map", owners: ownerToAccount.size }));
@@ -281,11 +345,14 @@ const main = async () => {
       const v = await verifyCollection(collection, ownerToAccount);
       if (v.mismatched > 0 || v.missing > 0) failed = true;
     } else {
-      await backfillCollection(collection, ownerToAccount, { dryRun });
+      const counts = await backfillCollection(collection, ownerToAccount, { dryRun });
+      // A non-zero exit, so a partially-written collection cannot be mistaken for
+      // a finished one by whoever is watching the terminal.
+      if (counts.failed > 0) failed = true;
     }
   }
 
-  if (failed) throw new Error("verification failed — see backfill_mismatched/backfill_missing above");
+  if (failed) throw new Error("run failed — see backfill_write_failed/backfill_mismatched/backfill_missing above");
 };
 
 // Only when executed directly, so the exported helpers stay importable by tests.

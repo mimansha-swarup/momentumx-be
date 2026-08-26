@@ -44,7 +44,10 @@ node dist/scripts/backfill-account-id.js
 node dist/scripts/backfill-account-id.js --verify      # exits non-zero on mismatched/missing
 ```
 
-`--collection=ideas` scopes any mode to one collection.
+`--collection=ideas` scopes any mode to one collection. It must name one of the five
+above and the script rejects anything else: the value used to reach `db.collection()`
+unchecked, so `--collection=users` would have scanned a collection with no `createdBy`
+and stamped `accountId: "__orphan"` across every user document.
 
 ---
 
@@ -194,8 +197,22 @@ counts in front of you.
 
 ```
 migrations/{collection}
-  startedAt, lastCursor, scanned, patched, orphaned, completedAt
+  startedAt, lastCursor, scanned, patched, orphaned, skipped, failed, completedAt
 ```
+
+`patched` counts writes **attempted**, which is all the scan loop can know — the
+BulkWriter completes them afterwards. `failed` is what the writer's error handler
+reports, and a non-zero `failed` exits non-zero, so a partially-written collection
+cannot be read as a finished one. `--verify` remains the actual gate.
+
+**`flush()` before `lastCursor`, in that order.** `set()` only enqueues; BulkWriter
+batches, rate-limits and retries on its own schedule. Storing the cursor for a page whose
+writes are still in flight makes the cursor claim a durability the data does not have — kill
+the process there and those documents are skipped by every later run, because resume starts
+past them. `--verify` would report them `missing` while the obvious repair (re-run the job)
+resumes past them and fixes nothing; the operator would have to know to clear `lastCursor` by
+hand. This is why the two writes are ordered, and it is the only reason the resume is
+trustworthy.
 
 ### Verify before moving on — assert the invariant, not the field
 

@@ -19,16 +19,47 @@
 const FieldPath = { documentId: () => "__name__" };
 
 const collectionFn = jest.fn();
-const bulkWriterSet = jest.fn();
-const bulkWriterClose = jest.fn().mockResolvedValue(undefined);
-const progressSet = jest.fn().mockResolvedValue(undefined);
+// Resolved, not bare: the job discards the write promises, so it attaches a
+// `.catch` to keep a failed write from taking the process down as an unhandled
+// rejection. A mock returning undefined would break on that `.catch`.
+const bulkWriterSet = jest.fn().mockResolvedValue(undefined);
+/** Write failures the fake BulkWriter should surface while flushing. */
+type FakeWriteError = { code: number; failedAttempts: number; documentRef: { path: string } };
+const pendingWriteErrors: FakeWriteError[] = [];
+let writeErrorHandler: ((e: FakeWriteError) => boolean) | undefined;
+
+const bulkWriterOnWriteError = jest.fn((cb: (e: FakeWriteError) => boolean) => {
+  writeErrorHandler = cb;
+});
+// A real BulkWriter reports failures through the error handler as it flushes,
+// which is what makes them countable before the job returns its summary.
+const drain = () => {
+  while (pendingWriteErrors.length) writeErrorHandler?.(pendingWriteErrors.shift()!);
+};
+/** What the job did, in order — the cursor test is entirely about sequence. */
+const order: string[] = [];
+const bulkWriterClose = jest.fn(async () => drain());
+const bulkWriterFlush = jest.fn(async () => {
+  order.push("flush");
+  drain();
+});
+const progressSet = jest.fn(
+  async (data: Record<string, unknown>, ..._rest: unknown[]) => {
+    if (data.lastCursor) order.push("cursor");
+  }
+);
 const progressGet = jest.fn().mockResolvedValue({ get: () => undefined });
 
 jest.mock("firebase-admin/firestore", () => ({ FieldPath }));
 jest.mock("../../../src/config/firebase", () => ({
   db: {
     collection: (...args: unknown[]) => collectionFn(...args),
-    bulkWriter: () => ({ set: bulkWriterSet, close: bulkWriterClose }),
+    bulkWriter: () => ({
+      set: bulkWriterSet,
+      close: bulkWriterClose,
+      flush: bulkWriterFlush,
+      onWriteError: bulkWriterOnWriteError,
+    }),
   },
   firebase: { firestore: { FieldValue: { serverTimestamp: () => "server-ts" } } },
 }));
@@ -41,6 +72,7 @@ import {
   verifyCollection,
   verifyDoc,
   BACKFILL_COLLECTIONS,
+  pickCollections,
 } from "../../../src/scripts/backfill-account-id";
 
 const ACC_A = "acc-aaaaaaaa-1111-4111-8111-111111111111";
@@ -81,6 +113,66 @@ const withPages = (pages: unknown[], target = "ideas") => {
 beforeEach(() => {
   jest.clearAllMocks();
   progressGet.mockResolvedValue({ get: () => undefined });
+  pendingWriteErrors.length = 0;
+  writeErrorHandler = undefined;
+  order.length = 0;
+});
+
+describe("the resume cursor never runs ahead of the writes", () => {
+  it("flushes the page's writes before storing lastCursor", async () => {
+    // `set()` only enqueues — BulkWriter batches, rate limits and retries on its
+    // own schedule. Storing the cursor first makes it claim a durability the data
+    // does not have: kill the process there and those documents are skipped by
+    // every later run, because resume starts PAST them. `--verify` would call
+    // them `missing` and the obvious repair — re-run the job — would fix nothing.
+    withPages([page([{ createdBy: "uid-a" }, { createdBy: "uid-b" }])]);
+
+    await backfillCollection("ideas", MAP, { resume: false });
+
+    expect(order).toEqual(["flush", "cursor"]);
+  });
+});
+
+describe("a write that fails is not reported as a clean run", () => {
+  const failure = (over: Partial<FakeWriteError> = {}): FakeWriteError => ({
+    code: 7, // PERMISSION_DENIED — permanent
+    failedAttempts: 1,
+    documentRef: { path: "ideas/doc-0" },
+    ...over,
+  });
+
+  it("counts it, and the summary says so", async () => {
+    // `patched` counts writes ATTEMPTED — all the scan loop can know, since
+    // BulkWriter completes them afterwards. Without a failure counter the job
+    // prints `patched: 1` for a document that never got its accountId, and the
+    // next person reads that as done.
+    withPages([page([{ createdBy: "uid-a" }])]);
+    pendingWriteErrors.push(failure());
+
+    const counts = await backfillCollection("ideas", MAP);
+
+    expect(counts).toMatchObject({ patched: 1, failed: 1 });
+  });
+
+  it("retries the transient codes, and only those", () => {
+    // Installing a handler REPLACES BulkWriter's own, so this one has to
+    // reproduce its policy: ABORTED and UNAVAILABLE, up to ten attempts.
+    //
+    // A generic `failedAttempts < 3` looks like a safe default and loses in both
+    // directions — it burns attempts on permanent errors, and it abandons a
+    // document on a transient blip the default would have ridden out. On a
+    // one-shot job over records with no other copy, that is the wrong trade.
+    withPages([page([])]);
+    return backfillCollection("ideas", MAP).then(() => {
+      expect(writeErrorHandler).toBeDefined();
+
+      expect(writeErrorHandler!(failure({ code: 14, failedAttempts: 1 }))).toBe(true); // UNAVAILABLE
+      expect(writeErrorHandler!(failure({ code: 10, failedAttempts: 9 }))).toBe(true); // ABORTED
+      expect(writeErrorHandler!(failure({ code: 14, failedAttempts: 10 }))).toBe(false); // out of attempts
+      expect(writeErrorHandler!(failure({ code: 7, failedAttempts: 1 }))).toBe(false); // permanent
+      expect(writeErrorHandler!(failure({ code: 3, failedAttempts: 1 }))).toBe(false); // INVALID_ARGUMENT
+    });
+  });
 });
 
 describe("the owner map", () => {
@@ -293,5 +385,21 @@ describe("scope", () => {
     ]);
     expect([...BACKFILL_COLLECTIONS]).not.toContain("events");
     expect([...BACKFILL_COLLECTIONS]).not.toContain("users");
+  });
+
+  it("refuses a --collection= that is not one of the five", () => {
+    // The value went straight to db.collection(). `--collection=users` would
+    // scan the users collection, find no createdBy on anything, and stamp
+    // `accountId: "__orphan"` across every user document — a destructive write
+    // reachable by one plausible typo, on a script run by hand against
+    // production.
+    expect(() => pickCollections("users")).toThrow(/--collection must be one of/);
+    expect(() => pickCollections("idea")).toThrow(/--collection must be one of/);
+    expect(() => pickCollections("events")).toThrow(/--collection must be one of/);
+  });
+
+  it("accepts a real one, and defaults to all five", () => {
+    expect(pickCollections("packaging")).toEqual(["packaging"]);
+    expect(pickCollections()).toEqual([...BACKFILL_COLLECTIONS]);
   });
 });
