@@ -70,6 +70,51 @@ export const roleFor = (account: IAccount, uid: string) =>
   account.members?.[uid]?.role ?? "viewer";
 
 /**
+ * Verify an account and attach it to the request.
+ *
+ * Both resolvers below end here. This was twenty duplicated lines — find,
+ * tombstone, membership, attach — and a duplicated security check is one that
+ * gets fixed in one place and not the other.
+ */
+const enterAccount = async (
+  req: Request,
+  account: IAccount | null,
+  { clearPointerOnTombstone = false } = {}
+): Promise<void> => {
+  if (!account) throw AccountForbidden("Channel not found");
+
+  // Tombstoned, not hard-deleted: 410 says "it existed", which is repairable,
+  // where 404 says "it never did". Clearing the pointer is the repair path — the
+  // next request falls back and finds a live membership instead of looping on a
+  // dead id. Only the header path has a pointer to clear; the SSE route's id
+  // comes from a project.
+  if (account.deletedAt) {
+    if (clearPointerOnTombstone) {
+      await accountService.clearActiveAccount(req.userId, account.id);
+    }
+    throw Gone();
+  }
+
+  const members = Array.isArray(account.memberUids) ? account.memberUids : [];
+  if (!members.includes(req.userId)) {
+    // The leak detector. Costs nothing and is the only signal that someone is
+    // probing ids — the request itself looks completely ordinary.
+    console.warn(
+      JSON.stringify({
+        event: "account_mismatch",
+        userId: req.userId,
+        requestedAccountId: account.id,
+        path: req.originalUrl,
+      })
+    );
+    throw AccountForbidden();
+  }
+
+  req.accountId = account.id;
+  req.role = roleFor(account, req.userId);
+};
+
+/**
  * Resolve the account when the client sent no header.
  *
  * `ensureDefaultAccount` fires ONLY when the user has zero memberships — not
@@ -84,12 +129,18 @@ export const roleFor = (account: IAccount, uid: string) =>
  *   the permissive rule mints them a phantom empty channel, and Phase 07's
  *   onboarding gate then walks them through setting up a channel they never
  *   wanted, every fresh session.
+ *
+ * Returns the DOCUMENT, not the id: the membership query already read it, and
+ * re-reading it by id cost a second round trip on every header-less request —
+ * which, until Phase 07 ships the header, is every request.
  */
-const resolveWithoutHeader = async (userId: string): Promise<string> => {
+const resolveWithoutHeader = async (userId: string): Promise<IAccount | null> => {
   const memberships = await accountRepository.findByMember(userId);
   const live = memberships.filter((account) => !account.deletedAt);
-  if (live.length > 0) return live[0].id;
-  return accountService.ensureDefaultAccount(userId);
+  if (live.length > 0) return live[0];
+
+  const minted = await accountService.ensureDefaultAccount(userId);
+  return accountRepository.findById(minted);
 };
 
 export const accountMiddleware = (
@@ -109,37 +160,11 @@ export const accountMiddleware = (
       return;
     }
 
-    const accountId = requested || (await resolveWithoutHeader(req.userId));
-    const account = await accountRepository.findById(accountId);
+    const account = requested
+      ? await accountRepository.findById(requested)
+      : await resolveWithoutHeader(req.userId);
 
-    if (!account) throw AccountForbidden("Channel not found");
-
-    // Tombstoned, not hard-deleted: 410 says "it existed", which is repairable,
-    // where 404 says "it never did". Clearing the pointer is the repair path — the
-    // next request falls back and finds a live membership instead of looping on a
-    // dead id.
-    if (account.deletedAt) {
-      await accountService.clearActiveAccount(req.userId, accountId);
-      throw Gone();
-    }
-
-    const members = Array.isArray(account.memberUids) ? account.memberUids : [];
-    if (!members.includes(req.userId)) {
-      // The leak detector. Costs nothing and is the only signal that someone is
-      // probing ids — the request itself looks completely ordinary.
-      console.warn(
-        JSON.stringify({
-          event: "account_mismatch",
-          userId: req.userId,
-          requestedAccountId: accountId,
-          path: req.originalUrl,
-        })
-      );
-      throw AccountForbidden();
-    }
-
-    req.accountId = accountId;
-    req.role = roleFor(account, req.userId);
+    await enterAccount(req, account, { clearPointerOnTombstone: true });
     next();
   })().catch(next);
 };
@@ -184,31 +209,28 @@ export const resolveAccountFromProject = (
 
     // Legacy projects predate Phase 03 and carry no accountId until Phase 04
     // backfills them. Falling back to the owner's account keeps the stream
-    // working through the migration window; the membership check below still
-    // runs, so this is not a way in.
+    // working through the migration window; the membership check still runs, so
+    // this is not a way in.
+    const stamped = (project as { accountId?: string }).accountId;
+
+    // But only the creator may trigger that fallback. Minting on any caller's
+    // behalf wrote an account document and a `lastActiveAccountId` onto a THIRD
+    // PARTY's user record — reachable by anyone holding a project id, and done
+    // before the membership check that then 403'd them anyway.
+    //
+    // This narrows the route: a non-creator member of the project's account is
+    // refused while the project is unstamped. Nobody can hit that, and the
+    // reason is ORDERING, not the account's existence — the creator may well
+    // have an account already. Sharing does not exist until Phase 09, and
+    // Phase 04's backfill stamps every project long before it, so an unstamped
+    // project only ever has one possible member. If Phase 09 were ever to land
+    // ahead of a completed Phase 04, this line would have to go.
+    if (!stamped && project.createdBy !== req.userId) throw AccountForbidden();
+
     const accountId =
-      (project as { accountId?: string }).accountId ||
-      (await accountService.ensureDefaultAccount(project.createdBy));
+      stamped || (await accountService.ensureDefaultAccount(project.createdBy));
 
-    const account = await accountRepository.findById(accountId);
-    if (!account) throw AccountForbidden("Channel not found");
-    if (account.deletedAt) throw Gone();
-
-    const members = Array.isArray(account.memberUids) ? account.memberUids : [];
-    if (!members.includes(req.userId)) {
-      console.warn(
-        JSON.stringify({
-          event: "account_mismatch",
-          userId: req.userId,
-          requestedAccountId: accountId,
-          path: req.originalUrl,
-        })
-      );
-      throw AccountForbidden();
-    }
-
-    req.accountId = accountId;
-    req.role = roleFor(account, req.userId);
+    await enterAccount(req, await accountRepository.findById(accountId));
     next();
   })().catch(next);
 };

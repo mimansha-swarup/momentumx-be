@@ -280,6 +280,25 @@ describe("the SSE route derives its account from the project, not the query stri
     expect(res.status).toBe(404);
   });
 
+  it("does not mint an account for the owner on a stranger's behalf", async () => {
+    // A legacy project has no accountId, so the fallback minted one for
+    // `project.createdBy` — writing an account document and a
+    // `lastActiveAccountId` onto a THIRD PARTY's user record, triggered by
+    // anyone holding a project id, and before the membership check that then
+    // 403'd them anyway.
+    //
+    // Narrowing it to the creator loses nothing, on ordering grounds: sharing
+    // arrives in Phase 09 and Phase 04 stamps every project well before that,
+    // so an unstamped project has exactly one possible member. (Not because the
+    // account cannot exist — the creator may already have one.)
+    findByIdUnchecked.mockResolvedValue({ id: "proj-1", createdBy: "uid-other" });
+
+    const res = await request(makeApp(resolveAccountFromProject)).get("/stream/proj-1");
+
+    expect(res.status).toBe(403);
+    expect(ensureDefaultAccount).not.toHaveBeenCalled();
+  });
+
   it("still streams for a legacy project written before Phase 03", async () => {
     // No accountId on the document until Phase 04 backfills it. Falling back to
     // the owner's account keeps the stream working through the migration window —
