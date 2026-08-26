@@ -64,13 +64,12 @@ const ref = db.collection(COLLECTIONS.PACKAGING).doc(videoProjectId);
 // auto-IDs, always LOCATE by findByVideoProject, never assume id ===
 // videoProjectId". That was true while the SAVE path minted auto-IDs and only
 // persist-on-generate used the deterministic key. Phase 05a made the save path
-// deterministic too (repo.saveWithId) and re-keyed the existing documents, which
-// is what retired the warning.
+// deterministic too (repo.saveWithId), which is what retired the warning.
 //
-// TRANSITIONAL, until the Phase 05a delete commit: PackagingService.locateForProject
-// still falls back to findByVideoProject and logs `packaging_legacy_autoid_read`
-// when it fires. Both go away once migrations/packaging-rekey reports a clean run.
-// Do not reintroduce the query anywhere else.
+// There is NO locate query left, in either direction: `findByVideoProject` is
+// deleted, `savePackaging` point-reads, and `upsertGeneratedItem` point-reads
+// inside its transaction. Do not reintroduce one. The transaction is for the
+// itemStatuses read-modify-write, not for finding the document.
 ```
 
 ---

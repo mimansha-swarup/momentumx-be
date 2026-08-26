@@ -106,26 +106,17 @@ class PackagingRepository {
     canonical: unknown
   ): Promise<{ packagingId: string; created: boolean; statuses: Record<string, string> }> => {
     return this.db.runTransaction(async (txn) => {
-      // Phase 01 item 3. This lookup used to run OUTSIDE the transaction, which
-      // defeated the point of having one: persist-on-generate fires four item
-      // writes concurrently, and the document this call decided to write to could
-      // be created by a sibling in the gap. Reading the query inside the
-      // transaction puts the choice of document under the same consistency
-      // guarantee as the write to it.
-      const locate = this.db
-        .collection(this.collection)
-        .where("videoProjectId", "==", videoProjectId)
-        .limit(1);
-      const found = await txn.get(locate);
-
-      // Deterministic id for a new document (id === videoProjectId), so two
-      // concurrent first-generations converge on ONE doc instead of racing two
-      // auto-id creates. Legacy/door docs may still carry an auto-id, which is
-      // why the query above locates rather than assuming.
-      const ref = found.empty
-        ? this.db.collection(this.collection).doc(videoProjectId)
-        : found.docs[0].ref;
-      const snap = found.empty ? await txn.get(ref) : found.docs[0];
+      // A point read, because the id IS the videoProjectId. This used to be a
+      // `where("videoProjectId", "==", ...)` query, which existed only to find
+      // documents the old auto-ID save path had written — there are none.
+      //
+      // The read stays INSIDE the transaction for a different reason (Phase 01
+      // item 3): persist-on-generate fires four item writes concurrently, so the
+      // itemStatuses read-modify-write and the "all four done?" check below have
+      // to see a consistent snapshot. Outside it, two concurrent final writes
+      // both read an incomplete set and neither completes the step.
+      const ref = this.db.collection(this.collection).doc(videoProjectId);
+      const snap = await txn.get(ref);
       const statuses: Record<string, string> = {
         title: "not_started",
         description: "not_started",
@@ -168,36 +159,6 @@ class PackagingRepository {
     });
   };
 
-  /**
-   * LEGACY locator, retained only until the Phase 05a re-key migration has run.
-   *
-   * Every document created from Phase 05a onward has `id === videoProjectId`, so
-   * `get(videoProjectId)` finds it. This query exists solely to still find the
-   * auto-ID documents written by the old save path.
-   *
-   * DELETE THIS, and the fallback in `PackagingService.locateForProject`, once
-   * `migrations/packaging-rekey` reports a clean run — that is the delete commit
-   * the phase plan keeps separate, and it is the point after which this phase
-   * stops being reversible. Deleting it before the migration would send every
-   * legacy document's project down the create path, writing a fresh empty
-   * package over the top and silently losing the user's work.
-   */
-  findByVideoProject = async (videoProjectId: string): Promise<IPackaging | null> => {
-    try {
-      const snapshot = await this.db
-        .collection(this.collection)
-        .where("videoProjectId", "==", videoProjectId)
-        .limit(1)
-        .get();
-
-      if (snapshot.empty) return null;
-
-      const doc = snapshot.docs[0];
-      return { ...doc.data(), id: doc.id } as IPackaging;
-    } catch (error) {
-      throw error;
-    }
-  };
 
   // Inverse of markStale, for the "Keep as-is" path: the creator accepted the
   // content as-is, so the doc must stop reporting stale or every card keeps an

@@ -275,7 +275,6 @@ describe("Door flow — a save with no videoProjectId creates exactly one projec
     const packagingRepoForSave = {
       // Phase 05a: creates are keyed on the project id.
       saveWithId: jest.fn(async (id: string, _data: Record<string, unknown>) => ({ id })),
-      findByVideoProject: jest.fn().mockResolvedValue(null),
       // No packaging doc exists yet for a brand-new door project.
       get: jest.fn().mockResolvedValue(null),
       update: jest.fn(),
@@ -307,7 +306,6 @@ describe("Door flow — a save with no videoProjectId creates exactly one projec
 
     const packagingRepoForSave = {
       saveWithId: jest.fn(async (id: string, _data: Record<string, unknown>) => ({ id })),
-      findByVideoProject: jest.fn().mockResolvedValue(null),
       get: jest.fn().mockResolvedValue(null),
       update: jest.fn().mockResolvedValue({ id: "shallow-1" }),
     } as unknown as PackagingRepository;
@@ -357,7 +355,12 @@ describe("Stale lifecycle — a plain save never clears stale; only regenerate d
     // un-staling is the explicit `!existing?.isStale` guard.
     const packagingRepoForSave = {
       save: jest.fn(),
-      findByVideoProject: jest.fn().mockResolvedValue({
+      // The stored package, on `get` — the locator is a point read on
+      // doc(videoProjectId). This fixture used to sit on `findByVideoProject`
+      // while `get` returned a stub, so moving it is not cosmetic: left on the
+      // stub, `existing.isStale` would be undefined and the guard this test
+      // exists for would pass by accident.
+      get: jest.fn().mockResolvedValue({
         id: "pkg-1",
         createdBy: "user-1",
         videoProjectId: "proj-1",
@@ -368,7 +371,6 @@ describe("Stale lifecycle — a plain save never clears stale; only regenerate d
         shorts: { segments: [{ startTime: "0:00", endTime: "0:05", content: "x", type: "hook" }] },
         itemStatuses: { title: "stale", description: "stale", thumbnail: "stale", shorts: "stale" },
       }),
-      get: jest.fn().mockResolvedValue({ createdBy: "user-1", thumbnail: [] }),
       update: jest.fn().mockResolvedValue({ id: "pkg-1" }),
       clearStale: jest.fn(),
     } as unknown as PackagingRepository;

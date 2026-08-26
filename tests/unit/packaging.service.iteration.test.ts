@@ -402,11 +402,8 @@ describe("PackagingService — savePackaging with videoProjectId", () => {
     service = new PackagingService(mockRepo, mockVp, makeContextService(), makeTestAccountService());
     // Phase 05a: creates go to doc(videoProjectId), so the id IS the project id.
     mockRepo.saveWithId = jest.fn(async (id: string, _data: Record<string, unknown>) => ({ id }));
-    // savePackaging upserts by project: no existing doc -> create path. The
-    // point read is what the locator tries first; the legacy query is the
-    // transitional fallback and must also miss.
+    // savePackaging upserts by project: no existing doc -> create path.
     mockRepo.get = jest.fn().mockResolvedValue(null);
-    mockRepo.findByVideoProject = jest.fn().mockResolvedValue(null);
   });
 
   it("saves videoProjectId on the document when provided", async () => {
@@ -449,9 +446,8 @@ describe("PackagingService — savePackaging with videoProjectId", () => {
     expect(mockVp.createFromTitle).toHaveBeenCalledWith("user-1", "My Title");
     const [keyedOn, packagingData] = (mockRepo.saveWithId as jest.Mock).mock.calls[0];
     expect(packagingData).toMatchObject({ videoProjectId: "shallow-proj" });
-    // Phase 05a: the packaging document id IS the videoProjectId. This used to be
-    // an auto-ID, which is why `findByVideoProject` had to exist at all — two
-    // creation paths with two different keys meant no reader could assume the id.
+    // Phase 05a: the packaging document id IS the videoProjectId, on both
+    // creation paths — which is what retired the locate query entirely.
     expect(keyedOn).toBe("shallow-proj");
     expect(mockVp.linkResource).toHaveBeenCalledWith("shallow-proj", "packaging", "shallow-proj", "user-1");
     // ...but a title-only package has NOT finished the packaging step. Completion is

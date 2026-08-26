@@ -1,26 +1,19 @@
 // Branch-logic coverage for the atomic persist-on-generate write. Firestore's
 // own transaction serialization guarantees the concurrency safety; here we
-// verify the decision logic inside the transaction: deterministic-id create vs
-// legacy-doc update, and the consistent-snapshot "all four done?" computation.
+// verify the decision logic inside the transaction: create vs update on the
+// deterministic id, and the consistent-snapshot "all four done?" computation.
 
 const txnSet = jest.fn();
 const txnUpdate = jest.fn();
 
-// Both the locate-query and the document read now happen INSIDE the transaction
-// (Phase 01 item 3), so one `txn.get` serves both. Dispatch on the marker so the
-// individual tests can keep setting the two results independently.
-const findGet = jest.fn(); // result of txn.get(query)
 const txnGet = jest.fn(); // result of txn.get(docRef)
 
-// The locate-query's OWN `.get()` is a separate spy from the transaction's.
-// Previously both were `findGet`, so this suite could not tell whether the
-// repository located the doc INSIDE the transaction (`txn.get(query)` — the
-// Phase 01 item 3 fix) or outside it (`query.get()` — the bug that fix removed).
-// Reverting the pre-read would have left every test here green.
+// Any query at all is now a regression. `upsertGeneratedItem` point-reads
+// `doc(videoProjectId)`; it used to locate the document with a
+// `where("videoProjectId", ...)` query, which existed solely to find the
+// auto-ID documents the old save path wrote. There are none.
 const outsideTxnGet = jest.fn(async () => {
-  throw new Error(
-    "locate query ran OUTSIDE the transaction — the read must be txn.get(query)"
-  );
+  throw new Error("upsertGeneratedItem must point-read doc(videoProjectId), not query");
 });
 const whereChain: Record<string, unknown> = {
   __isQuery: true,
@@ -33,9 +26,14 @@ const docUpdate = jest.fn();
 const docFn = jest.fn((id: string) => ({ id, get: docGet, update: docUpdate }));
 const collectionFn = jest.fn(() => ({ ...whereChain, doc: docFn }));
 
-const txnGetDispatch = jest.fn(async (arg: Record<string, unknown>) =>
-  arg?.__isQuery ? findGet() : txnGet()
-);
+const txnGetDispatch = jest.fn(async (arg: Record<string, unknown>) => {
+  // Inside the transaction too — a query here is the same regression, just
+  // wearing the Phase 01 item 3 fix as cover.
+  if (arg?.__isQuery) {
+    throw new Error("upsertGeneratedItem must point-read doc(videoProjectId), not query");
+  }
+  return txnGet();
+});
 const runTransaction = jest.fn(async (fn: (txn: unknown) => unknown) =>
   fn({ get: txnGetDispatch, set: txnSet, update: txnUpdate })
 );
@@ -57,7 +55,6 @@ describe("PackagingRepository.upsertGeneratedItem", () => {
   });
 
   it("creates a doc keyed on videoProjectId when none exists (first generation)", async () => {
-    findGet.mockResolvedValue({ empty: true, docs: [] }); // findByVideoProject → null
     txnGet.mockResolvedValue({ exists: false });
 
     const res = await repo.upsertGeneratedItem("proj-1", { userId: "user-1", accountId: TEST_ACCOUNT_ID }, "titles", "title", [{ title: "A" }]);
@@ -74,49 +71,36 @@ describe("PackagingRepository.upsertGeneratedItem", () => {
     expect(written.accountId).toBe(TEST_ACCOUNT_ID);
   });
 
-  it("updates the existing (legacy auto-id) doc in place, not a second doc", async () => {
-    // The located document IS the snapshot now — no second read for it.
-    findGet.mockResolvedValue({
-      empty: false,
-      docs: [
-        {
-          id: "legacy-1",
-          ref: { id: "legacy-1" },
-          exists: true,
-          data: () => ({ itemStatuses: { title: "not_started" } }),
-        },
-      ],
+  it("updates the existing doc in place, never creating a second one", async () => {
+    // The second item of a package lands here. Writing rather than updating
+    // would blank the item the first generation already stored.
+    txnGet.mockResolvedValue({
+      exists: true,
+      data: () => ({ itemStatuses: { title: "not_started" } }),
     });
 
     const res = await repo.upsertGeneratedItem("proj-1", { userId: "user-1", accountId: TEST_ACCOUNT_ID }, "shorts", "shorts", { segments: [] });
 
-    expect(docFn).not.toHaveBeenCalled(); // reused the located ref, no duplicate
+    expect(docFn).toHaveBeenCalledWith("proj-1"); // the only id it can be
     expect(txnSet).not.toHaveBeenCalled();
     expect(txnUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "legacy-1" }),
+      expect.objectContaining({ id: "proj-1" }),
       expect.objectContaining({ shorts: { segments: [] }, "itemStatuses.shorts": "completed" })
     );
-    expect(res).toMatchObject({ packagingId: "legacy-1", created: false });
+    expect(res).toMatchObject({ packagingId: "proj-1", created: false });
   });
 
   it("returns the merged status snapshot with the written item marked completed", async () => {
-    findGet.mockResolvedValue({
-      empty: false,
-      docs: [
-        {
-          id: "pkg-1",
-          ref: { id: "pkg-1" },
-          exists: true,
-          data: () => ({
-            itemStatuses: {
-              title: "completed",
-              description: "completed",
-              thumbnail: "completed",
-              shorts: "not_started",
-            },
-          }),
+    txnGet.mockResolvedValue({
+      exists: true,
+      data: () => ({
+        itemStatuses: {
+          title: "completed",
+          description: "completed",
+          thumbnail: "completed",
+          shorts: "not_started",
         },
-      ],
+      }),
     });
 
     const res = await repo.upsertGeneratedItem("proj-1", { userId: "user-1", accountId: TEST_ACCOUNT_ID }, "shorts", "shorts", { segments: [] });
