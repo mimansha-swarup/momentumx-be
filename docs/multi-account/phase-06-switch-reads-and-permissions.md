@@ -13,7 +13,9 @@ tags: ["multi-account", "phase-06", "security", "tenancy"]
 the unvalidated-resource fixes to **Phase 01 item 6** (they need no tenancy work and are
 exploitable today), and the packaging key change to **Phase 05a** (it is a data-shape
 migration and must not ride in the tenancy release).
-**Depends on:** Phase 05, Phase 05a, and a verified-complete Phase 04.
+**Depends on:** Phase 05 and Phase 05a. (Phase 04 was dropped — see
+[phase-04](./phase-04-backfill.md). **Wipe the content collections immediately before this
+phase lands**: it is the commit that makes untagged records invisible.)
 **Blocks:** Phase 06a.
 
 ---
@@ -237,6 +239,8 @@ test suite is the mitigation; the grep is the backstop.
 **A missed permission check** is the serious one — it's an access-control hole that no
 user will report because it never affects them until it does. Same mitigation.
 
-**Records missed by the backfill become invisible.** Their owner sees content silently
-disappear, which is indistinguishable from data loss. This is why Phase 04's verification
-pass is a hard gate, not a formality.
+**Untagged records become invisible.** Their owner sees content silently disappear, which
+is indistinguishable from data loss. With the backfill dropped, the mitigation is that
+nothing untagged survives into this phase — wipe the content collections first. If this
+plan ever runs against real data, the backfill and its verification pass come back and
+become a hard gate.

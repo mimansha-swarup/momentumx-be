@@ -92,8 +92,10 @@ there by hand, separately.
 
 **Consequences that are now hard rules:**
 
-- "Phase 03 is live" means live on **all three**, not merged. Phase 04's precondition
-  depends on it.
+- "Phase 03 is live" means live on **all three**, not merged. This was Phase 04's
+  precondition; with the backfill dropped it is no longer a gate on anything, but a
+  Vercel-only deploy still leaves script documents untagged, because the SSE route runs
+  only on Render.
 - Phase 06's read flip must land on Vercel and Render **together**, or one host queries
   `accountId` while the other queries `createdBy`.
 - Phase 08's credit gate has to cover the SSE route — which is the one path served by
@@ -167,9 +169,9 @@ Each phase is a separate document and is meant to be shippable on its own.
 | [01b](./phase-01b-generation-seam.md) | **The generation seam** | One place where locking, preconditions, credits and telemetry attach to a model call | Yes | 🟡 partial — 2/11 calls |
 | [02](./phase-02-accounts-schema-and-indexes.md) | Accounts schema and indexes | Create the `accounts` collection and deploy every new index **before** any code needs them | Yes | ✅ done |
 | [03](./phase-03-dual-write-account-tag.md) | Dual-write the account tag | Start stamping `accountId` on new records; nothing reads it yet | Yes | 🟡 merged, **not deployed** |
-| [04](./phase-04-backfill.md) | Backfill existing data | Copy `createdBy` into `accountId` on every existing record | Yes | 🟡 script written, not run |
+| [04](./phase-04-backfill.md) | ~~Backfill existing data~~ | **Dropped** — dev data is disposable, so it gets wiped before Phase 06 instead of migrated | n/a | ⬜ dropped |
 | [05](./phase-05-account-context-api.md) | Account context in the API | `X-Account-Id` header, membership check, `req.accountId`, the error-code contract | Yes | 🟡 built, not deployed |
-| [05a](./phase-05a-packaging-deterministic-key.md) | **Packaging: one deterministic key** | Every packaging doc keyed on `videoProjectId`; delete the lookup query | Yes, until its delete commit | 🟡 code done, migration not run |
+| [05a](./phase-05a-packaging-deterministic-key.md) | **Packaging: one deterministic key** | Every packaging doc keyed on `videoProjectId`; every lookup query deleted | No | ✅ done |
 | [06](./phase-06-switch-reads-and-permissions.md) | Switch reads and permissions | Queries and permission checks move from `createdBy` to `accountId` | Yes, until Phase 07 | — |
 | [06a](./phase-06a-accounts-api.md) | **The Accounts API** | List, create and activate channels — the endpoints the switcher talks to | Yes | — |
 | [06b](./phase-06b-move-channel-context.md) | Move channel context to the account | Generation reads niche/competitors/website from the channel, not the person | ⚠️ Step 4 is a second door | — |

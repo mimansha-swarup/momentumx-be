@@ -11,7 +11,7 @@ tags: ["multi-account", "phase-03", "migration"]
 
 **Size:** small — one new field on every write path, plus account creation.
 **Depends on:** Phase 02 (indexes must exist and be `READY`).
-**Blocks:** Phase 04.
+**Blocks:** nothing. (It blocked Phase 04, which was dropped.)
 
 ---
 
@@ -25,12 +25,15 @@ green; `tsc` clean; `dist/` current.
 | Account creation + lazy resolver | done (`account.service.ts`, `account.repository.ts`) |
 | `accountId` stamped on all 7 write paths | done, each canary-verified individually |
 | Reads / permissions unchanged | done, pinned by ratchets |
-| **Deployed to Vercel / Render / Cloud Functions** | **outstanding — this is what Phase 04 waits on** |
+| **Deployed to Vercel / Render / Cloud Functions** | **outstanding** |
 | **One document of each kind generated per artifact** | **outstanding** |
 
 `status` is deliberately not `complete`: this phase's own bar is *deployed*, not merged
-(see "Live means live on all three deploy artifacts" below). Phase 04 must not start until
-the last two rows are ticked.
+(see "Live means live on all three deploy artifacts" below).
+
+It no longer gates a migration — Phase 04 was dropped (see
+[phase-04](./phase-04-backfill.md)) — but the dual-write is only true of records written
+by deployed code, which is what makes wiping-before-Phase-06 sufficient.
 
 ---
 

@@ -14,7 +14,6 @@ export const enum COLLECTIONS {
   ACCOUNTS = "accounts",
   BILLING = "billing",
   INVITES = "invites",
-  MIGRATIONS = "migrations",
 }
 
 /**
