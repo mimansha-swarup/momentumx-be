@@ -207,28 +207,19 @@ export const resolveAccountFromProject = (
     );
     if (!project) throw NotFound("Project not found");
 
-    // Legacy projects predate Phase 03 and carry no accountId until Phase 04
-    // backfills them. Falling back to the owner's account keeps the stream
-    // working through the migration window; the membership check still runs, so
-    // this is not a way in.
-    const stamped = (project as { accountId?: string }).accountId;
-
-    // But only the creator may trigger that fallback. Minting on any caller's
-    // behalf wrote an account document and a `lastActiveAccountId` onto a THIRD
-    // PARTY's user record — reachable by anyone holding a project id, and done
-    // before the membership check that then 403'd them anyway.
+    // Phase 03 stamps `accountId` on every project at creation, so this is the
+    // only source. There was a fallback here that minted an account for
+    // `project.createdBy` when the field was missing, to cover projects written
+    // before Phase 03 — it is gone along with those documents.
     //
-    // This narrows the route: a non-creator member of the project's account is
-    // refused while the project is unstamped. Nobody can hit that, and the
-    // reason is ORDERING, not the account's existence — the creator may well
-    // have an account already. Sharing does not exist until Phase 09, and
-    // Phase 04's backfill stamps every project long before it, so an unstamped
-    // project only ever has one possible member. If Phase 09 were ever to land
-    // ahead of a completed Phase 04, this line would have to go.
-    if (!stamped && project.createdBy !== req.userId) throw AccountForbidden();
-
-    const accountId =
-      stamped || (await accountService.ensureDefaultAccount(project.createdBy));
+    // Losing it is a gain, not a compromise: it wrote an account document and a
+    // `lastActiveAccountId` onto a THIRD PARTY's user record, reachable by
+    // anyone holding a project id, and did so BEFORE the membership check that
+    // then refused them anyway. An unstamped project is now a bug, and a bug on
+    // a trust boundary fails closed — refused here rather than left to
+    // `findById`'s empty-id guard, which is a detail one file away.
+    const accountId = (project as { accountId?: string }).accountId;
+    if (!accountId) throw AccountForbidden("Channel not found");
 
     await enterAccount(req, await accountRepository.findById(accountId));
     next();

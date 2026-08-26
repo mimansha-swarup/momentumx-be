@@ -280,35 +280,27 @@ describe("the SSE route derives its account from the project, not the query stri
     expect(res.status).toBe(404);
   });
 
-  it("does not mint an account for the owner on a stranger's behalf", async () => {
-    // A legacy project has no accountId, so the fallback minted one for
-    // `project.createdBy` — writing an account document and a
-    // `lastActiveAccountId` onto a THIRD PARTY's user record, triggered by
-    // anyone holding a project id, and before the membership check that then
-    // 403'd them anyway.
-    //
-    // Narrowing it to the creator loses nothing, on ordering grounds: sharing
-    // arrives in Phase 09 and Phase 04 stamps every project well before that,
-    // so an unstamped project has exactly one possible member. (Not because the
-    // account cannot exist — the creator may already have one.)
-    findByIdUnchecked.mockResolvedValue({ id: "proj-1", createdBy: "uid-other" });
+  // Phase 03 stamps accountId at creation, so an unstamped project is a bug,
+  // not a legacy shape. There used to be a fallback that minted an account for
+  // `project.createdBy` to cover pre-Phase-03 documents; it wrote an account and
+  // a `lastActiveAccountId` onto a third party's user record, reachable by
+  // anyone holding a project id, and ran BEFORE the membership check that then
+  // refused them. Both the fallback and the documents it existed for are gone.
+  it.each([["the caller"], ["someone else"]])(
+    "refuses an unstamped project and mints nothing — created by %s",
+    async (who) => {
+      findByIdUnchecked.mockResolvedValue({
+        id: "proj-1",
+        createdBy: who === "the caller" ? "uid-me" : "uid-other",
+      });
 
-    const res = await request(makeApp(resolveAccountFromProject)).get("/stream/proj-1");
+      const res = await request(makeApp(resolveAccountFromProject)).get("/stream/proj-1");
 
-    expect(res.status).toBe(403);
-    expect(ensureDefaultAccount).not.toHaveBeenCalled();
-  });
-
-  it("still streams for a legacy project written before Phase 03", async () => {
-    // No accountId on the document until Phase 04 backfills it. Falling back to
-    // the owner's account keeps the stream working through the migration window —
-    // and the membership check still runs, so it is not a way in.
-    findByIdUnchecked.mockResolvedValue({ id: "proj-1", createdBy: "uid-me" });
-
-    const res = await request(makeApp(resolveAccountFromProject)).get("/stream/proj-1");
-
-    expect(res.status).toBe(200);
-    expect(ensureDefaultAccount).toHaveBeenCalledWith("uid-me");
-    expect(res.body.data.accountId).toBe(OWNED);
-  });
+      expect(res.status).toBe(403);
+      expect(res.body.code).toBe("account_forbidden");
+      // Failing closed matters more than the status: a middleware that mints on
+      // a missing field turns a data bug into writes on someone else's record.
+      expect(ensureDefaultAccount).not.toHaveBeenCalled();
+    }
+  );
 });
