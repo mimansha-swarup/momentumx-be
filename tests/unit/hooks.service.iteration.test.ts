@@ -60,6 +60,7 @@ const mockBatch = {
 // tests/unit/service/hooks.flow.behaviour.test.ts and the repository suite. Here
 // a pass-through runner keeps these tests focused on hook iteration itself.
 import { makeTestStepRunner } from "../helpers/step-runner";
+import { makeTestAccountService } from "../helpers/account";
 
 const passThroughRunner = () =>
   ({ run: (_spec: unknown, generate: () => unknown) => generate() }) as never;
@@ -71,8 +72,8 @@ describe("HooksService — regenerate", () => {
 
   beforeEach(() => {
     mockRepo = new MockHooksRepo() as jest.Mocked<HooksRepository>;
-    mockVpService = new MockVideoProjectService(null as any, null as any, null as any, null as any) as jest.Mocked<VideoProjectService>;
-    service = new HooksService(mockRepo, mockVpService, undefined, passThroughRunner());
+    mockVpService = new MockVideoProjectService(null as any, null as any, null as any, null as any, null as any) as jest.Mocked<VideoProjectService>;
+    service = new HooksService(mockRepo, mockVpService, undefined, passThroughRunner(), makeTestAccountService());
     mockGenerate.mockResolvedValue(makeStream(HOOKS_JSON));
   });
 
@@ -134,13 +135,13 @@ describe("HooksService — regenerate is not blocked by step state", () => {
 
   const setup = (project: Record<string, unknown>) => {
     mockRepo = new MockHooksRepo() as jest.Mocked<HooksRepository>;
-    mockVpService = new MockVideoProjectService(null as any, null as any, null as any, null as any) as jest.Mocked<VideoProjectService>;
+    mockVpService = new MockVideoProjectService(null as any, null as any, null as any, null as any, null as any) as jest.Mocked<VideoProjectService>;
     service = new HooksService(
       mockRepo,
       mockVpService,
       undefined,
       makeTestStepRunner({ project: project as never })
-    );
+    , makeTestAccountService());
     mockGenerate.mockResolvedValue(makeStream(HOOKS_JSON));
     mockRepo.findById = jest.fn().mockResolvedValue(mockBatch);
     mockRepo.update = jest.fn().mockResolvedValue(undefined);
@@ -187,8 +188,8 @@ describe("HooksService — select", () => {
 
   beforeEach(() => {
     mockRepo = new MockHooksRepo() as jest.Mocked<HooksRepository>;
-    mockVpService = new MockVideoProjectService(null as any, null as any, null as any, null as any) as jest.Mocked<VideoProjectService>;
-    service = new HooksService(mockRepo, mockVpService, undefined, passThroughRunner());
+    mockVpService = new MockVideoProjectService(null as any, null as any, null as any, null as any, null as any) as jest.Mocked<VideoProjectService>;
+    service = new HooksService(mockRepo, mockVpService, undefined, passThroughRunner(), makeTestAccountService());
   });
 
   it("binds the hook to the STORED project (videoProjectId from the batch, never the client) and completes the step", async () => {
@@ -267,8 +268,8 @@ describe("HooksService — exportHooks", () => {
 
   beforeEach(() => {
     mockRepo = new MockHooksRepo() as jest.Mocked<HooksRepository>;
-    mockVpService = new MockVideoProjectService(null as any, null as any, null as any, null as any) as jest.Mocked<VideoProjectService>;
-    service = new HooksService(mockRepo, mockVpService, undefined, passThroughRunner());
+    mockVpService = new MockVideoProjectService(null as any, null as any, null as any, null as any, null as any) as jest.Mocked<VideoProjectService>;
+    service = new HooksService(mockRepo, mockVpService, undefined, passThroughRunner(), makeTestAccountService());
   });
 
   it("throws 404 if batch not found", async () => {
@@ -312,8 +313,8 @@ describe("HooksService — generate (idempotency, lock, rollback)", () => {
 
   beforeEach(() => {
     mockRepo = new MockHooksRepo() as jest.Mocked<HooksRepository>;
-    mockVpService = new MockVideoProjectService(null as any, null as any, null as any, null as any) as jest.Mocked<VideoProjectService>;
-    service = new HooksService(mockRepo, mockVpService, undefined, passThroughRunner());
+    mockVpService = new MockVideoProjectService(null as any, null as any, null as any, null as any, null as any) as jest.Mocked<VideoProjectService>;
+    service = new HooksService(mockRepo, mockVpService, undefined, passThroughRunner(), makeTestAccountService());
     mockGenerate.mockResolvedValue(makeStream(HOOKS_JSON));
     mockVpService.getById = jest.fn().mockResolvedValue(makeProj()) as any;
     mockVpService.startStep = jest.fn().mockResolvedValue(undefined) as any;
@@ -355,7 +356,7 @@ describe("HooksService — generate (idempotency, lock, rollback)", () => {
       mockVpService,
       undefined,
       makeTestStepRunner({ project: inFlight as never })
-    );
+    , makeTestAccountService());
 
     await service.generate("user-1", "proj-1", "my script").catch(() => undefined);
 
@@ -375,7 +376,7 @@ describe("HooksService — generate (idempotency, lock, rollback)", () => {
         project: project as never,
         onRelease: (step, prior) => released.push({ step, prior }),
       })
-    );
+    , makeTestAccountService());
     mockGenerate.mockResolvedValue(makeStream("not json"));
 
     const err = await service.generate("user-1", "proj-1", "my script").catch((e) => e);

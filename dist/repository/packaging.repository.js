@@ -71,7 +71,11 @@ class PackagingRepository {
         // "all four done?" check see a consistent snapshot, so concurrent final writes
         // can't both skip completion. Returns whether it created the doc and whether
         // the whole set is now complete (so the service can drive the pipeline step).
-        this.upsertGeneratedItem = async (videoProjectId, userId, field, item, canonical) => {
+        this.upsertGeneratedItem = async (videoProjectId, 
+        // An OBJECT, not two positional strings — `userId` and `accountId` are both
+        // strings, so a sixth `accountId: string` parameter would let an existing
+        // 5-argument call keep compiling with the wrong value in the slot.
+        { userId, accountId }, field, item, canonical) => {
             return this.db.runTransaction(async (txn) => {
                 // Phase 01 item 3. This lookup used to run OUTSIDE the transaction, which
                 // defeated the point of having one: persist-on-generate fires four item
@@ -104,6 +108,7 @@ class PackagingRepository {
                     txn.set(ref, {
                         id: ref.id,
                         createdBy: userId,
+                        accountId,
                         videoProjectId,
                         titles: [],
                         description: "",

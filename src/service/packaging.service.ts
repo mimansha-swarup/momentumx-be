@@ -13,6 +13,7 @@ import {
 } from "../constants/firebase.js";
 import { GenerationConfig } from "@google/generative-ai";
 import PackagingRepository from "../repository/packaging.repository.js";
+import AccountService from "./account.service.js";
 import VideoProjectService from "./video-project.service.js";
 import ContextService from "./context.service.js";
 import ResearchContextService from "./research-context.service.js";
@@ -45,6 +46,7 @@ class PackagingService {
     repo: PackagingRepository,
     private videoProjectService: VideoProjectService,
     private contextService: ContextService,
+    private accountService: AccountService,
     private researchContext?: ResearchContextService
   ) {
     this.repo = repo;
@@ -232,7 +234,7 @@ class PackagingService {
 
     const { packagingId, created, statuses } = await this.repo.upsertGeneratedItem(
       videoProjectId,
-      userId,
+      { userId, accountId: await this.accountService.ensureDefaultAccount(userId) },
       field,
       item,
       canonical
@@ -382,7 +384,10 @@ class PackagingService {
 
     const packagingData = {
       ...normalized,
+      // AFTER the spread, like createdBy — though packagingSaveSchema, not field
+      // order, is what stops these keys reaching the service at all.
       createdBy: userId,
+      accountId: await this.accountService.ensureDefaultAccount(userId),
       videoProjectId: projectId,
     };
 

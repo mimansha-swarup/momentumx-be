@@ -52,6 +52,7 @@ import ResearchContextService from "../../src/service/research-context.service";
 import { generateContent } from "../../src/utlils/ai";
 import { formatCreatorsData } from "../../src/utlils/content";
 import { IDEA_USER_PROMPT } from "../../src/constants/prompt";
+import { makeTestAccountService } from "../helpers/account";
 
 jest.mock("../../src/repository/content.repository");
 jest.mock("../../src/repository/user.repository");
@@ -107,7 +108,7 @@ describe("ContentService.generateIdeas", () => {
     researchContext.getIdeaSignals = jest.fn().mockResolvedValue("Live research signals:\nSome trend — 1.2M views");
     // Fresh stream per call — an async generator is single-use.
     mockGenerate.mockImplementation(async () => makeStream(IDEAS));
-    service = new ContentService(repo, userRepo, {} as any, researchContext);
+    service = new ContentService(repo, userRepo, {} as any, makeTestAccountService(), researchContext);
   });
 
   it("returns parsed idea objects and injects research signals into the prompt", async () => {
@@ -123,7 +124,7 @@ describe("ContentService.generateIdeas", () => {
   });
 
   it("degrades cleanly when no research context service is wired", async () => {
-    service = new ContentService(repo, userRepo, {} as any);
+    service = new ContentService(repo, userRepo, {} as any, makeTestAccountService());
     const ideas = await service.generateIdeas("user-1");
 
     expect(ideas).toHaveLength(2);

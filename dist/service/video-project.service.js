@@ -18,11 +18,12 @@ const computeOverallStatus = (pipeline) => {
             : "in_progress";
 };
 class VideoProjectService {
-    constructor(repo, contentRepo, packagingRepo, hooksRepo) {
+    constructor(repo, contentRepo, packagingRepo, hooksRepo, accountService) {
         this.repo = repo;
         this.contentRepo = contentRepo;
         this.packagingRepo = packagingRepo;
         this.hooksRepo = hooksRepo;
+        this.accountService = accountService;
         this.create = async (userId, ideaId) => {
             const idea = await this.contentRepo.getIdea(ideaId);
             if (!idea) {
@@ -34,6 +35,7 @@ class VideoProjectService {
             const now = firebase.firestore.FieldValue.serverTimestamp();
             const projectData = {
                 createdBy: userId,
+                accountId: await this.accountService.ensureDefaultAccount(userId),
                 title: idea.title,
                 ideaId,
                 scriptId: null,
@@ -68,7 +70,10 @@ class VideoProjectService {
             if (!title || !title.trim()) {
                 throw BadRequest("title is required");
             }
-            const formatted = await formatGeneratedTitle(title.trim(), userId);
+            const formatted = await formatGeneratedTitle(title.trim(), {
+                userId,
+                accountId: await this.accountService.ensureDefaultAccount(userId),
+            });
             const [saved] = await this.contentRepo.batchSaveIdeas([formatted]);
             return this.create(userId, saved.id);
         };

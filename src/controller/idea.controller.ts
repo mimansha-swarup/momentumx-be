@@ -71,9 +71,12 @@ class IdeaController {
       req.body.context
     );
     const batchId = randomUUID();
+    // Resolved once for the batch, not per idea — ensureDefaultAccount is cached,
+    // but ten concurrent first-calls would otherwise race to mint an account.
+    const owner = await this.service.resolveOwner(req.userId);
     const modifiedDataResults = await Promise.allSettled(
       (ideas || [])?.map(async (idea) =>
-        formatGeneratedIdea(idea, req.userId, batchId),
+        formatGeneratedIdea(idea, owner, batchId),
       ),
     );
     const modifiedData = modifiedDataResults

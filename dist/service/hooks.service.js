@@ -23,11 +23,12 @@ class HooksService {
     // silently skips the lock and (from Phase 08) the debit — failing open on
     // exactly the concern the seam exists to guarantee. A missing argument
     // should be a compile error, not a quiet downgrade.
-    steps) {
+    steps, accountService) {
         this.repo = repo;
         this.videoProjectService = videoProjectService;
         this.contextService = contextService;
         this.steps = steps;
+        this.accountService = accountService;
         // Body script (if sent) wins; otherwise resolve the project's stored script
         // server-side (phases 1D). Hooks are script-native — no script anywhere is a 400.
         this.resolveScript = async (userId, videoProjectId, explicitScript) => {
@@ -66,6 +67,7 @@ class HooksService {
                 return this.repo.save({
                     videoProjectId,
                     createdBy: userId,
+                    accountId: await this.accountService.ensureDefaultAccount(userId),
                     hooks: parsed.hooks,
                     hookFeedback: {},
                 });

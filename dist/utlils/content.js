@@ -44,7 +44,7 @@ function extractChannelField(value, field) {
     }
     return "";
 }
-export const formatGeneratedTitle = async (title, userId, batchId) => {
+export const formatGeneratedTitle = async (title, { userId, accountId }, batchId) => {
     // Bounded like every other Gemini call — an unbounded embed would hang idea saves.
     const embedding = await embeddingModel.embedContent(title, { timeout: 30000 });
     return {
@@ -55,6 +55,8 @@ export const formatGeneratedTitle = async (title, userId, batchId) => {
         // An ABSENT owner is quarantined by Phase 04's backfill; an EMPTY-STRING one
         // is a valid value that every orphaned record shares.
         createdBy: userId,
+        // Written, never read — every query still filters `createdBy` until Phase 06.
+        accountId,
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         isScriptGenerated: false,
         embedding: embedding.embedding.values,
@@ -67,8 +69,8 @@ export const formatGeneratedTitle = async (title, userId, batchId) => {
 // Idea docs (phase 2): the working title is the embedded/displayed handle;
 // concept/type/evidence ride along. BYO-title docs stay title-only via
 // formatGeneratedTitle above.
-export const formatGeneratedIdea = async (idea, userId, batchId) => {
-    const base = await formatGeneratedTitle(idea.workingTitle, userId, batchId);
+export const formatGeneratedIdea = async (idea, owner, batchId) => {
+    const base = await formatGeneratedTitle(idea.workingTitle, owner, batchId);
     return {
         ...base,
         concept: idea.concept ?? null,
@@ -76,7 +78,7 @@ export const formatGeneratedIdea = async (idea, userId, batchId) => {
         evidence: idea.evidence?.trim() ? idea.evidence : null,
     };
 };
-export const formatGeneratedScript = (title, scriptId, ideaId, videoProjectId, script, userId) => {
+export const formatGeneratedScript = (title, scriptId, ideaId, videoProjectId, script, { userId, accountId }) => {
     return {
         id: scriptId,
         title,
@@ -85,6 +87,7 @@ export const formatGeneratedScript = (title, scriptId, ideaId, videoProjectId, s
         // An ABSENT owner is quarantined by Phase 04's backfill; an EMPTY-STRING one
         // is a valid value that every orphaned record shares.
         createdBy: userId,
+        accountId,
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         script,
         ideaId,

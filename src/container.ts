@@ -20,6 +20,7 @@
 //
 // Ordering matters — a const must be declared before it is used as an argument.
 
+import AccountRepository from "./repository/account.repository.js";
 import ContentRepository from "./repository/content.repository.js";
 import HooksRepository from "./repository/hooks.repository.js";
 import PackagingRepository from "./repository/packaging.repository.js";
@@ -27,6 +28,7 @@ import ResearchRepository from "./repository/research.repository.js";
 import UserRepository from "./repository/user.repository.js";
 import VideoProjectRepository from "./repository/video-project.repository.js";
 
+import AccountService from "./service/account.service.js";
 import ContentService from "./service/content.service.js";
 import ContextService from "./service/context.service.js";
 import HooksService from "./service/hooks.service.js";
@@ -47,6 +49,7 @@ import VideoProjectController from "./controller/video-project.controller.js";
 
 // --- Repositories ----------------------------------------------------------
 
+export const accountRepository = new AccountRepository();
 export const contentRepository = new ContentRepository();
 export const hooksRepository = new HooksRepository();
 export const packagingRepository = new PackagingRepository();
@@ -56,11 +59,17 @@ export const videoProjectRepository = new VideoProjectRepository();
 
 // --- Services --------------------------------------------------------------
 
+// Phase 03. Resolves (and lazily mints) the caller's single account, so every
+// write can be stamped with an `accountId` while every read still filters on
+// `createdBy`.
+export const accountService = new AccountService(accountRepository, userRepository);
+
 export const videoProjectService = new VideoProjectService(
   videoProjectRepository,
   contentRepository,
   packagingRepository,
-  hooksRepository
+  hooksRepository,
+  accountService
 );
 
 export const contextService = new ContextService(
@@ -83,6 +92,7 @@ export const contentService = new ContentService(
   contentRepository,
   userRepository,
   videoProjectService,
+  accountService,
   researchContextService
 );
 
@@ -95,13 +105,15 @@ export const hooksService = new HooksService(
   hooksRepository,
   videoProjectService,
   contextService,
-  stepRunner
+  stepRunner,
+  accountService
 );
 
 export const packagingService = new PackagingService(
   packagingRepository,
   videoProjectService,
   contextService,
+  accountService,
   researchContextService
 );
 

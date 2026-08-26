@@ -46,6 +46,7 @@ jest.mock("../../src/config/firebase", () => ({
 }));
 
 import PackagingRepository from "../../src/repository/packaging.repository";
+import { TEST_ACCOUNT_ID } from "../helpers/account";
 
 describe("PackagingRepository.upsertGeneratedItem", () => {
   let repo: PackagingRepository;
@@ -59,7 +60,7 @@ describe("PackagingRepository.upsertGeneratedItem", () => {
     findGet.mockResolvedValue({ empty: true, docs: [] }); // findByVideoProject → null
     txnGet.mockResolvedValue({ exists: false });
 
-    const res = await repo.upsertGeneratedItem("proj-1", "user-1", "titles", "title", [{ title: "A" }]);
+    const res = await repo.upsertGeneratedItem("proj-1", { userId: "user-1", accountId: TEST_ACCOUNT_ID }, "titles", "title", [{ title: "A" }]);
 
     expect(docFn).toHaveBeenCalledWith("proj-1"); // DETERMINISTIC id, not auto-id
     expect(txnSet).toHaveBeenCalled();
@@ -68,6 +69,9 @@ describe("PackagingRepository.upsertGeneratedItem", () => {
     expect(written.itemStatuses).toMatchObject({ title: "completed", shorts: "not_started" });
     expect(res).toMatchObject({ packagingId: "proj-1", created: true });
     expect(res.statuses).toMatchObject({ title: "completed" });
+    // Phase 03 dual-write, on the doc this call CREATES.
+    expect(written.createdBy).toBe("user-1");
+    expect(written.accountId).toBe(TEST_ACCOUNT_ID);
   });
 
   it("updates the existing (legacy auto-id) doc in place, not a second doc", async () => {
@@ -84,7 +88,7 @@ describe("PackagingRepository.upsertGeneratedItem", () => {
       ],
     });
 
-    const res = await repo.upsertGeneratedItem("proj-1", "user-1", "shorts", "shorts", { segments: [] });
+    const res = await repo.upsertGeneratedItem("proj-1", { userId: "user-1", accountId: TEST_ACCOUNT_ID }, "shorts", "shorts", { segments: [] });
 
     expect(docFn).not.toHaveBeenCalled(); // reused the located ref, no duplicate
     expect(txnSet).not.toHaveBeenCalled();
@@ -115,7 +119,7 @@ describe("PackagingRepository.upsertGeneratedItem", () => {
       ],
     });
 
-    const res = await repo.upsertGeneratedItem("proj-1", "user-1", "shorts", "shorts", { segments: [] });
+    const res = await repo.upsertGeneratedItem("proj-1", { userId: "user-1", accountId: TEST_ACCOUNT_ID }, "shorts", "shorts", { segments: [] });
 
     // Consistent in-transaction snapshot: this write flips shorts; the service
     // decides step completion (packaging = its 3 items) from this.

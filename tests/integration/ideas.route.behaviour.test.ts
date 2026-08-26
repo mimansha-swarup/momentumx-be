@@ -36,6 +36,10 @@ jest.mock("../../src/config/firebase", () => ({
 // ContentService is used for BOTH idea and script controllers; only the idea
 // controller is exercised by this file's routes.
 const mockContentService = {
+  // Phase 03: the controller assembles the idea write shape itself (a layering
+  // violation that predates the phase), so it asks the service for the owner
+  // stamp rather than taking a second dependency.
+  resolveOwner: jest.fn(),
   getPaginatedUsersIdeas: jest.fn(),
   generateIdeas: jest.fn(),
   saveBatchIdeas: jest.fn(),
@@ -63,6 +67,7 @@ jest.mock("../../src/utlils/content", () => ({
 import request from "supertest";
 import app from "../../src/app";
 import { useSharedServer } from "./shared-server";
+import { TEST_ACCOUNT_ID } from "../helpers/account";
 
 // One HTTP server for the whole file. `request(app)` starts and tears down a
 // FRESH ephemeral server per call; across ~113 requests that intermittently
@@ -89,13 +94,26 @@ beforeEach(() => {
   // test calls that mock next. That produced intermittent, order-dependent
   // failures on a different test each run. mockReset() drains the queue.
   Object.values(mockContentService).forEach((fn) => (fn as jest.Mock).mockReset());
+  mockContentService.resolveOwner.mockResolvedValue({
+    userId: "user-1",
+    accountId: TEST_ACCOUNT_ID,
+  });
 
   mockFormatGeneratedIdea.mockReset();
+  // The 2nd argument is a RecordOwner OBJECT, not a uid — mirrored honestly here
+  // so this stays a test of the route's wiring. The stamp itself is asserted
+  // against the real formatter in tests/unit/utils/record-owner.behaviour.test.ts;
+  // this suite mocks the formatter and so proves nothing about it.
   mockFormatGeneratedIdea.mockImplementation(
-    async (idea: { workingTitle: string }, userId: string, batchId: string) => ({
+    async (
+      idea: { workingTitle: string },
+      owner: { userId: string; accountId: string },
+      batchId: string
+    ) => ({
       id: "idea-formatted",
       title: idea.workingTitle,
-      createdBy: userId,
+      createdBy: owner.userId,
+      accountId: owner.accountId,
       batchId,
     })
   );

@@ -1,6 +1,7 @@
 import { Firestore } from "firebase-admin/firestore";
 import { COLLECTIONS } from "../constants/collection.js";
 import { db, firebase } from "../config/firebase.js";
+import { RecordOwner } from "../utlils/content.js";
 import { IPackagingItemStatuses, PackagingItemStatus, StaleReason } from "../types/routes/video-project.js";
 import { IPackaging } from "../types/routes/packaging.js";
 
@@ -89,7 +90,10 @@ class PackagingRepository {
   // the whole set is now complete (so the service can drive the pipeline step).
   upsertGeneratedItem = async (
     videoProjectId: string,
-    userId: string,
+    // An OBJECT, not two positional strings — `userId` and `accountId` are both
+    // strings, so a sixth `accountId: string` parameter would let an existing
+    // 5-argument call keep compiling with the wrong value in the slot.
+    { userId, accountId }: RecordOwner,
     field: string,
     item: string,
     canonical: unknown
@@ -128,6 +132,7 @@ class PackagingRepository {
         txn.set(ref, {
           id: ref.id,
           createdBy: userId,
+          accountId,
           videoProjectId,
           titles: [],
           description: "",

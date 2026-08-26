@@ -33,6 +33,7 @@ import ContentService from "../../src/service/content.service";
 import ContentRepository from "../../src/repository/content.repository";
 import UserRepository from "../../src/repository/user.repository";
 import { generateStreamingContent } from "../../src/utlils/ai";
+import { makeTestAccountService, TEST_ACCOUNT_ID } from "../helpers/account";
 
 jest.mock("../../src/repository/content.repository");
 jest.mock("../../src/repository/user.repository");
@@ -64,7 +65,7 @@ describe("ContentService — regenerateScript", () => {
   beforeEach(() => {
     mockContentRepo = new MockContentRepo() as jest.Mocked<ContentRepository>;
     mockUserRepo = new MockUserRepo() as jest.Mocked<UserRepository>;
-    service = new ContentService(mockContentRepo, mockUserRepo, mockVpService as any);
+    service = new ContentService(mockContentRepo, mockUserRepo, mockVpService as any, makeTestAccountService());
     mockContentRepo.getScriptById = jest.fn().mockResolvedValue(scriptDoc);
     mockUserRepo.get = jest.fn().mockResolvedValue(userRecord);
     mockContentRepo.editScript = jest.fn().mockResolvedValue(undefined);
@@ -121,7 +122,7 @@ describe("ContentService — exportScript", () => {
   beforeEach(() => {
     mockContentRepo = new MockContentRepo() as jest.Mocked<ContentRepository>;
     mockUserRepo = new MockUserRepo() as jest.Mocked<UserRepository>;
-    service = new ContentService(mockContentRepo, mockUserRepo, {} as any);
+    service = new ContentService(mockContentRepo, mockUserRepo, {} as any, makeTestAccountService());
   });
 
   it("throws 404 if script not found", async () => {
@@ -156,7 +157,7 @@ describe("ContentService — edit whitelist & SSE ownership guard", () => {
   beforeEach(() => {
     mockContentRepo = new MockContentRepo() as jest.Mocked<ContentRepository>;
     mockUserRepo = new MockUserRepo() as jest.Mocked<UserRepository>;
-    service = new ContentService(mockContentRepo, mockUserRepo, {} as any);
+    service = new ContentService(mockContentRepo, mockUserRepo, {} as any, makeTestAccountService());
   });
 
   afterEach(() => jest.clearAllMocks());
@@ -206,7 +207,7 @@ describe("ContentService — edit whitelist & SSE ownership guard", () => {
       completeStep: jest.fn(),
       linkResource: jest.fn(),
     };
-    service = new ContentService(mockContentRepo, mockUserRepo, mockVp as any);
+    service = new ContentService(mockContentRepo, mockUserRepo, mockVp as any, makeTestAccountService());
     mockUserRepo.get = jest.fn().mockResolvedValue({});
     const res = { setHeader: jest.fn(), flushHeaders: jest.fn(), write: jest.fn(), end: jest.fn() };
     const err = await service.generateScripts("user-1", "proj-1", res as any).catch((e) => e);
@@ -249,7 +250,7 @@ describe("ContentService — generateScripts project-scoped script id & FKs", ()
       linkResource: jest.fn().mockResolvedValue(undefined),
       abandonStep: jest.fn().mockResolvedValue(undefined),
     };
-    service = new ContentService(mockContentRepo, mockUserRepo, mockVp as any);
+    service = new ContentService(mockContentRepo, mockUserRepo, mockVp as any, makeTestAccountService());
     mockUserRepo.get = jest.fn().mockResolvedValue({ brandName: "B", targetAudience: "a", competitors: [], niche: "n", websiteContent: "c" });
     mockUserRepo.update = jest.fn().mockResolvedValue(undefined);
     mockContentRepo.getIdea = jest.fn().mockResolvedValue({ id: "idea-1", createdBy: "user-1", title: "My Idea" });
@@ -276,6 +277,21 @@ describe("ContentService — generateScripts project-scoped script id & FKs", ()
     expect(savedDoc.id).toBe(savedId);
     // pipeline linked the same id
     expect(mockVp.linkResource).toHaveBeenCalledWith("proj-1", "script", savedId, "user-1");
+  });
+
+  it("stamps BOTH createdBy and accountId on the saved script, and they differ", async () => {
+    // Scripts are the one collection written only by the SSE route, which is
+    // served only by Render. A stamp missing here survives a Vercel deploy check
+    // and is then walked past by Phase 04's single backfill pass.
+    mockVp.getById.mockResolvedValue(makeProj());
+
+    await service.generateScripts("user-1", "proj-1", makeRes() as any);
+
+    const [, savedDoc] = mockContentRepo.saveScript.mock.calls[0] as [string, Record<string, unknown>];
+    expect(savedDoc.createdBy).toBe("user-1");
+    expect(savedDoc.accountId).toBe(TEST_ACCOUNT_ID);
+    // Not the uid — that shortcut is what the UUID v4 decision killed.
+    expect(savedDoc.accountId).not.toBe("user-1");
   });
 
   it("streams the body, always terminates the SSE with [DONE]+end, and completes the script step", async () => {

@@ -4,6 +4,8 @@ export interface IHooksBatch {
   id: string;
   videoProjectId: string;
   createdBy: string;
+  /** Phase 03 dual-write. Stamped on create, read by nothing until Phase 06. */
+  accountId?: string;
   hooks: string[];
   hookFeedback: Record<string, "like" | "dislike" | null>;
   createdAt: Timestamp;

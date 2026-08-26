@@ -51,6 +51,7 @@ import ContentRepository from "../../../src/repository/content.repository";
 import PackagingRepository from "../../../src/repository/packaging.repository";
 import HooksRepository from "../../../src/repository/hooks.repository";
 import { IVideoProject, StepName } from "../../../src/types/routes/video-project";
+import { makeTestAccountService } from "../../helpers/account";
 
 // ---------------------------------------------------------------------------
 // Factories
@@ -133,7 +134,7 @@ describe("VideoProjectService — pipeline state machine (behaviour)", () => {
     contentRepo = makeMockContentRepo();
     packagingRepo = makeMockPackagingRepo();
     hooksRepo = makeMockHooksRepo();
-    service = new VideoProjectService(repo, contentRepo, packagingRepo, hooksRepo);
+    service = new VideoProjectService(repo, contentRepo, packagingRepo, hooksRepo, makeTestAccountService());
     repo.update.mockResolvedValue(undefined);
   });
 

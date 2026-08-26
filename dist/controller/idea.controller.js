@@ -46,7 +46,10 @@ class IdeaController {
             // absent means generate from the persisted user record as before.
             const ideas = await this.service.generateIdeas(req.userId, true, req.body.context);
             const batchId = randomUUID();
-            const modifiedDataResults = await Promise.allSettled((ideas || [])?.map(async (idea) => formatGeneratedIdea(idea, req.userId, batchId)));
+            // Resolved once for the batch, not per idea — ensureDefaultAccount is cached,
+            // but ten concurrent first-calls would otherwise race to mint an account.
+            const owner = await this.service.resolveOwner(req.userId);
+            const modifiedDataResults = await Promise.allSettled((ideas || [])?.map(async (idea) => formatGeneratedIdea(idea, owner, batchId)));
             const modifiedData = modifiedDataResults
                 .filter((result) => result.status === "fulfilled")
                 .map((result) => result.value);

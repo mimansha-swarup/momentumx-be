@@ -67,6 +67,7 @@ import VideoProjectService from "../../../src/service/video-project.service";
 import ResearchContextService from "../../../src/service/research-context.service";
 import { generateContent } from "../../../src/utlils/ai";
 import { formatGeneratedIdea } from "../../../src/utlils/content";
+import { makeTestAccountService } from "../../helpers/account";
 
 jest.mock("../../../src/repository/content.repository");
 jest.mock("../../../src/repository/user.repository");
@@ -134,7 +135,7 @@ describe("Regenerate All — the batch is replaced and every project built on it
       id: "idea-new", title: idea.workingTitle, concept: idea.concept, ideaType: idea.type,
       evidence: null, embedding: [0.1], createdBy: userId, batchId: batchId ?? null,
     })) as never);
-    service = new ContentService(repo, userRepo, vpService as never, researchContext);
+    service = new ContentService(repo, userRepo, vpService as never, makeTestAccountService(), researchContext);
   });
 
   it("stales EVERY project backed by an archived idea, not just one per idea", async () => {
@@ -268,7 +269,7 @@ describe("Regenerate one slot — the slot is replaced in place", () => {
       evidence: null, embedding: [0.1], createdBy: userId, batchId: batchId ?? null,
     })) as never);
     mockGenerate.mockImplementation(async () => makeStream(IDEAS));
-    service = new ContentService(repo, userRepo, vpService as never, researchContext);
+    service = new ContentService(repo, userRepo, vpService as never, makeTestAccountService(), researchContext);
   });
 
   it("404s an unknown idea and 403s someone else's, without generating", async () => {

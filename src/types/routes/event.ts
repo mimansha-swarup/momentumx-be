@@ -14,5 +14,11 @@ export const enum EventType {
 export interface IEvent {
   type: EventType;
   createdBy: string; // userId (from authMiddleware)
+  /**
+   * Phase 03 dual-write. Required, not optional: this is a write-only shape, and
+   * `ignoreUndefinedProperties: true` means a dropped stamp vanishes silently
+   * rather than erroring — per-channel usage would just under-count.
+   */
+  accountId: string;
   metadata?: Record<string, unknown>;
 }

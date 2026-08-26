@@ -1,6 +1,7 @@
 import { firebase } from "../config/firebase.js";
 import ContentRepository from "../repository/content.repository.js";
 import HooksRepository from "../repository/hooks.repository.js";
+import AccountService from "./account.service.js";
 import PackagingRepository from "../repository/packaging.repository.js";
 import VideoProjectRepository from "../repository/video-project.repository.js";
 import {
@@ -39,7 +40,8 @@ class VideoProjectService {
     private repo: VideoProjectRepository,
     private contentRepo: ContentRepository,
     private packagingRepo: PackagingRepository,
-    private hooksRepo: HooksRepository
+    private hooksRepo: HooksRepository,
+    private accountService: AccountService
   ) {}
 
   create = async (userId: string, ideaId: string): Promise<IVideoProject> => {
@@ -54,6 +56,7 @@ class VideoProjectService {
     const now = firebase.firestore.FieldValue.serverTimestamp();
     const projectData = {
       createdBy: userId,
+      accountId: await this.accountService.ensureDefaultAccount(userId),
       title: idea.title,
       ideaId,
       scriptId: null,
@@ -90,7 +93,10 @@ class VideoProjectService {
     if (!title || !title.trim()) {
       throw BadRequest("title is required");
     }
-    const formatted = await formatGeneratedTitle(title.trim(), userId);
+    const formatted = await formatGeneratedTitle(title.trim(), {
+      userId,
+      accountId: await this.accountService.ensureDefaultAccount(userId),
+    });
     const [saved] = await this.contentRepo.batchSaveIdeas([formatted]);
     return this.create(userId, saved.id);
   };

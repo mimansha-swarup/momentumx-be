@@ -8,6 +8,7 @@ import { fillTemplate } from "../utlils/prompt-blocks.js";
 import HooksRepository from "../repository/hooks.repository.js";
 import VideoProjectService from "./video-project.service.js";
 import StepRunner from "./step-runner.js";
+import AccountService from "./account.service.js";
 import ContextService from "./context.service.js";
 import { IHooksBatch } from "../types/routes/hooks.js";
 import { BadRequest, Conflict, Forbidden, NotFound, ServiceUnavailable } from "../utlils/errors.js";
@@ -39,7 +40,8 @@ class HooksService {
     // silently skips the lock and (from Phase 08) the debit — failing open on
     // exactly the concern the seam exists to guarantee. A missing argument
     // should be a compile error, not a quiet downgrade.
-    private steps: StepRunner
+    private steps: StepRunner,
+    private accountService: AccountService
   ) {}
 
   // Body script (if sent) wins; otherwise resolve the project's stored script
@@ -98,6 +100,7 @@ class HooksService {
         return this.repo.save({
           videoProjectId,
           createdBy: userId,
+          accountId: await this.accountService.ensureDefaultAccount(userId),
           hooks: parsed.hooks,
           hookFeedback: {},
         });

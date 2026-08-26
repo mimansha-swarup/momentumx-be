@@ -44,6 +44,7 @@ import HooksRepository from "../../src/repository/hooks.repository";
 import { IVideoProject } from "../../src/types/routes/video-project";
 import { IIdea } from "../../src/types/routes/content";
 import { formatGeneratedTitle } from "../../src/utlils/content";
+import { makeTestAccountService, TEST_ACCOUNT_ID } from "../helpers/account";
 
 // ---------------------------------------------------------------------------
 // Factories
@@ -140,7 +141,7 @@ describe("VideoProjectService", () => {
     contentRepo = makeMockContentRepo();
     packagingRepo = makeMockPackagingRepo();
     hooksRepo = makeMockHooksRepo();
-    service = new VideoProjectService(repo, contentRepo, packagingRepo, hooksRepo);
+    service = new VideoProjectService(repo, contentRepo, packagingRepo, hooksRepo, makeTestAccountService());
   });
 
   // --------------------------------------------------------------------------
@@ -157,6 +158,21 @@ describe("VideoProjectService", () => {
       expect(result).toBeDefined();
       expect(contentRepo.getIdea).toHaveBeenCalledWith("idea-1");
       expect(repo.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("stamps BOTH createdBy and accountId on the project document", async () => {
+      // The project document itself, not the idea it was built from. The
+      // createFromTitle test below asserts the owner reaching formatGeneratedTitle,
+      // which is a different write — dropping this stamp left that test green.
+      contentRepo.getIdea.mockResolvedValue(makeIdea({ title: "My Idea", createdBy: "user-1" }));
+      repo.create.mockResolvedValue(makeProject());
+
+      await service.create("user-1", "idea-1");
+
+      const [projectData] = repo.create.mock.calls[0] as [Record<string, unknown>];
+      expect(projectData.createdBy).toBe("user-1");
+      expect(projectData.accountId).toBe(TEST_ACCOUNT_ID);
+      expect(projectData.accountId).not.toBe("user-1");
     });
 
     it("throws 404 when idea is not found", async () => {
@@ -225,7 +241,12 @@ describe("VideoProjectService", () => {
 
       const result = await service.createFromTitle("user-1", "My Idea");
 
-      expect(formatGeneratedTitle).toHaveBeenCalledWith("My Idea", "user-1");
+      // Phase 03: the owner is one object, so a bare userId cannot be passed
+      // where an accountId belongs.
+      expect(formatGeneratedTitle).toHaveBeenCalledWith("My Idea", {
+        userId: "user-1",
+        accountId: TEST_ACCOUNT_ID,
+      });
       expect(contentRepo.batchSaveIdeas).toHaveBeenCalledTimes(1);
       // create() was reused with the saved idea id
       expect(contentRepo.getIdea).toHaveBeenCalledWith("idea-x");

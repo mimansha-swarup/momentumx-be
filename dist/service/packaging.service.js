@@ -5,9 +5,10 @@ import { firebase } from "../config/firebase.js";
 import { BadRequest, Forbidden, NotFound } from "../utlils/errors.js";
 import { buildCreatorContextBlock, buildHookSection, buildScriptSection, fillTemplate, THUMBNAIL_FORMAT_DIRECTIVE, resolveVideoFormat, } from "../utlils/prompt-blocks.js";
 class PackagingService {
-    constructor(repo, videoProjectService, contextService, researchContext) {
+    constructor(repo, videoProjectService, contextService, accountService, researchContext) {
         this.videoProjectService = videoProjectService;
         this.contextService = contextService;
+        this.accountService = accountService;
         this.researchContext = researchContext;
         // Best-available context (phases 1D): channel context always, script/hook
         // resolved server-side from the project when not supplied by the client.
@@ -139,7 +140,7 @@ class PackagingService {
             // BEFORE the write so malformed content throws here (no orphaned doc).
             const field = item === "title" ? "titles" : item;
             const canonical = this.normalizeField(field, rawContent);
-            const { packagingId, created, statuses } = await this.repo.upsertGeneratedItem(videoProjectId, userId, field, item, canonical);
+            const { packagingId, created, statuses } = await this.repo.upsertGeneratedItem(videoProjectId, { userId, accountId: await this.accountService.ensureDefaultAccount(userId) }, field, item, canonical);
             const step = item === "title" ? "title" : "packaging";
             // Pipeline sync is best-effort: the content is already saved, so a transition
             // hiccup must not fail generation.
@@ -275,7 +276,10 @@ class PackagingService {
             }
             const packagingData = {
                 ...normalized,
+                // AFTER the spread, like createdBy — though packagingSaveSchema, not field
+                // order, is what stops these keys reaching the service at all.
                 createdBy: userId,
+                accountId: await this.accountService.ensureDefaultAccount(userId),
                 videoProjectId: projectId,
             };
             // Stale flags are set fresh ONLY when the document is first created — a

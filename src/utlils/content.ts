@@ -59,7 +59,25 @@ function extractChannelField(value: unknown, field: "id" | "description"): strin
   return "";
 }
 
-export const formatGeneratedTitle = async (title: string, userId: string, batchId?: string) => {
+/**
+ * Who a generated record belongs to. ONE object, never two loose strings.
+ *
+ * The object is the point. Every id here is a `string`, so a positional
+ * `accountId: string` parameter lets an existing call keep compiling with
+ * whatever was already in that slot — a wrong tag written with no error
+ * anywhere. An object is the shape a bare string cannot satisfy, which is what
+ * makes the compiler enumerate the write sites instead of a grep.
+ */
+export interface RecordOwner {
+  userId: string;
+  accountId: string;
+}
+
+export const formatGeneratedTitle = async (
+  title: string,
+  { userId, accountId }: RecordOwner,
+  batchId?: string,
+) => {
   // Bounded like every other Gemini call — an unbounded embed would hang idea saves.
   const embedding = await embeddingModel.embedContent(title, { timeout: 30_000 });
   return {
@@ -70,6 +88,8 @@ export const formatGeneratedTitle = async (title: string, userId: string, batchI
     // An ABSENT owner is quarantined by Phase 04's backfill; an EMPTY-STRING one
     // is a valid value that every orphaned record shares.
     createdBy: userId,
+    // Written, never read — every query still filters `createdBy` until Phase 06.
+    accountId,
     createdAt: firebase.firestore.FieldValue.serverTimestamp(),
     isScriptGenerated: false,
     embedding: embedding.embedding.values,
@@ -85,10 +105,10 @@ export const formatGeneratedTitle = async (title: string, userId: string, batchI
 // formatGeneratedTitle above.
 export const formatGeneratedIdea = async (
   idea: IGeneratedIdea,
-  userId: string,
+  owner: RecordOwner,
   batchId?: string,
 ) => {
-  const base = await formatGeneratedTitle(idea.workingTitle, userId, batchId);
+  const base = await formatGeneratedTitle(idea.workingTitle, owner, batchId);
   return {
     ...base,
     concept: idea.concept ?? null,
@@ -102,7 +122,7 @@ export const formatGeneratedScript = (
   ideaId: string,
   videoProjectId: string,
   script: string,
-  userId: string,
+  { userId, accountId }: RecordOwner,
 ) => {
   return {
     id: scriptId,
@@ -112,6 +132,7 @@ export const formatGeneratedScript = (
     // An ABSENT owner is quarantined by Phase 04's backfill; an EMPTY-STRING one
     // is a valid value that every orphaned record shares.
     createdBy: userId,
+    accountId,
     createdAt: firebase.firestore.FieldValue.serverTimestamp(),
     script,
     ideaId,

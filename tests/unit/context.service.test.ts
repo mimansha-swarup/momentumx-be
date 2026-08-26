@@ -80,6 +80,7 @@ describe("ContextService.assemble — degradation matrix", () => {
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
       {} as never
     ) as jest.Mocked<VideoProjectService>;
     service = new ContextService(userRepo, contentRepo, hooksRepo, vpService);

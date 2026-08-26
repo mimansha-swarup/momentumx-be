@@ -10,6 +10,7 @@ import {
 
 import ContentRepository from "../repository/content.repository.js";
 import UserRepository from "../repository/user.repository.js";
+import AccountService from "./account.service.js";
 import VideoProjectService, { STEP_LOCK_MS } from "./video-project.service.js";
 import ResearchContextService from "./research-context.service.js";
 import { collectJson, generateContent, generateStreamingContent } from "../utlils/ai.js";
@@ -21,6 +22,7 @@ import {
   formatGeneratedScript,
   formatGeneratedIdea,
   getClusteredTitles,
+  RecordOwner,
 } from "../utlils/content.js";
 import {
   GENERATION_CONFIG_SCRIPTS,
@@ -54,11 +56,22 @@ class ContentService {
     repo: ContentRepository,
     userRepo: UserRepository,
     private videoProjectService: VideoProjectService,
+    private accountService: AccountService,
     private researchContext?: ResearchContextService,
   ) {
     this.repo = repo;
     this.userRepo = userRepo;
   }
+
+  /**
+   * The owner stamp for a new record. Public only because `idea.controller.ts`
+   * assembles the idea write shape itself — a layering violation that predates
+   * this phase. Phase 05 replaces the body with `req.accountId`.
+   */
+  resolveOwner = async (userId: string): Promise<RecordOwner> => ({
+    userId,
+    accountId: await this.accountService.ensureDefaultAccount(userId),
+  });
 
   // Builds the script user prompt from the creator's profile + a title.
   // Shared by generateScripts (SSE) and regenerateScript so the placeholder
@@ -347,7 +360,7 @@ class ContentService {
           project.ideaId,
           projectId,
           accumulatedRes,
-          userId,
+          await this.resolveOwner(userId),
         );
         await this.repo.saveScript(scriptId, formattedData);
         await this.repo.updateIdea(project.ideaId, {
@@ -428,8 +441,9 @@ class ContentService {
     const ideas = await this.generateIdeas(userId);
 
     const batchId = randomUUID();
+    const owner = await this.resolveOwner(userId);
     const formattedResults = await Promise.allSettled(
-      ideas.map((idea) => formatGeneratedIdea(idea, userId, batchId)),
+      ideas.map((idea) => formatGeneratedIdea(idea, owner, batchId)),
     );
     const formatted = formattedResults
       .filter((r) => r.status === "fulfilled")
@@ -465,7 +479,11 @@ class ContentService {
     const newIdea =
       (preferredType && ideas.find((idea) => idea.type === preferredType)) ||
       ideas[0];
-    const formatted = await formatGeneratedIdea(newIdea, userId, idea.batchId ?? undefined);
+    const formatted = await formatGeneratedIdea(
+      newIdea,
+      await this.resolveOwner(userId),
+      idea.batchId ?? undefined
+    );
 
     await this.repo.updateIdea(ideaId, {
       title: formatted.title,
