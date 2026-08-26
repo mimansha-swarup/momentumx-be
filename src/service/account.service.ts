@@ -162,11 +162,20 @@ class AccountService {
 /**
  * uid → accountId, for the life of the process.
  *
- * ponytail: safe only because this phase gives every user exactly ONE account
- * that never changes. Phase 05 introduces switching, at which point the active
- * account comes from the request and this cache is wrong — delete it then, do not
- * try to invalidate it. It exists so stamping a write does not cost a user read
- * every time.
+ * ponytail: safe only because every user still has exactly ONE account that never
+ * changes. It exists so stamping a write does not cost a user read every time.
+ *
+ * This comment used to say "Phase 05 introduces switching, delete it then", and
+ * Phase 05 has landed — but it named the wrong phase. Phase 05 only RESOLVES the
+ * active account (`req.accountId`) and verifies membership; every write path
+ * still stamps `ensureDefaultAccount(userId)`, which is deliberate — nothing
+ * reads `req.accountId` until Phase 06.
+ *
+ * DELETE THIS IN PHASE 06, in the same commit that threads `req.accountId` into
+ * the write paths. Not after. A process-lifetime uid → accountId map alongside a
+ * per-request active account is a user working in channel B whose records are
+ * stamped channel A — and rebuilding after a deploy makes it intermittent. Delete
+ * it; do not try to invalidate it.
  */
 const accountIdCache = new Map<string, string>();
 
