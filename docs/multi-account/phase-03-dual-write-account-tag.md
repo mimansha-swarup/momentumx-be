@@ -2,8 +2,8 @@
 title: "Phase 03 — Dual-Write the Account Tag"
 description: "Start stamping accountId on every new record while everything still reads createdBy."
 date: 2026-08-19
-last_updated: 2026-08-19
-status: "planned"
+last_updated: 2026-08-26
+status: "code-complete — not yet deployed"
 tags: ["multi-account", "phase-03", "migration"]
 ---
 
@@ -12,6 +12,25 @@ tags: ["multi-account", "phase-03", "migration"]
 **Size:** small — one new field on every write path, plus account creation.
 **Depends on:** Phase 02 (indexes must exist and be `READY`).
 **Blocks:** Phase 04.
+
+---
+
+## Where this stands (2026-08-26)
+
+Merged on `feature/phase-3-onboarding`, **not deployed**. Suite: 821 tests, 56 suites,
+green; `tsc` clean; `dist/` current.
+
+| | |
+|---|---|
+| Account creation + lazy resolver | done (`account.service.ts`, `account.repository.ts`) |
+| `accountId` stamped on all 7 write paths | done, each canary-verified individually |
+| Reads / permissions unchanged | done, pinned by ratchets |
+| **Deployed to Vercel / Render / Cloud Functions** | **outstanding — this is what Phase 04 waits on** |
+| **One document of each kind generated per artifact** | **outstanding** |
+
+`status` is deliberately not `complete`: this phase's own bar is *deployed*, not merged
+(see "Live means live on all three deploy artifacts" below). Phase 04 must not start until
+the last two rows are ticked.
 
 ---
 
@@ -71,9 +90,37 @@ is read only when generating. Phase 02 explains why they are split — putting t
 `websiteContent` blob on the hot document is the exact failure that split exists to
 prevent. All three writes go in one `WriteBatch`.
 
-Self-healing: any user who somehow lacks an account gets one on their next request. Use a
-`WriteBatch` so the account, its context and the pointer land together — a transaction
-isn't needed, because a dangling account with no pointer repairs itself on the next call.
+Self-healing: any user who somehow lacks an account gets one on their next request.
+
+**Use a transaction, not a `WriteBatch`.** An earlier version of this section prescribed a
+batch and argued a transaction "isn't needed, because a dangling account with no pointer
+repairs itself on the next call". That is true and irrelevant — it reasons about the wrong
+failure. The dangerous one is **two accounts, not a half-built one**:
+
+```
+request A: pointer? no → membership? no →      mint acc-1 → commit
+request B: pointer? no → membership? no → mint acc-2 → commit
+```
+
+Both requests read before either wrote, so both mint. One user now owns two channels, their
+records split between them, and `users/{uid}.lastActiveAccountId` points at whichever
+committed last. Nothing surfaces until Phase 06 switches reads, at which point roughly half
+their content disappears — the precise outcome this phase exists to prevent, reached from a
+direction the batch reasoning never considered. It is reachable in practice because
+`eventService.capture` also resolves an account, so two parallel requests from a brand-new
+user are enough.
+
+The fix is small: re-read `users/{uid}.lastActiveAccountId` **inside** the transaction and
+return it if another request already claimed one, writing nothing. The loser adopts the
+winner's id. `createWithContext` therefore returns the **winning `accountId`**, and the
+caller must use that return value rather than the id it optimistically minted.
+
+**Also: never trust an id read back from membership.** The fallback adopts
+`memberUids`-matched account, and an account document with a blank `id` would be adopted and
+stamped onto every record that user writes. `""` is worse than a missing tag — it is a real
+value shared by every affected record across *every* user, so Phase 04 resolves them all
+into one bucket that reads as a tenancy leak. Re-check the id is a non-empty string and skip
+the malformed document.
 
 ### 2. Stamp `accountId` on every write
 
@@ -81,14 +128,22 @@ Every place that creates a record gains one field. In this phase every user has 
 account, so `accountId` is *that user's single account id* — resolved via
 `ensureDefaultAccount`, never assumed to equal the `uid`.
 
-| Collection | Where it's written | Shape assembled at |
-|---|---|---|
-| `ideas` | `content.repository.ts` → `batchSaveIdeas()` | `utlils/content.ts` → **`formatGeneratedTitle()`** (used by `formatGeneratedIdea` *and* directly by the bring-your-own-title path), called from **four** sites: `idea.controller.ts:57`, `content.service.ts:416`, `content.service.ts:443`, `video-project.service.ts:95` |
-| `scripts` | `content.repository.ts` → `saveScript()` | `formatGeneratedScript()`, called from `content.service.ts:331` |
-| `hooks` | `hooks.repository.ts` → `save()` | assembled in `hooks.service.ts:123` |
-| `packaging` | `packaging.repository.ts` → `save()` **and** `upsertGeneratedItem()` (both create documents) | `packaging.service.ts:385`, `packaging.repository.ts:116` |
-| `videoProjects` | `video-project.repository.ts` → `create()` | `video-project.service.ts:59` |
-| `events` | `event.repository.ts` → `add()` | `event.service.ts:21` |
+Line numbers below are as-shipped (2026-08-26) and will rot; the `grep` under "Risks" is the
+check that does not.
+
+| Collection | Where it's written | Shape assembled at | Stamp asserted by |
+|---|---|---|---|
+| `ideas` | `content.repository.ts` → `batchSaveIdeas()` | `utlils/content.ts` → **`formatGeneratedTitle()`** (used by `formatGeneratedIdea` *and* directly by the bring-your-own-title path), called from **four** sites: `idea.controller.ts:79`, `content.service.ts:446`, `content.service.ts:482`, `video-project.service.ts:96` | `tests/unit/utils/record-owner.behaviour.test.ts` |
+| `scripts` | `content.repository.ts` → `saveScript()` | `formatGeneratedScript()`, called from `content.service.ts:357` | `record-owner`, `content.service.script-iteration` |
+| `hooks` | `hooks.repository.ts` → `save()` | assembled in `hooks.service.ts:103` | `service/hooks.flow.behaviour` |
+| `packaging` | `packaging.repository.ts` → `save()` **and** `upsertGeneratedItem()` (both create documents) | `packaging.service.ts:390`, `packaging.repository.ts:135` | `packaging.service.iteration`, `packaging.repository` |
+| `videoProjects` | `video-project.repository.ts` → `create()` | `video-project.service.ts:59` | `video-project.service` |
+| `events` | `event.repository.ts` → `add()` | `event.service.ts` → `capture()` | `event.service` |
+
+Every row was canary-verified: drop that one stamp and exactly that suite fails. Assert the
+written document's **value**, not that the source text contains `accountId` — a text match
+passes on `accountId: batchId`, which is the mistake that actually happened here (see
+"positional arguments" below).
 
 **`accountId` is stamped server-side, after any request-body spread.** The packaging save
 path builds `{ ...normalized, createdBy: userId, videoProjectId: projectId }`
@@ -100,9 +155,26 @@ cross-tenant write primitive rather than a field copy.
 
 ### The write site that a layer-scoped grep cannot find
 
-**`idea.controller.ts:57` assembles the idea write shape inside a *controller*** — it calls
-`formatGeneratedIdea(idea, req.userId, batchId)` and then `saveBatchIdeas` at `:67`. That is
+**`idea.controller.ts:79` assembles the idea write shape inside a *controller*** — it calls
+`formatGeneratedIdea(idea, owner, batchId)` and then `saveBatchIdeas` at `:94`. That is
 the `POST /v1/ideas/generate` path, the highest-volume write in the system.
+
+### Positional arguments will not enumerate the write sites — an object will
+
+The plan here was to make `accountId` a required parameter so the compiler would list every
+caller. It does not work, and it looks like it does. `userId`, `accountId` and `batchId` are
+all `string`, so `formatGeneratedIdea(idea, userId, batchId)` kept compiling with `batchId`
+sitting in the account slot: a wrong tag, written silently, on the highest-volume path. Two
+of five sites errored; three did not.
+
+Pass an **object** the bare string cannot satisfy:
+
+```ts
+export interface RecordOwner { userId: string; accountId: string; }
+```
+
+All five then fail to compile until updated. Same treatment for
+`packaging.repository.upsertGeneratedItem`, which had the same run of positional strings.
 
 It matters beyond being one more line, because **none of the five shape-assembly sites
 contains the string `createdBy`.** That name appears only inside the helpers in
@@ -158,9 +230,35 @@ query and permission check uses, right up until Phase 06.
 - Confirm an existing user who signs in gets an account created without touching anything.
 - The full test suite passes — behaviour is unchanged, so it should.
 
-Worth adding: a small integration test asserting that a generated idea carries an
-`accountId`. It's the cheapest guard against a write path being missed, and a missed one
-is invisible until Phase 06 makes those records disappear.
+**An integration test over the route will not do this.** That was the original suggestion
+here and it is a trap in this codebase: `tests/integration/ideas.route.behaviour.test.ts`
+mocks `utlils/content` — as do all nine suites that touch the formatters — so the
+`accountId` it "asserts" is a value the mock returned. It cannot fail when the stamp is
+removed. Test the **formatter** directly (`tests/unit/utils/record-owner.behaviour.test.ts`);
+it is the only layer no suite mocks.
+
+Whatever is written, verify it by canary: delete the stamp, confirm the test fails, restore.
+A dual-write test that has never been seen to fail is indistinguishable from one asserting
+its own fixture.
+
+### What the suite now pins, and what it cannot
+
+Automated (821 tests, 56 suites):
+
+- Both owner fields, by value, on all seven write paths — each canary-verified.
+- `accountId` is a UUID v4, never the uid, never `""`, never defaulted from `userId`.
+- Two independently-constructed `AccountService`s resolve one user to the same account
+  (`event.service.ts` really does build its own, to avoid an import cycle with the
+  container — "one account per user" holds only because the cache is module-scoped).
+- The channel context copies every field from `users/{uid}` with the user's real values.
+  TypeScript only enforces that the *keys* exist; a field wired to the wrong source key
+  compiles clean and Phase 06b then generates against a wrong channel.
+- The non-goals: no query filters `accountId`, no ownership check compares it, no route
+  reads an account id from the request.
+
+Not automated, and the reason Phase 04 is still blocked: **everything above runs against
+mocked Firestore.** None of it proves the field reaches a real document, which is what the
+per-artifact check below is for.
 
 ---
 

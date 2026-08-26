@@ -2,8 +2,8 @@
 title: "Phase 05 — Account Context in the API"
 description: "Add the X-Account-Id header, verify membership once per request, and expose req.accountId."
 date: 2026-08-19
-last_updated: 2026-08-19
-status: "planned"
+last_updated: 2026-08-26
+status: "code-complete — not yet deployed"
 tags: ["multi-account", "phase-05", "api", "security"]
 ---
 
@@ -12,6 +12,49 @@ tags: ["multi-account", "phase-05", "api", "security"]
 **Size:** small in code, high in care. This is a new trust boundary.
 **Depends on:** Phase 04 verified.
 **Blocks:** Phase 06.
+
+---
+
+## Where this stands (2026-08-26)
+
+Built and tested; **not deployed**. Suite: 897 tests, 59 suites.
+
+| | |
+|---|---|
+| `code` on the error contract (4 files) | done — `tests/unit/error-code-contract.behaviour.test.ts` |
+| `accountMiddleware`, mounted on all 7 routers | done — `tests/unit/auth-coverage.test.ts` pins the mount AND the order |
+| `resolveAccountFromProject` on the SSE route | done |
+| Tombstone → 410, pointer cleared | done |
+| CORS `X-Account-Id` | done |
+| `.claude/rules/api-design.md` updated | done, same change as required |
+| Rate limiter keyed on `userId` | **NOT done — see below** |
+| Deployed + browser CORS check | **outstanding** |
+
+**"Depends on: Phase 04 verified" gates the DEPLOY, not the build.** This phase only makes
+`req.accountId` available; nothing reads it until Phase 06, so it is inert against
+un-backfilled data.
+
+### Two corrections to this document
+
+**1. The read-only fallback cannot ship in this phase.** The rule below says to allow the
+header-less fallback for `GET` and return 400 for anything that mutates. No client sends the
+header yet — `momentumx-fe` contains no reference to it until Phase 07 — so shipping that
+would 400 every generation and every save on deploy. And the risk it guards against ("the
+user believes they are in channel B while every write lands in channel A") cannot occur
+here: every user has exactly one account, so the fallback resolves to the same channel the
+header would have named.
+
+Shipped permissive, behind `FALLBACK_ALLOWS_WRITES` in `src/middleware/account.ts`.
+**Phase 07 flips it to `false`** in the commit that makes the frontend send the header. Both
+settings are already covered by tests, so the flip is one line.
+
+**2. Keying the rate limiter on `userId` is not a "while you're in the file" change.**
+`app.use(rateLimiter)` runs at `app.ts:49`, before `app.use(rootRouter)` at `:61`, and
+`authMiddleware` lives *inside* the routers — so `req.userId` is always `undefined` when the
+key is computed. A `keyGenerator: (req) => req.userId || req.ip` compiles, passes every
+test, and silently stays per-IP forever. Doing it properly means moving the limiter after
+auth (leaving the unauthenticated surface unlimited) or mounting a second per-user limiter
+at router level. Deferred to Phase 09, with the reasoning recorded in `rate_limit.ts`.
 
 ---
 

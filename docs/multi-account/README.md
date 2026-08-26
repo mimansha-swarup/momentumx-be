@@ -2,7 +2,7 @@
 title: "Multi-Account — Plan Overview"
 description: "Splitting login from channel so one person can manage and share several YouTube channels, each with its own data."
 date: 2026-08-19
-last_updated: 2026-08-24
+last_updated: 2026-08-26
 status: "planned"
 tags: ["multi-account", "tenancy", "migration", "plan"]
 ---
@@ -160,23 +160,23 @@ These are the dangerous ones. Each works today and stops working quietly.
 
 Each phase is a separate document and is meant to be shippable on its own.
 
-| # | Phase | What it does | Reversible? |
-|---|---|---|---|
-| [00](./phase-00-secure-database-rules.md) | Secure the database rules | Replace expired test-mode rules with an explicit deny-all, in the repo | Yes |
-| [01](./phase-01-fix-foundations.md) | Fix foundations | Repair the bugs that make a safe migration impossible, and close the unvalidated-resource holes | Yes |
-| [01b](./phase-01b-generation-seam.md) | **The generation seam** | One place where locking, preconditions, credits and telemetry attach to a model call | Yes |
-| [02](./phase-02-accounts-schema-and-indexes.md) | Accounts schema and indexes | Create the `accounts` collection and deploy every new index **before** any code needs them | Yes |
-| [03](./phase-03-dual-write-account-tag.md) | Dual-write the account tag | Start stamping `accountId` on new records; nothing reads it yet | Yes |
-| [04](./phase-04-backfill.md) | Backfill existing data | Copy `createdBy` into `accountId` on every existing record | Yes |
-| [05](./phase-05-account-context-api.md) | Account context in the API | `X-Account-Id` header, membership check, `req.accountId`, the error-code contract | Yes |
-| [05a](./phase-05a-packaging-deterministic-key.md) | **Packaging: one deterministic key** | Every packaging doc keyed on `videoProjectId`; delete the lookup query | Yes, until its delete commit |
-| [06](./phase-06-switch-reads-and-permissions.md) | Switch reads and permissions | Queries and permission checks move from `createdBy` to `accountId` | Yes, until Phase 07 |
-| [06a](./phase-06a-accounts-api.md) | **The Accounts API** | List, create and activate channels — the endpoints the switcher talks to | Yes |
-| [06b](./phase-06b-move-channel-context.md) | Move channel context to the account | Generation reads niche/competitors/website from the channel, not the person | ⚠️ Step 4 is a second door |
-| [07](./phase-07-frontend-account-switching.md) | Frontend account state and switching | Switcher UI, add a channel, per-channel onboarding | ⚠️ **One-way door** |
-| [08](./phase-08-credits-and-metering.md) | Credits and metering | Monthly allowance, price list, check-and-consume through the seam | Yes |
-| [09](./phase-09-sharing-invites-and-roles.md) | Sharing: invites and roles | Invite links, role enforcement, read-only UI | Yes |
-| [10](./phase-10-cleanup.md) | Cleanup | Delete the old indexes and the legacy profile fields | No (final) |
+| # | Phase | What it does | Reversible? | Status |
+|---|---|---|---|---|
+| [00](./phase-00-secure-database-rules.md) | Secure the database rules | Replace expired test-mode rules with an explicit deny-all, in the repo | Yes | ✅ done |
+| [01](./phase-01-fix-foundations.md) | Fix foundations | Repair the bugs that make a safe migration impossible, and close the unvalidated-resource holes | Yes | ✅ done |
+| [01b](./phase-01b-generation-seam.md) | **The generation seam** | One place where locking, preconditions, credits and telemetry attach to a model call | Yes | 🟡 partial — 2/11 calls |
+| [02](./phase-02-accounts-schema-and-indexes.md) | Accounts schema and indexes | Create the `accounts` collection and deploy every new index **before** any code needs them | Yes | ✅ done |
+| [03](./phase-03-dual-write-account-tag.md) | Dual-write the account tag | Start stamping `accountId` on new records; nothing reads it yet | Yes | 🟡 merged, **not deployed** |
+| [04](./phase-04-backfill.md) | Backfill existing data | Copy `createdBy` into `accountId` on every existing record | Yes | 🟡 script written, not run |
+| [05](./phase-05-account-context-api.md) | Account context in the API | `X-Account-Id` header, membership check, `req.accountId`, the error-code contract | Yes | 🟡 built, not deployed |
+| [05a](./phase-05a-packaging-deterministic-key.md) | **Packaging: one deterministic key** | Every packaging doc keyed on `videoProjectId`; delete the lookup query | Yes, until its delete commit | — |
+| [06](./phase-06-switch-reads-and-permissions.md) | Switch reads and permissions | Queries and permission checks move from `createdBy` to `accountId` | Yes, until Phase 07 | — |
+| [06a](./phase-06a-accounts-api.md) | **The Accounts API** | List, create and activate channels — the endpoints the switcher talks to | Yes | — |
+| [06b](./phase-06b-move-channel-context.md) | Move channel context to the account | Generation reads niche/competitors/website from the channel, not the person | ⚠️ Step 4 is a second door | — |
+| [07](./phase-07-frontend-account-switching.md) | Frontend account state and switching | Switcher UI, add a channel, per-channel onboarding | ⚠️ **One-way door** | — |
+| [08](./phase-08-credits-and-metering.md) | Credits and metering | Monthly allowance, price list, check-and-consume through the seam | Yes | — |
+| [09](./phase-09-sharing-invites-and-roles.md) | Sharing: invites and roles | Invite links, role enforcement, read-only UI | Yes | — |
+| [10](./phase-10-cleanup.md) | Cleanup | Delete the old indexes and the legacy profile fields | No (final) | — |
 
 Not a phase, but kept alongside them:
 [known-defects.md](./known-defects.md) — bugs found while reviewing this plan that are **not**
@@ -313,8 +313,7 @@ the plan (07) lands on the codebase with the least coverage. Phase 07 names the 
 one test over the root reducer and the account-switch reset, which is the only cheap way to
 catch the two failure modes that fail *open* and are invisible until a second channel exists.
 
-**Backend suite status, measured 2026-08-24:** 330 tests, 20 suites, **all passing, six
-consecutive runs clean.** An earlier draft of Phase 01 claimed the suite "fails about one
+**Backend suite status, measured 2026-08-26:** 897 tests, 59 suites, **all passing.** An earlier draft of Phase 01 claimed the suite "fails about one
 run in three". That is **not currently reproducible** — thirteen consecutive clean runs
 have now been observed across two sessions. The claim has been removed rather than
 repeated. If intermittent failures return, treat it as a Phase 01 blocker for the reason

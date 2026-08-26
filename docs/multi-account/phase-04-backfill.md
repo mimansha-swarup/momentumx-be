@@ -2,8 +2,8 @@
 title: "Phase 04 — Backfill Existing Data"
 description: "Copy createdBy into accountId on every record that existed before Phase 03."
 date: 2026-08-19
-last_updated: 2026-08-19
-status: "planned"
+last_updated: 2026-08-26
+status: "script written — not run (blocked on Phase 03 deploy)"
 tags: ["multi-account", "phase-04", "migration"]
 ---
 
@@ -12,6 +12,39 @@ tags: ["multi-account", "phase-04", "migration"]
 **Size:** small script, careful operation.
 **Depends on:** Phase 03 deployed and running (so new records are already tagged).
 **Blocks:** Phase 06.
+
+---
+
+## Where this stands (2026-08-26)
+
+The script exists and is tested. **Nothing has been run against any database.**
+
+| | |
+|---|---|
+| `src/scripts/backfill-account-id.ts` | written — backfill, `--dry-run` and `--verify` modes |
+| `tests/unit/scripts/backfill-account-id.behaviour.test.ts` | 28 tests, each destructive path canary-verified |
+| Managed export taken, and restored once into a scratch project | **outstanding — step 0, do it first** |
+| Counts re-measured immediately before the run | **outstanding** (the 2026-08-24 numbers below are stale by then) |
+| Backfill run | **blocked**: Phase 03 is merged, not deployed |
+| Verification pass green | **outstanding** |
+
+The block is real, not procedural. Phase 03 is live on no deploy artifact yet, and the SSE
+script route is served only by Render — running this single pass now would tag whatever
+exists and walk past every script document written between the run and the deploy.
+
+The script refuses to start on an empty owner map for the same reason: with no accounts,
+every document would quarantine as an orphan and the run would still look like it "worked".
+
+### Running it
+
+```bash
+gcloud firestore export gs://video-topic-5bace-migration/pre-phase04-$(date +%Y%m%d)
+node dist/scripts/backfill-account-id.js --dry-run     # counts only, writes nothing
+node dist/scripts/backfill-account-id.js
+node dist/scripts/backfill-account-id.js --verify      # exits non-zero on mismatched/missing
+```
+
+`--collection=ideas` scopes any mode to one collection.
 
 ---
 

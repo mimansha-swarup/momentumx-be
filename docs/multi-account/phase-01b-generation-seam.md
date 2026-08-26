@@ -2,8 +2,8 @@
 title: "Phase 01b — The Generation Seam"
 description: "One place where locking, preconditions, credits and telemetry attach to a model call."
 date: 2026-08-24
-last_updated: 2026-08-24
-status: "planned"
+last_updated: 2026-08-26
+status: "partial — 2 of 11 model calls routed"
 tags: ["multi-account", "phase-01b", "architecture", "generation"]
 ---
 

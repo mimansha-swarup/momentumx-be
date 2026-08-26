@@ -2,8 +2,8 @@
 title: "Phase 01 — Fix Foundations"
 description: "Repair the bugs that make a safe tenancy migration impossible, before any of it starts."
 date: 2026-08-19
-last_updated: 2026-08-19
-status: "planned"
+last_updated: 2026-08-26
+status: "complete"
 tags: ["multi-account", "phase-01", "correctness"]
 ---
 

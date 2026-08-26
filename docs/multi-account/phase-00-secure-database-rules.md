@@ -2,8 +2,8 @@
 title: "Phase 00 — Secure the Database Rules"
 description: "Replace expired test-mode Firestore rules with an explicit deny-all, and bring them into the repo."
 date: 2026-08-19
-last_updated: 2026-08-19
-status: "planned"
+last_updated: 2026-08-26
+status: "complete"
 tags: ["multi-account", "phase-00", "security"]
 ---
 
