@@ -40,7 +40,6 @@ const MERGEABLE = [
     "createdBy",
     "accountId",
     "videoProjectId",
-    "createdAt",
 ];
 const millis = (value) => {
     if (!value)
@@ -71,10 +70,43 @@ export const mergePackaging = (legacy, target) => {
     const legacyNewer = millis(legacy.updatedAt) > millis(target.updatedAt);
     const merged = { ...target };
     const collisions = [];
+    // The two timestamps are resolved here rather than in the loop below, because
+    // neither one is a collision and both have a right answer that "newer
+    // updatedAt wins" gets wrong.
+    //
+    // `createdAt` was in MERGEABLE, and both documents ALWAYS have one — the
+    // generate path stamps it (packaging.repository.ts) and so does the save path
+    // (packaging.service.ts) — and they were written at different moments, so they
+    // always differ. Every merged pair therefore reported a `createdAt` collision,
+    // the script exited 2, and the phase's own gate ("collisions must be zero or
+    // triaged") could never clear. The older stamp is the true creation time.
+    const created = [legacy.createdAt, target.createdAt].filter(Boolean);
+    if (created.length > 0) {
+        merged.createdAt = created.sort((a, b) => millis(a) - millis(b))[0];
+    }
+    // And keep the later `updatedAt`, so a document that just absorbed the newer
+    // half does not claim to be older than the content it now holds.
+    if (legacyNewer)
+        merged.updatedAt = legacy.updatedAt;
+    // Mirrors `PackagingService.isEmptyField`, INCLUDING its shorts case — that is
+    // the one field whose empty value is an object, and an object is not caught by
+    // any of the generic checks.
+    //
+    // `upsertGeneratedItem` scaffolds a new document with
+    // `shorts: { segments: [], totalDuration: "" }`, so generating a *title* leaves
+    // an empty shorts object on the deterministic document. Without this case that
+    // scaffold counts as a value: it collides with the legacy document's real
+    // Shorts script and, whenever the scaffold is the newer of the two, wins — and
+    // the user's Shorts script is gone. Every other empty the scaffold writes
+    // (`titles: []`, `description: ""`, `thumbnail: []`) is already covered, which
+    // is what makes this one easy to miss.
     const empty = (v) => v === undefined ||
         v === null ||
         v === "" ||
-        (Array.isArray(v) && v.length === 0);
+        (Array.isArray(v) && v.length === 0) ||
+        (typeof v === "object" &&
+            Array.isArray(v.segments) &&
+            v.segments.length === 0);
     for (const field of MERGEABLE) {
         const a = legacy[field];
         const b = target[field];
@@ -90,6 +122,25 @@ export const mergePackaging = (legacy, target) => {
         if (legacyNewer)
             merged[field] = a;
     }
+    // `itemStatuses` stays in the loop above so a difference is still REPORTED, but
+    // its value is decided here, because resolving a map wholesale by recency is
+    // wrong in a way the loop cannot express. The scaffold carries
+    // `description: "not_started"` while the legacy document carries
+    // `description: "completed"`, so a merely-newer scaffold stamps "not_started"
+    // over an item whose content this very merge just carried across. The UI then
+    // shows a generated description as missing and the user regenerates over their
+    // own work — the loss arrives later, by their own hand, which is the hardest
+    // kind to trace back to a migration. Per item, anything beats "not_started".
+    const statusesOf = (d) => (d.itemStatuses ?? {});
+    const items = { ...statusesOf(target), ...statusesOf(legacy) };
+    for (const item of Object.keys(items)) {
+        const [first, second] = legacyNewer
+            ? [statusesOf(legacy)[item], statusesOf(target)[item]]
+            : [statusesOf(target)[item], statusesOf(legacy)[item]];
+        items[item] = first && first !== "not_started" ? first : (second ?? first);
+    }
+    if (Object.keys(items).length > 0)
+        merged.itemStatuses = items;
     return { merged, collisions };
 };
 export const rekeyPackaging = async ({ dryRun = false } = {}) => {
@@ -162,8 +213,14 @@ export const rekeyPackaging = async ({ dryRun = false } = {}) => {
             await batch.commit();
         }
         cursor = snap.docs[snap.docs.length - 1].id;
+        // Counts only. This used to also write `lastCursor`, which nothing ever read
+        // — unlike `backfill-account-id.ts`, this job restarts from the beginning
+        // every time, and the stored cursor implied a resume that did not exist.
+        // Restarting is safe rather than merely tolerable: an already-keyed document
+        // is counted `alreadyKeyed` and a tombstoned one is `skipped`, so a rerun
+        // only costs reads.
         if (!dryRun)
-            await progress.set({ lastCursor: cursor, ...counts }, { merge: true });
+            await progress.set({ ...counts }, { merge: true });
         if (snap.size < PAGE_SIZE)
             break;
     }

@@ -119,6 +119,32 @@ For each packaging document whose id ≠ its `videoProjectId`:
 1. Read the target `doc(videoProjectId)`. If it already exists, **merge field-by-field
    rather than overwrite** — persist-on-generate may have created it for a project that also
    has a legacy save document. Prefer the newer `updatedAt` per field; log every collision.
+   **The timestamps are not mergeable fields.** Both documents always carry a `createdAt`
+   — both write paths stamp one — and they always differ, so treating it as content made
+   every merged pair report a collision and the run could never exit 0. Take the *earlier*
+   `createdAt` and the *later* `updatedAt`, and count neither as a collision.
+
+   **Two more fields where "newer wins" is the wrong rule, both for the same reason** — the
+   deterministic document is often a *scaffold*. `upsertGeneratedItem` creates it with every
+   item blank, so generating a title alone leaves a document whose other fields are empty
+   but whose `updatedAt` is recent:
+
+   - **`shorts`.** Its empty value is an *object* — `{ segments: [], totalDuration: "" }` —
+     so the generic emptiness checks (`""`, `[]`, null) miss it and the scaffold counts as a
+     value. It then collides with the legacy document's real Shorts script and wins whenever
+     it is the newer of the two. The rule has to match `PackagingService.isEmptyField`,
+     which already special-cases exactly this field; every other empty the scaffold writes
+     (`titles: []`, `description: ""`, `thumbnail: []`) is covered generically, which is what
+     makes this one easy to miss.
+   - **`itemStatuses`.** A map cannot be resolved wholesale by recency: the newer scaffold's
+     `description: "not_started"` lands on a document whose description this same merge just
+     carried across from the legacy half. The item then reads as ungenerated and the user
+     regenerates over their own text — the loss arrives later, by their own hand, which is the
+     hardest kind to trace back here. Resolve it per item: anything beats `not_started`, and
+     two real statuses still go to the newer document.
+
+   `isStale`/`staleReason` and `selectedThumbnailIndex` have the same shape but are flags,
+   not content — they stay on the recency rule and surface in the collision log for triage.
 2. Write the merged document to `doc(videoProjectId)`.
 3. Update `videoProjects/{videoProjectId}.packagingId` to the new id.
 4. **Do not delete the old document in the same pass.** Mark it `supersededBy:
@@ -126,7 +152,12 @@ For each packaging document whose id ≠ its `videoProjectId`:
    collision log is clean — that is the rollback path.
 
 Record the run in `migrations/packaging-rekey` the same way Phase 04 records its passes:
-`{ scanned, rekeyed, merged, collisions, completedAt }`.
+`{ scanned, rekeyed, merged, collisions, alreadyKeyed, skipped, completedAt }`.
+
+Unlike Phase 04 this job does **not** store a resume cursor and restarts from the
+beginning each time. That is safe rather than merely tolerable: an already-keyed
+document counts `alreadyKeyed` and a superseded one counts `skipped`, so a re-run only
+costs reads.
 
 ---
 
