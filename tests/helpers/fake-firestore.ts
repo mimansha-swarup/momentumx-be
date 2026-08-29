@@ -57,7 +57,13 @@ export class FakeFirestore {
   /** collection → id → document. Public so tests can seed and assert directly. */
   readonly data = new Map<string, Map<string, Doc>>();
 
-  private col(name: string): Map<string, Doc> {
+  /**
+   * Collections are keyed by their FULL path, so `accounts/{id}/context` is just
+   * another entry. That is what makes sub-collections behave: a doc ref resolves
+   * its children through here rather than owning a detached map, which is how an
+   * earlier version silently dropped every sub-collection write.
+   */
+  col(name: string): Map<string, Doc> {
     if (!this.data.has(name)) this.data.set(name, new Map());
     return this.data.get(name)!;
   }
@@ -73,7 +79,7 @@ export class FakeFirestore {
   }
 
   collection(name: string) {
-    return new FakeQuery(this.col(name), name);
+    return new FakeQuery(this, name);
   }
 
   batch() {
@@ -114,10 +120,15 @@ export interface FakeTxn {
 
 class FakeDocRef {
   constructor(
-    private store: Map<string, Doc>,
+    private owner: FakeFirestore,
+    private collectionPath: string,
     readonly id: string,
     readonly path: string
   ) {}
+
+  private get store(): Map<string, Doc> {
+    return this.owner.col(this.collectionPath);
+  }
 
   setSync(data: Doc, opts?: { merge?: boolean }) {
     const prior = opts?.merge ? (this.store.get(this.id) ?? {}) : {};
@@ -153,8 +164,7 @@ class FakeDocRef {
   }
 
   collection(name: string) {
-    // Sub-collections are flattened; nothing under test queries across them.
-    return new FakeQuery(new Map(), `${this.path}/${name}`);
+    return new FakeQuery(this.owner, `${this.path}/${name}`);
   }
 }
 
@@ -191,12 +201,16 @@ class FakeQuery {
   private after?: unknown[];
 
   constructor(
-    private store: Map<string, Doc>,
+    private owner: FakeFirestore,
     private name: string
   ) {}
 
+  private get store(): Map<string, Doc> {
+    return this.owner.col(this.name);
+  }
+
   private clone(): FakeQuery {
-    const q = new FakeQuery(this.store, this.name);
+    const q = new FakeQuery(this.owner, this.name);
     q.filters = [...this.filters];
     q.orders = [...this.orders];
     q.cap = this.cap;
@@ -207,7 +221,22 @@ class FakeQuery {
 
   doc(id?: string) {
     const key = id ?? `auto-${this.store.size + 1}`;
-    return new FakeDocRef(this.store, key, `${this.name}/${key}`);
+    return new FakeDocRef(this.owner, this.name, key, `${this.name}/${key}`);
+  }
+
+  /**
+   * The `count()` aggregation, which `projectCount` uses on every channel in the
+   * switcher. Modelled because the alternative — reading whole project documents
+   * and taking `.length` — is precisely the thing the repository avoids, and a
+   * fake that only supported `get()` would quietly bless it.
+   */
+  count() {
+    return {
+      get: async () => {
+        const { size } = await this.get();
+        return { data: () => ({ count: size }) };
+      },
+    };
   }
 
   where(field: unknown, op: string, value: unknown) {
@@ -280,7 +309,7 @@ class FakeQuery {
       const data = this.projection
         ? Object.fromEntries(this.projection.filter((f) => f in d).map((f) => [f, d[f]]))
         : d;
-      return snap(id, data, new FakeDocRef(this.store, id, `${this.name}/${id}`));
+      return snap(id, data, new FakeDocRef(this.owner, this.name, id, `${this.name}/${id}`));
     });
 
     return { empty: docs.length === 0, size: docs.length, docs };

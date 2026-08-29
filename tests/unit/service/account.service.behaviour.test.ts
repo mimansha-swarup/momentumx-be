@@ -64,7 +64,10 @@ const make = (user: Record<string, unknown> | null, members: unknown[] = []) => 
     }),
   } as unknown as jest.Mocked<UserRepository>;
 
-  return { service: new AccountService(repo, userRepo), repo, userRepo };
+  // Only `listAccounts` counts projects, and nothing in this file lists.
+  const projectRepo = { countForAccount: jest.fn(async () => 0) } as never;
+
+  return { service: new AccountService(repo, userRepo, projectRepo), repo, userRepo, projectRepo };
 };
 
 // No cache to clear any more. `ensureDefaultAccount` memoized uid → accountId for
@@ -251,7 +254,10 @@ describe("ensureDefaultAccount — never mints twice", () => {
   // to hold now is that a SECOND service, sharing only the database, agrees.
   it("a second service sharing the same user record resolves the same account", async () => {
     const first = make({});
-    const second = { ...first, service: new AccountService(first.repo, first.userRepo) };
+    const second = {
+      ...first,
+      service: new AccountService(first.repo, first.userRepo, first.projectRepo),
+    };
 
     const a = await first.service.ensureDefaultAccount("uid-123");
     const b = await second.service.ensureDefaultAccount("uid-123");

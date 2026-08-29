@@ -51,6 +51,24 @@ export interface IAccount {
   updatedAt: Timestamp;
 }
 
+/** One row of the switcher (Phase 06a). */
+export interface IAccountSummary {
+  id: string;
+  name: string;
+  handle: string | null;
+  role: AccountRole;
+  /** The switcher routes on this: false sends the user to onboarding. */
+  isOnboarded: boolean;
+  /**
+   * Live videos in this channel. Deliberately on the LIST, not behind a click —
+   * it is what makes a channel whose documents went missing visible at a glance.
+   */
+  projectCount: number;
+  completeness: { score: number; missing: string[] } | null;
+  /** Phase 08. Null for everyone until then, and null unless I am the billing owner. */
+  credits: { remaining: number; resetsAt: string } | null;
+}
+
 /**
  * `accounts/{accountId}/context/channel` — read only when generating.
  *

@@ -2,12 +2,40 @@
 title: "Phase 06a — The Accounts API"
 description: "List, create, and activate channels. The endpoints the switcher talks to."
 date: 2026-08-24
-last_updated: 2026-08-24
-status: "planned"
+last_updated: 2026-08-30
+status: "code-complete — not deployed"
 tags: ["multi-account", "phase-06a", "api"]
 ---
 
 # Phase 06a — The Accounts API
+
+## Where this stands (2026-08-30)
+
+Code done, **not deployed**. Suite: 954 tests, 61 suites, green; `tsc` clean; `dist/` current.
+
+| | |
+|---|---|
+| All six endpoints | done |
+| `buildOwnedAccount` — the one writer of the three membership fields | done, both creation paths use it |
+| `GET`/`POST` exempt from `accountMiddleware` | done, pinned by a named allowlist in `auth-coverage.test.ts` |
+| `isOnboarded` / `projectCount` / `role` | done, 32 service tests + 8 route tests |
+| `.claude/rules/api-design.md` updated | done, same commit |
+| **`isOnboarded` can only become true once Phase 06b lands** | **see below — a real gap, not a defect** |
+
+**The one thing to know before deploying this alone.** `isOnboarded` is derived from the
+ACCOUNT's context subcollection, which is correct and is the shape Phase 06b makes
+authoritative. But `PATCH /v1/user/onboarding` still writes the USER record, so nothing
+writes that subcollection after creation. A channel created by `POST /v1/accounts` therefore
+reports `isOnboarded: false` **forever**, and Phase 07's switcher would route the user back
+to onboarding every time they pick it.
+
+Sourcing it from the user record instead is not a fix — that makes every channel report the
+first one's answers, so a channel created seconds ago claims to be onboarded and the
+switcher drops the user on an empty dashboard. Both halves of that trade are wrong, and the
+right one is Phase 06b, which is already a hard gate before Phase 07. **Do not deploy 06a
+without 06b.**
+
+---
 
 **Size:** small — one router, one controller, one service, one repository.
 **Depends on:** Phase 06.

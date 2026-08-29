@@ -45,6 +45,7 @@ import PackagingController from "./controller/packaging.controller.js";
 import ResearchController from "./controller/research.controller.js";
 import ScriptController from "./controller/script.controller.js";
 import UserController from "./controller/user.controller.js";
+import AccountController from "./controller/account.controller.js";
 import VideoProjectController from "./controller/video-project.controller.js";
 
 // --- Repositories ----------------------------------------------------------
@@ -63,7 +64,11 @@ export const videoProjectRepository = new VideoProjectRepository();
 // arrives on the request as `req.accountId`, already membership-checked. What is
 // left is the lazy first-mint and the tombstone repair, both used only by
 // `accountMiddleware`.
-export const accountService = new AccountService(accountRepository, userRepository);
+export const accountService = new AccountService(
+  accountRepository,
+  userRepository,
+  videoProjectRepository
+);
 
 export const videoProjectService = new VideoProjectService(
   videoProjectRepository,
@@ -124,6 +129,7 @@ export const userService = new UserService(userRepository);
 
 // --- Controllers -----------------------------------------------------------
 
+export const accountController = new AccountController(accountService);
 export const hooksController = new HooksController(hooksService);
 export const ideaController = new IdeaController(contentService);
 export const packagingController = new PackagingController(packagingService);

@@ -17,7 +17,34 @@ import path from "path";
  *  3. Any route registered BEFORE those lines must carry inline equivalents —
  *     the SSE route uses `sseAuthMiddleware` + `resolveAccountFromProject`,
  *     because EventSource cannot send the header.
+ *  4. …with ONE named exception per route, listed in ACCOUNT_EXEMPT below. The
+ *     exemption is from the ACCOUNT half only; auth is never optional.
  */
+
+/**
+ * Routes that deliberately run without account context, named one at a time.
+ *
+ * An allowlist rather than a rule, because there is no property that
+ * distinguishes "legitimately has no channel yet" from "someone forgot the
+ * middleware" — both look like a route above the mount. Naming each one means
+ * adding a third is a visible edit to this file with a reason attached, which is
+ * the whole point: applying the middleware unevenly is the dangerous mistake in
+ * Phase 05, and it is invisible until Phase 06 makes reads account-scoped.
+ *
+ * Shrink-only. If a route stops needing the exemption, delete the entry.
+ */
+const ACCOUNT_EXEMPT: Record<string, { route: string; why: string }[]> = {
+  "account.route.ts": [
+    {
+      route: 'router.get("/"',
+      why: "the switcher's list — a brand-new user has no channel to name in a header",
+    },
+    {
+      route: 'router.post("/"',
+      why: "creates the channel whose id the header would have to carry",
+    },
+  ],
+};
 const ROUTES_DIR = path.join(process.cwd(), "src", "routes", "v1");
 
 const stripComments = (source: string): string =>
@@ -97,10 +124,24 @@ describe("auth + account coverage — every /v1 router mounts both middlewares",
       it("guards every route registered before those lines with inline equivalents", () => {
         const authAt = at(ROUTER_LEVEL_AUTH);
         const accountAt = at(ROUTER_LEVEL_ACCOUNT);
+        const exempt = ACCOUNT_EXEMPT[file] ?? [];
 
         routeStatements(source).forEach(({ text, index }) => {
+          // Auth has no exemptions, in any file, ever.
           if (authAt < 0 || index < authAt) expect(text).toMatch(INLINE_AUTH);
-          if (accountAt < 0 || index < accountAt) expect(text).toMatch(INLINE_ACCOUNT);
+
+          if (accountAt >= 0 && index >= accountAt) return;
+          if (exempt.some((e) => text.startsWith(e.route))) return;
+          expect(text).toMatch(INLINE_ACCOUNT);
+        });
+      });
+
+      it("does not carry a stale account exemption", () => {
+        // The allowlist shrinks, never grows silently. An entry naming a route
+        // this file no longer registers is a licence sitting unused, and the next
+        // person to add `router.get("/")` here inherits it without knowing.
+        (ACCOUNT_EXEMPT[file] ?? []).forEach((entry) => {
+          expect(source).toContain(entry.route);
         });
       });
     });

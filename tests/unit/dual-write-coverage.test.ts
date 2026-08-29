@@ -87,6 +87,13 @@ describe("phase 06 — permissions are decided by the account, never the author"
   });
 });
 
+const stripComments = (source: string): string =>
+  source
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .split("\n")
+    .map((line) => line.replace(/\/\/.*$/, ""))
+    .join("\n");
+
 describe("phase 05 — the account id enters at exactly one place", () => {
   it("only accountMiddleware reads an account id from the request", () => {
     // Phase 03's version of this asserted NOTHING read the header. Phase 05 is
@@ -107,7 +114,11 @@ describe("phase 05 — the account id enters at exactly one place", () => {
           else if (entry.name.endsWith(".ts")) {
             const rel = path.relative(process.cwd(), full);
             if (rel === ENTRY_POINT) continue;
-            const source = fs.readFileSync(full, "utf8");
+            // Comments stripped first. This scans for CODE that reads an
+            // account id from the request; a comment explaining why a route is
+            // exempt from the account middleware necessarily names the header,
+            // and flagging that turns documentation into a build failure.
+            const source = stripComments(fs.readFileSync(full, "utf8"));
             if (/x-account-id/i.test(source) || /req\.(body|query|params|headers)\W+accountId/.test(source)) {
               offenders.push(rel);
             }

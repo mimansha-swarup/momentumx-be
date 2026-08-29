@@ -56,6 +56,19 @@ Order matters: `accountMiddleware` reads `req.userId`, so mounted first it would
 account for `undefined` on every request. Both mounts, and their order, are pinned by
 `tests/unit/auth-coverage.test.ts`.
 
+**Account-context exception:** `GET /v1/accounts` and `POST /v1/accounts` mount
+`authMiddleware` but NOT `accountMiddleware`. You cannot present an `X-Account-Id` for a
+channel you do not have yet, and a brand-new user's first list call has no channel at all —
+with the middleware in front, that request falls into the header-less fallback, which mints
+a channel as a side effect of *reading the list*, and once Phase 07 flips
+`FALLBACK_ALLOWS_WRITES` to `false` it rejects `POST /v1/accounts` outright: the one call
+whose purpose is producing the id the header needs.
+
+The exemption covers those two COLLECTION routes only. Everything under `/:id` sits below
+the mount and is account-checked like every other route. Both are still authenticated, and
+both scope to `req.userId`. `tests/unit/auth-coverage.test.ts` names them in a shrink-only
+allowlist, so a third cannot be added without an explicit edit and a written reason.
+
 **SSE exception:** `GET /v1/scripts/stream/:projectId` uses `?token=` query param.
 Reason: browser EventSource API cannot send Authorization headers.
 The token is verified by `sseAuthMiddleware` (from `src/middleware/auth.ts`), applied per-route before the controller:
@@ -258,6 +271,17 @@ Snapshot of the API surface. When exact behavior matters, verify against `src/ro
 
 ```
 /v1/health                     — unauthenticated health check (registered in index.ts)
+
+/v1/accounts                   — channels (Phase 06a)
+  GET   /                      — the switcher's list + activeAccountId.
+                                 EXEMPT FROM accountMiddleware (see below)
+  POST  /                      — create a channel. EMPTY BODY, deliberately —
+                                 onboarding runs against the new id afterwards.
+                                 EXEMPT FROM accountMiddleware (see below)
+  GET   /:id                   — one channel in full (settings screen)
+  PATCH /:id                   — rename (owner only)
+  POST  /:id/activate          — set lastActiveAccountId. 204.
+  DELETE /:id                  — owner only; 400s on the user's LAST channel
 
 /v1/user
   POST  /onboarding/prefill    — infer {niche, targetAudience, brandName} from a channel URL (suggestions, not persisted)

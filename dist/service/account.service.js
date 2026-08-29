@@ -1,6 +1,23 @@
 import { randomUUID } from "crypto";
 import { firebase } from "../config/firebase.js";
 import { extractChannelInfo } from "../utlils/regex.js";
+import { computeProfileCompleteness } from "../utlils/profile.js";
+import { AccountForbidden, BadRequest, Gone, RoleForbidden } from "../utlils/errors.js";
+/**
+ * The same rule the frontend's `selectIsOnboarded` uses: a channel URL, OR a
+ * niche and a target audience. Onboarding accepts either, so both have to count.
+ *
+ * Read from the ACCOUNT's context, never the user record. The user record holds
+ * one channel's worth of answers, so sourcing it there would make every channel
+ * a user owns report the first one's state — a brand-new channel would claim to
+ * be onboarded the moment it was created.
+ */
+export const isChannelOnboarded = (context) => {
+    if (!context)
+        return false;
+    const filled = (v) => typeof v === "string" && v.trim().length > 0;
+    return filled(context.userName) || (filled(context.niche) && filled(context.targetAudience));
+};
 /**
  * `brandName → userTitle → handle(userName) → niche → "Untitled channel"`.
  *
@@ -32,6 +49,48 @@ export const deriveHandle = (userName) => {
     const info = extractChannelInfo(userName);
     return info?.type === "handle" ? `@${info.value}` : null;
 };
+/**
+ * The ONE writer of `memberUids`, `ownerUids` and `members`.
+ *
+ * Phase 02 and Phase 09 both state the rule, and the plan broke it at the design
+ * level: `ensureDefaultAccount` assembled all three inline, and Phase 06a's
+ * create endpoint would have been a second independent writer of the same three
+ * fields. Two writers is how you get a member who can query an account but has
+ * no role — the array and the map disagree, and nothing fails until someone
+ * checks a permission.
+ */
+export const buildOwnedAccount = (userId, channel) => ({
+    id: randomUUID(),
+    displayName: channel.displayName,
+    handle: channel.handle,
+    memberUids: [userId],
+    ownerUids: [userId],
+    members: {
+        [userId]: {
+            role: "owner",
+            // The sentinel resolves even nested in a map, so no `new Date()` here.
+            addedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        },
+    },
+    billingOwnerUid: userId,
+    deletedAt: null,
+});
+/** A brand-new channel knows nothing about itself until onboarding runs against it. */
+const EMPTY_CHANNEL_CONTEXT = {
+    userName: "",
+    channelId: "",
+    channelDescription: "",
+    userTitle: "",
+    niche: "",
+    targetAudience: "",
+    brandName: "",
+    website: "",
+    websiteContent: "",
+    competitors: [],
+    format: "talking_head",
+    purpose: "",
+    description: "",
+};
 /** The channel half of `users/{uid}`, moved verbatim. Phase 06b retires the original. */
 const toChannelContext = (user) => ({
     userName: user.userName ?? "",
@@ -49,9 +108,10 @@ const toChannelContext = (user) => ({
     description: user.description ?? "",
 });
 class AccountService {
-    constructor(repo, userRepo) {
+    constructor(repo, userRepo, projects) {
         this.repo = repo;
         this.userRepo = userRepo;
+        this.projects = projects;
         /**
          * Every user's `accountId` for this phase, minting one on first use.
          *
@@ -86,27 +146,150 @@ class AccountService {
                 await this.userRepo.update(userId, { lastActiveAccountId: found.id });
                 return found.id;
             }
-            const account = {
-                id: randomUUID(),
-                displayName: deriveDisplayName(user ?? {}),
-                handle: deriveHandle(user?.userName),
-                // Written together, by this one helper. A caller assembling these by hand
-                // is how you get a member who can query an account but has no role.
-                memberUids: [userId],
-                ownerUids: [userId],
-                members: {
-                    [userId]: {
-                        role: "owner",
-                        // The sentinel resolves even nested in a map, so no `new Date()` here.
-                        addedAt: firebase.firestore.FieldValue.serverTimestamp(),
-                    },
-                },
-                billingOwnerUid: userId,
-                deletedAt: null,
-            };
             // May return a DIFFERENT id: a concurrent first request can win the claim,
             // in which case nothing was written and we adopt theirs.
-            return this.repo.createWithContext(account, toChannelContext(user ?? {}));
+            return this.repo.createWithContext(buildOwnedAccount(userId, {
+                displayName: deriveDisplayName(user ?? {}),
+                handle: deriveHandle(user?.userName),
+            }), toChannelContext(user ?? {}));
+        };
+        /**
+         * Create an ADDITIONAL channel (Phase 06a).
+         *
+         * No body: onboarding already owns URL entry, prefill and confirmation, and it
+         * needs a real account id to send `X-Account-Id` against. Create-then-onboard
+         * reuses those endpoints unchanged, and leaves a visible half-configured channel
+         * in the switcher if the user abandons setup — which is what lets them come back
+         * to it or delete it. A one-shot create-with-URL would leave nothing behind.
+         *
+         * The context starts EMPTY, which is what makes the new channel report
+         * `isOnboarded: false`. Copying the user record in here would make every new
+         * channel claim the first channel's niche and audience.
+         */
+        this.createAccount = async (userId) => {
+            const account = buildOwnedAccount(userId, {
+                displayName: "Untitled channel",
+                handle: null,
+            });
+            const id = await this.repo.createAdditional(account, EMPTY_CHANNEL_CONTEXT);
+            const created = await this.repo.findById(id);
+            if (!created)
+                throw new Error("account create returned an unreadable id");
+            return created;
+        };
+        /**
+         * The switcher's list.
+         *
+         * `role`, `isOnboarded` and `projectCount` are the three fields that are not
+         * obvious and are each load-bearing:
+         *
+         * - `role` — Phase 09's read-only UI spans seven screens and there is no role
+         *   anywhere client-side today. This is where it comes from.
+         * - `isOnboarded` — the switcher ROUTES on it: pick a channel that is not
+         *   onboarded and you land on onboarding rather than the dashboard. Deriving it
+         *   client-side would put the same rule in two places that then drift.
+         * - `projectCount` — the cheapest defence against the silent-data-loss class
+         *   that Phase 04 and Phase 06 both name as their top risk. A user whose
+         *   projects vanished sees "0 videos" beside a channel they know has forty,
+         *   from the menu, without opening it. So does support, in one screenshot.
+         */
+        this.listAccounts = async (userId) => {
+            const memberships = (await this.repo.findByMember(userId)).filter((account) => !account.deletedAt);
+            return Promise.all(memberships.map(async (account) => {
+                const [context, projectCount] = await Promise.all([
+                    this.repo.readContext(account.id),
+                    this.projects.countForAccount(account.id),
+                ]);
+                return {
+                    id: account.id,
+                    name: account.displayName,
+                    handle: account.handle,
+                    role: account.members?.[userId]?.role ?? "viewer",
+                    isOnboarded: isChannelOnboarded(context),
+                    projectCount,
+                    completeness: computeProfileCompleteness(context ?? {}),
+                    // Phase 08. Null rather than absent, and null for everyone until then,
+                    // so the client renders one shape instead of branching on a missing key.
+                    credits: null,
+                };
+            }));
+        };
+        /**
+         * Which channel a fresh tab should open in.
+         *
+         * The stored pointer, but only if it still names a channel the caller can
+         * actually enter — a pointer at a tombstoned or departed channel would send the
+         * tab straight into a 410/403 loop. Falls back to the first live membership,
+         * which is what the middleware would have picked anyway.
+         */
+        this.resolveActiveAccountId = async (userId, accounts) => {
+            const user = (await this.userRepo.get(userId));
+            const pointer = user?.lastActiveAccountId;
+            if (typeof pointer === "string" && accounts.some((a) => a.id === pointer)) {
+                return pointer;
+            }
+            return accounts[0]?.id ?? null;
+        };
+        /** One channel in full, for the settings screen. Membership is the gate. */
+        this.getAccount = async (userId, accountId) => {
+            const account = await this.repo.findById(accountId);
+            if (!account)
+                throw AccountForbidden("Channel not found");
+            if (account.deletedAt)
+                throw Gone();
+            if (!account.memberUids?.includes(userId))
+                throw AccountForbidden();
+            return account;
+        };
+        /** Owner-only channel edits. */
+        this.updateAccount = async (userId, accountId, patch) => {
+            const account = await this.assertOwner(userId, accountId);
+            const displayName = patch.displayName?.trim();
+            if (!displayName)
+                throw BadRequest("displayName is required");
+            await this.repo.update(accountId, { displayName });
+            return { ...account, displayName };
+        };
+        /** Which channel a fresh tab should open in. */
+        this.activateAccount = async (userId, accountId) => {
+            const account = await this.repo.findById(accountId);
+            if (!account || account.deletedAt)
+                throw AccountForbidden("Channel not found");
+            if (!account.memberUids?.includes(userId))
+                throw AccountForbidden();
+            await this.userRepo.update(userId, { lastActiveAccountId: accountId });
+        };
+        /**
+         * Owner-only, and it refuses the user's LAST channel.
+         *
+         * Without that refusal the next request finds zero memberships and
+         * `ensureDefaultAccount` mints a fresh empty one — so "delete my channel"
+         * silently becomes "replace my channel with an empty one", and every document
+         * still carrying the old accountId is present, billable and unreachable.
+         */
+        this.deleteAccount = async (userId, accountId) => {
+            await this.assertOwner(userId, accountId);
+            const live = (await this.repo.findByMember(userId)).filter((a) => !a.deletedAt);
+            if (live.length <= 1) {
+                throw BadRequest("You cannot delete your only channel");
+            }
+            await this.repo.softDelete(accountId);
+            // Leaving the pointer on a tombstone costs the user a 410 on their next
+            // request before the middleware repairs it. Clearing it here is one write.
+            await this.clearActiveAccount(userId, accountId);
+        };
+        this.assertOwner = async (userId, accountId) => {
+            const account = await this.repo.findById(accountId);
+            if (!account)
+                throw AccountForbidden("Channel not found");
+            if (account.deletedAt)
+                throw Gone();
+            if (!account.memberUids?.includes(userId))
+                throw AccountForbidden();
+            if (!account.ownerUids?.includes(userId)) {
+                throw RoleForbidden("Only the channel owner can do this");
+            }
+            return account;
         };
         /**
          * Drop the user's pointer at a channel that can no longer be entered.

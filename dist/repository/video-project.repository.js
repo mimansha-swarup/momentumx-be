@@ -177,6 +177,23 @@ class VideoProjectRepository {
                 updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
             });
         };
+        /**
+         * How many live projects this channel holds (Phase 06a's `projectCount`).
+         *
+         * An aggregation, not a fetch: the switcher asks for this on every channel the
+         * user belongs to, and reading whole project documents to discard all but the
+         * length would scale that by the size of the biggest channel. `count()` is
+         * billed at a fraction of a read per index entry.
+         */
+        this.countForAccount = async (accountId) => {
+            const snap = await this.db
+                .collection(this.collection)
+                .where("accountId", "==", accountId)
+                .where("isDeleted", "==", false)
+                .count()
+                .get();
+            return snap.data().count;
+        };
         this.findByIdeaId = async (ideaId, accountId) => {
             // Equality-only filters (no orderBy) so no composite index is required.
             const snap = await this.db.collection(this.collection)

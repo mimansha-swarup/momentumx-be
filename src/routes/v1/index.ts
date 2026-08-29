@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express";
+import accountRouter from "./account.route.js";
 import userRouter from "./user.route.js";
 import ideasRouter from "./ideas.route.js";
 import scriptsRouter from "./scripts.route.js";
@@ -9,6 +10,7 @@ import hooksRouter from "./hooks.route.js";
 
 const router = Router();
 
+router.use("/accounts", accountRouter);
 router.use("/user", userRouter);
 router.use("/ideas", ideasRouter);
 router.use("/scripts", scriptsRouter);
