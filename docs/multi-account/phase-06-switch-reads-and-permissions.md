@@ -11,7 +11,7 @@ tags: ["multi-account", "phase-06", "security", "tenancy"]
 
 ## Where this stands (2026-08-29)
 
-Code done, **not deployed**. Suite: 893 tests, 59 suites, green; `tsc` clean; `dist/` current.
+Code done, **not deployed**. Suite: 902 tests, 59 suites, green; `tsc` clean; `dist/` current.
 
 | | |
 |---|---|
@@ -20,7 +20,7 @@ Code done, **not deployed**. Suite: 893 tests, 59 suites, green; `tsc` clean; `d
 | `RecordOwner` threaded controllers → services → repositories | done, `ownerOf(req)` at 7 controllers |
 | `accountIdCache` deleted | done, in this commit as Phase 05 required |
 | `eventService.capture` takes the owner | done — the last `ensureDefaultAccount` on a write path |
-| Cross-account suite over a Firestore fake | done, 20 tests |
+| Cross-account suite over a Firestore fake | done, 29 tests — every route in the list below, plus the body-supplied-id cases |
 | `.claude/rules/firestore-conventions.md` rewritten | done, same commit |
 | **Wipe the content collections** | **outstanding — do it before this deploys** |
 | **Deployed to Vercel + Render together** | **outstanding** |

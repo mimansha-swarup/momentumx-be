@@ -22,12 +22,31 @@ jest.mock("../../src/config/firebase", () =>
   require("../helpers/fake-firestore").mockFirebase()
 );
 
+// Nothing here may reach a model. Every assertion below is that a request is
+// refused BEFORE generating, so arriving at the model is itself the failure —
+// and left unmocked it is a very confusing one: the suite makes a real network
+// call, fails on an API key, and reports a 400 where a 403 was expected. It also
+// caught a positional-argument slip in this file's own fixtures, which is worth
+// keeping loud.
+jest.mock("../../src/utlils/ai", () => ({
+  generateStreamingContent: jest.fn(async () => {
+    throw new Error(
+      "reached the model — an ownership check did not run before generating"
+    );
+  }),
+  collectJson: jest.fn(),
+}));
+
 import { FakeFirestore } from "../helpers/fake-firestore";
 import ContentRepository from "../../src/repository/content.repository";
 import VideoProjectRepository from "../../src/repository/video-project.repository";
 import PackagingRepository from "../../src/repository/packaging.repository";
 import HooksRepository from "../../src/repository/hooks.repository";
+import UserRepository from "../../src/repository/user.repository";
 import VideoProjectService from "../../src/service/video-project.service";
+import ContextService from "../../src/service/context.service";
+import ContentService from "../../src/service/content.service";
+import PackagingService from "../../src/service/packaging.service";
 import HooksService from "../../src/service/hooks.service";
 
 const db = (require("../../src/config/firebase") as { __db: FakeFirestore }).__db;
@@ -53,6 +72,14 @@ const ts = (millis: number) => ({
 
 beforeEach(() => {
   db.data.clear();
+
+  // `ContextService.assemble` reads the user record for channel context in the
+  // same Promise.all as the project lookup, so without these the generation paths
+  // reject with 404 "User not found" before the tenancy check can be observed.
+  db.seed("users", [
+    { id: uidOwner, niche: "cooking", targetAudience: "home cooks", lastActiveAccountId: ACC_A },
+    { id: uidMate, niche: "cooking", targetAudience: "home cooks", lastActiveAccountId: ACC_A },
+  ]);
 
   db.seed("ideas", [
     { id: "idea-a", title: "Cooking idea", createdBy: uidOwner, accountId: ACC_A, archived: false, createdAt: ts(1000) },
@@ -83,6 +110,29 @@ beforeEach(() => {
 });
 
 const ids = (rows: { id?: unknown }[]) => rows.map((r) => String(r.id)).sort();
+
+// Real repositories over the fake store, so a check that reads the wrong field
+// fails here rather than passing against a stub that never looked.
+const wire = () => {
+  const contentRepo = new ContentRepository();
+  const projectRepo = new VideoProjectRepository();
+  const packagingRepo = new PackagingRepository();
+  const hooksRepo = new HooksRepository();
+  const userRepo = new UserRepository();
+  const projects = new VideoProjectService(contentRepo && projectRepo, contentRepo, packagingRepo, hooksRepo);
+  const context = new ContextService(userRepo, contentRepo, hooksRepo, projects);
+  return {
+    projects,
+    context,
+    content: new ContentService(contentRepo, userRepo, projects),
+    packaging: new PackagingService(packagingRepo, projects, context),
+    hooks: new HooksService(hooksRepo, projects, context, {
+      run: async (_s: unknown, g: () => unknown) => g(),
+    } as never),
+  };
+};
+
+const forbidden = { statusCode: 403 };
 
 describe("listing one channel never returns the same user's other channel", () => {
   const content = () => new ContentRepository();
@@ -159,13 +209,21 @@ describe("reaching another channel's document by id is refused", () => {
     );
 
   it("a project", async () => {
-    await expect(vpService().getById("proj-b", inA)).rejects.toMatchObject({ statusCode: 403 });
+    await expect(vpService().getById("proj-b", inA)).rejects.toMatchObject(forbidden);
   });
 
   it("a project, on delete", async () => {
     await expect(vpService().delete("proj-b", inA)).rejects.toMatchObject({ statusCode: 403 });
     // And it stayed alive.
     expect(db.all("videoProjects").find((p) => p.id === "proj-b")!.isDeleted).toBe(false);
+  });
+
+  it("a project, on rename", async () => {
+    await expect(
+      vpService().update("proj-b", inA, { title: "renamed" })
+    ).rejects.toMatchObject(forbidden);
+
+    expect(db.all("videoProjects").find((p) => p.id === "proj-b")!.title).toBe("B");
   });
 
   it("a project, on a pipeline step transition", async () => {
@@ -265,5 +323,109 @@ describe("the account is what decides, not the author", () => {
     await expect(
       repo.acquireStep("proj-b", "hooks", inA, { requires: [], lockMs: 1000 })
     ).rejects.toMatchObject({ statusCode: 403 });
+  });
+});
+
+describe("scripts and ideas — every id-addressed content route", () => {
+  // These reach the ownership check before any model call, so a foreign id is
+  // refused without spending a generation. That ordering is the point: a check
+  // after the call still leaks the answer and still costs a credit in Phase 08.
+  it("refuses reading, editing, exporting and regenerating another channel's script", async () => {
+    const { content } = wire();
+
+    await expect(content.getScriptById("script-b", inA)).rejects.toMatchObject(forbidden);
+    await expect(content.editScript("script-b", inA, { script: "x" })).rejects.toMatchObject(forbidden);
+    await expect(content.exportScript(inA, "script-b")).rejects.toMatchObject(forbidden);
+    await expect(content.regenerateScript(inA, "script-b")).rejects.toMatchObject(forbidden);
+
+    // And nothing was written on the way to refusing.
+    expect(db.all("scripts").find((r) => r.id === "script-b")!.script).toBe("bbb");
+  });
+
+  it("refuses editing and regenerating another channel's idea", async () => {
+    const { content } = wire();
+
+    await expect(content.editIdeas("idea-b", inA, { title: "stolen" })).rejects.toMatchObject(forbidden);
+    await expect(content.regenerateOne(inA, "idea-b")).rejects.toMatchObject(forbidden);
+
+    expect(db.all("ideas").find((r) => r.id === "idea-b")!.title).toBe("Finance idea");
+  });
+
+  it("lets a co-member edit an idea they did not author", async () => {
+    const { content } = wire();
+
+    await content.editIdeas("idea-a", mateInA, { title: "renamed by mate" });
+
+    expect(db.all("ideas").find((r) => r.id === "idea-a")!.title).toBe("renamed by mate");
+  });
+});
+
+describe("packaging — every id-addressed route", () => {
+  it("refuses reading, exporting, selecting a title on and regenerating another channel's package", async () => {
+    const { packaging } = wire();
+
+    await expect(packaging.getPackaging("proj-b", inA)).rejects.toMatchObject(forbidden);
+    await expect(packaging.exportPackaging(inA, "proj-b")).rejects.toMatchObject(forbidden);
+    await expect(packaging.selectTitle(inA, "proj-b", 0)).rejects.toMatchObject(forbidden);
+    await expect(packaging.regenerateItem(inA, "proj-b", "description")).rejects.toMatchObject(forbidden);
+  });
+
+  it("lets a co-member read a package they did not author", async () => {
+    const { packaging } = wire();
+
+    await expect(packaging.getPackaging("proj-a", mateInA)).resolves.toMatchObject({ id: "proj-a" });
+  });
+});
+
+describe("a foreign owning id in the BODY is refused before anything generates", () => {
+  // The routes the id-addressed list above misses entirely: the document being
+  // written does not exist yet, so the only thing to check is the id the client
+  // sent. Every one of these resolves the project first, and the project is what
+  // carries the account.
+  it("packaging generate-* pointed at another channel's project", async () => {
+    const { packaging } = wire();
+
+    // Note the argument order: description and thumbnail take (script, title,
+    // videoProjectId). Passing the project id one slot early makes it the TITLE
+    // and leaves videoProjectId undefined — the stateless-preview path, which
+    // legitimately generates and never checks a project. All three are strings,
+    // so nothing catches it; the first draft of this test did exactly that and
+    // "failed" against the live API.
+    await expect(packaging.generateTitle(inA, "a script", "proj-b")).rejects.toMatchObject(forbidden);
+    await expect(
+      packaging.generateDescription(inA, "a script", "A title", "proj-b")
+    ).rejects.toMatchObject(forbidden);
+    await expect(
+      packaging.generateThumbnail(inA, "a script", "A title", "proj-b")
+    ).rejects.toMatchObject(forbidden);
+    await expect(
+      packaging.generateShorts(inA, "a script", 60, "proj-b")
+    ).rejects.toMatchObject(forbidden);
+
+    // Nothing was persisted into the foreign project's package.
+    expect(db.all("packaging").find((r) => r.id === "proj-b")).toEqual(
+      expect.not.objectContaining({ titles: expect.anything() })
+    );
+  });
+
+  it("hooks generate pointed at another channel's project", async () => {
+    const { hooks } = wire();
+
+    await expect(hooks.generate(inA, "proj-b", "a script")).rejects.toMatchObject(forbidden);
+  });
+
+  it("a script stream for another channel's project", async () => {
+    // The SSE route's account comes from the PROJECT (resolveAccountFromProject),
+    // so the membership check is the whole protection there and is tested in
+    // tests/integration/account-middleware.behaviour.test.ts. This asserts the
+    // layer below agrees: even reaching the service with a mismatched account is
+    // refused, so the two checks cannot disagree.
+    const { content } = wire();
+    const res = { write: jest.fn(), end: jest.fn(), setHeader: jest.fn(), flushHeaders: jest.fn() };
+
+    await expect(
+      content.generateScripts(inA, "proj-b", res as never)
+    ).rejects.toMatchObject(forbidden);
+    expect(res.write).not.toHaveBeenCalled();
   });
 });

@@ -92,8 +92,9 @@ export class FakeFirestore {
     // test what a transaction READS and WRITES, not that it retries.
     const ops: (() => void)[] = [];
     const txn: FakeTxn = {
-      get: async (target: FakeDocRef | FakeQuery) =>
-        "setSync" in target ? target.get() : target.get(),
+      // Both a doc ref and a query answer `get()`, so there is nothing to branch
+      // on — `txn.get` is used with each and the union already covers it.
+      get: async (target: FakeDocRef | FakeQuery) => target.get(),
       set: (ref, data, opts) => ops.push(() => ref.setSync(data, opts)),
       update: (ref, data) => ops.push(() => ref.updateSync(data)),
       delete: (ref) => ops.push(() => ref.deleteSync()),
