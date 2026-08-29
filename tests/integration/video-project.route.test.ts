@@ -71,6 +71,7 @@ jest.mock("../../src/service/video-project.service", () => ({
 import request from "supertest";
 import app from "../../src/app";
 import { useSharedServer } from "./shared-server";
+import { TEST_ACCOUNT_ID, testOwner } from "../helpers/account";
 
 // One HTTP server for the whole file. `request(app)` starts and tears down a
 // FRESH ephemeral server per call; across ~113 requests that intermittently
@@ -104,7 +105,7 @@ function makeServiceError(message: string, statusCode: number) {
 
 const PROJECT_STUB = {
   id: "proj-1",
-  createdBy: "test-user-id",
+  createdBy: "test-user-id", accountId: TEST_ACCOUNT_ID,
   title: "Test Video",
   ideaId: "idea-1",
   scriptId: null,
@@ -151,7 +152,8 @@ describe("POST /v1/video-projects", () => {
 
     expect(res.status).toBe(201);
     expect(res.body.success).toBe(true);
-    expect(getService().createFromTitle).toHaveBeenCalledWith("test-user-id", "My Idea");
+    expect(getService().createFromTitle).toHaveBeenCalledWith(
+      testOwner("test-user-id"), "My Idea");
     expect(getService().create).not.toHaveBeenCalled();
   });
 
@@ -223,19 +225,19 @@ describe("GET /v1/video-projects", () => {
 
     await request(server()).get("/v1/video-projects?limit=1000000");
     expect(getService().list).toHaveBeenLastCalledWith(
-      "test-user-id",
+      testOwner("test-user-id"),
       expect.objectContaining({ limit: 50 })
     );
 
     await request(server()).get("/v1/video-projects?limit=abc");
     expect(getService().list).toHaveBeenLastCalledWith(
-      "test-user-id",
+      testOwner("test-user-id"),
       expect.objectContaining({ limit: 20 })
     );
 
     await request(server()).get("/v1/video-projects");
     expect(getService().list).toHaveBeenLastCalledWith(
-      "test-user-id",
+      testOwner("test-user-id"),
       expect.objectContaining({ limit: 20 })
     );
   });
@@ -269,7 +271,7 @@ describe("GET /v1/video-projects", () => {
     await request(server()).get("/v1/video-projects?status=completed&limit=5&cursor=abc");
 
     expect(getService().list).toHaveBeenCalledWith(
-      "test-user-id",
+      testOwner("test-user-id"),
       expect.objectContaining({ status: "completed", limit: 5, cursor: "abc" })
     );
   });
@@ -441,12 +443,12 @@ describe("PATCH /v1/video-projects/:projectId/step/:stepName/complete", () => {
     expect(res.status).toBe(404);
   });
 
-  it("passes projectId, stepName, userId to service", async () => {
+  it("passes projectId, stepName and the owner to service", async () => {
     getService().completeStep.mockResolvedValueOnce({ id: "proj-42", currentStep: "packaging" } as any);
 
     await request(server()).patch("/v1/video-projects/proj-42/step/hooks/complete");
 
-    expect(getService().completeStep).toHaveBeenCalledWith("proj-42", "hooks", "test-user-id");
+    expect(getService().completeStep).toHaveBeenCalledWith("proj-42", "hooks", testOwner("test-user-id"));
   });
 });
 
@@ -506,7 +508,7 @@ describe("PATCH /v1/video-projects/:projectId/link/:resourceType", () => {
     expect(res.status).toBe(404);
   });
 
-  it("passes projectId, resourceType, resourceId, userId to service", async () => {
+  it("passes projectId, resourceType, resourceId and the owner to service", async () => {
     getService().linkResource.mockResolvedValueOnce({ id: "proj-1", packagingId: "pkg-xyz" } as any);
 
     await request(server())
@@ -514,7 +516,6 @@ describe("PATCH /v1/video-projects/:projectId/link/:resourceType", () => {
       .send({ resourceId: "pkg-xyz" });
 
     expect(getService().linkResource).toHaveBeenCalledWith(
-      "proj-1", "packaging", "pkg-xyz", "test-user-id"
-    );
+      "proj-1", "packaging", "pkg-xyz", testOwner("test-user-id"));
   });
 });

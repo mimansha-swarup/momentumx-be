@@ -8,9 +8,9 @@ import { fillTemplate } from "../utlils/prompt-blocks.js";
 import HooksRepository from "../repository/hooks.repository.js";
 import VideoProjectService from "./video-project.service.js";
 import StepRunner from "./step-runner.js";
-import AccountService from "./account.service.js";
 import ContextService from "./context.service.js";
 import { IHooksBatch } from "../types/routes/hooks.js";
+import { RecordOwner } from "../utlils/content.js";
 import { BadRequest, Conflict, Forbidden, NotFound, ServiceUnavailable } from "../utlils/errors.js";
 
 // The schema requires exactly 5 non-empty strings, but a schema is a request to
@@ -40,14 +40,13 @@ class HooksService {
     // silently skips the lock and (from Phase 08) the debit — failing open on
     // exactly the concern the seam exists to guarantee. A missing argument
     // should be a compile error, not a quiet downgrade.
-    private steps: StepRunner,
-    private accountService: AccountService
+    private steps: StepRunner
   ) {}
 
   // Body script (if sent) wins; otherwise resolve the project's stored script
   // server-side (phases 1D). Hooks are script-native — no script anywhere is a 400.
   private resolveScript = async (
-    userId: string,
+    owner: RecordOwner,
     videoProjectId: string,
     explicitScript?: string
   ): Promise<string> => {
@@ -55,7 +54,7 @@ class HooksService {
       return explicitScript;
     }
     if (this.contextService) {
-      const ctx = await this.contextService.assemble(userId, { videoProjectId });
+      const ctx = await this.contextService.assemble(owner, { videoProjectId });
       if (ctx.sessionContext.script) {
         return ctx.sessionContext.script;
       }
@@ -64,19 +63,20 @@ class HooksService {
   };
 
   generate = async (
-    userId: string,
+    owner: RecordOwner,
     videoProjectId: string,
     script?: string
   ): Promise<IHooksBatch> => {
+    const { userId, accountId } = owner;
     // Idempotent replay stays OUTSIDE the seam: returning an existing batch is
     // not a generation. It must not take the lock and must not spend a credit.
-    const project = await this.videoProjectService.getById(videoProjectId, userId);
+    const project = await this.videoProjectService.getById(videoProjectId, owner);
     if (project.hooksId) {
       const existing = await this.repo.findById(project.hooksId);
       if (existing) return existing;
     }
 
-    const resolvedScript = await this.resolveScript(userId, videoProjectId, script);
+    const resolvedScript = await this.resolveScript(owner, videoProjectId, script);
     const userPrompt = fillTemplate(GENERATE_HOOKS_PROMPT, { "{script}": resolvedScript });
 
     // Everything the old body hand-rolled — the script precondition, the
@@ -86,7 +86,7 @@ class HooksService {
     // takes the lock; `releaseStep` restores prior state on failure (and, unlike
     // the old abandon, does not clear a stale marker).
     const hooksBatch = await this.steps.run(
-      { actor: { userId }, kind: "hooks", projectId: videoProjectId },
+      { actor: owner, kind: "hooks", projectId: videoProjectId },
       async () => {
         const result = await generateStreamingContent(
           HOOKS_SYSTEM_PROMPT,
@@ -100,7 +100,7 @@ class HooksService {
         return this.repo.save({
           videoProjectId,
           createdBy: userId,
-          accountId: await this.accountService.ensureDefaultAccount(userId),
+          accountId,
           hooks: parsed.hooks,
           hookFeedback: {},
         });
@@ -108,7 +108,7 @@ class HooksService {
     );
 
     try {
-      await this.videoProjectService.linkResource(videoProjectId, "hooks", hooksBatch.id, userId);
+      await this.videoProjectService.linkResource(videoProjectId, "hooks", hooksBatch.id, owner);
     } catch (linkError) {
       console.error(JSON.stringify({ event: "pipeline_link_failed", step: "hooks", projectId: videoProjectId, hooksId: hooksBatch.id, userId, message: (linkError as Error)?.message }));
     }
@@ -117,15 +117,16 @@ class HooksService {
   };
 
   select = async (
-    userId: string,
+    owner: RecordOwner,
     hooksId: string,
     hookIndex: number
   ): Promise<{ id: string; hooksId: string; selectedHookIndex: number }> => {
+    const { userId } = owner;
     const hooksBatch = await this.repo.findById(hooksId);
     if (!hooksBatch) {
       throw NotFound("Hooks batch not found");
     }
-    if (hooksBatch.createdBy !== userId) {
+    if (hooksBatch.accountId !== owner.accountId) {
       throw Forbidden();
     }
     if (hookIndex < 0 || hookIndex >= hooksBatch.hooks.length) {
@@ -139,9 +140,9 @@ class HooksService {
       throw BadRequest("Hooks batch is not linked to a video project");
     }
 
-    const result = await this.videoProjectService.setSelectedHook(videoProjectId, hooksId, hookIndex, userId);
+    const result = await this.videoProjectService.setSelectedHook(videoProjectId, hooksId, hookIndex, owner);
     try {
-      await this.videoProjectService.completeStep(videoProjectId, "hooks", userId);
+      await this.videoProjectService.completeStep(videoProjectId, "hooks", owner);
     } catch (stepError) {
       console.error(JSON.stringify({ event: "pipeline_transition_failed", step: "hooks", projectId: videoProjectId, userId, message: (stepError as Error)?.message }));
     }
@@ -149,15 +150,16 @@ class HooksService {
   };
 
   regenerate = async (
-    userId: string,
+    owner: RecordOwner,
     hooksId: string,
     script?: string
   ): Promise<{ id: string; hooks: string[]; hookFeedback: Record<string, never> }> => {
+    const { userId } = owner;
     const hooksBatch = await this.repo.findById(hooksId);
     if (!hooksBatch) {
       throw NotFound("Hooks batch not found");
     }
-    if (hooksBatch.createdBy !== userId) {
+    if (hooksBatch.accountId !== owner.accountId) {
       throw Forbidden();
     }
     if (!script && !hooksBatch.videoProjectId) {
@@ -166,7 +168,7 @@ class HooksService {
 
     const resolvedScript = script?.trim()
       ? script
-      : await this.resolveScript(userId, hooksBatch.videoProjectId, script);
+      : await this.resolveScript(owner, hooksBatch.videoProjectId, script);
     const userPrompt = fillTemplate(GENERATE_HOOKS_PROMPT, { "{script}": resolvedScript });
 
     // `mode: "regenerate"` — telemetry and (from Phase 08) metering, but NO step
@@ -182,7 +184,7 @@ class HooksService {
     // stale, regenerating hooks is exactly what the user needs and it would 400.
     const parsed = await this.steps.run(
       {
-        actor: { userId },
+        actor: owner,
         kind: "hooks",
         projectId: hooksBatch.videoProjectId,
         mode: "regenerate",
@@ -202,7 +204,7 @@ class HooksService {
 
     await this.repo.update(hooksId, { hooks: parsed.hooks, hookFeedback: {} });
     try {
-      await this.videoProjectService.clearSelectedHook(hooksBatch.videoProjectId, userId);
+      await this.videoProjectService.clearSelectedHook(hooksBatch.videoProjectId, owner);
       await this.videoProjectService.markStale(hooksBatch.videoProjectId, "hooks");
       await this.videoProjectService.markPackagingDocumentStale(hooksBatch.videoProjectId, "hooks_regenerated");
     } catch (cascadeError) {
@@ -215,26 +217,26 @@ class HooksService {
   // Read a saved batch. Without this the hooks existed only in the browser's
   // memory: after a refresh the creator could see "Hook 3 was selected" but never
   // the hook itself, and had no way to change the pick.
-  getById = async (userId: string, hooksId: string): Promise<IHooksBatch> => {
+  getById = async (owner: RecordOwner, hooksId: string): Promise<IHooksBatch> => {
     const hooksBatch = await this.repo.findById(hooksId);
     if (!hooksBatch) {
       throw NotFound("Hooks batch not found");
     }
-    if (hooksBatch.createdBy !== userId) {
+    if (hooksBatch.accountId !== owner.accountId) {
       throw Forbidden();
     }
     return hooksBatch;
   };
 
   exportHooks = async (
-    userId: string,
+    owner: RecordOwner,
     hooksId: string
   ): Promise<{ text: string; count: number }> => {
     const hooksBatch = await this.repo.findById(hooksId);
     if (!hooksBatch) {
       throw NotFound("Hooks batch not found");
     }
-    if (hooksBatch.createdBy !== userId) {
+    if (hooksBatch.accountId !== owner.accountId) {
       throw Forbidden();
     }
 

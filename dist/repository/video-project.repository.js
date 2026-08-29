@@ -47,7 +47,13 @@ class VideoProjectRepository {
          * for idempotent replay, and so the runner can capture prior state to restore
          * on failure.
          */
-        this.acquireStep = async (projectId, step, userId, guard) => {
+        this.acquireStep = async (projectId, step, 
+        // The OWNER object, not a bare `accountId: string`. `projectId`, `step` and
+        // both ids are all strings, so a positional id here accepts whichever one the
+        // caller happens to have — and during the Phase 06 flip the step runner did
+        // exactly that, passing `actor.userId` into the account slot. It compiled, and
+        // the check below would have refused every generation.
+        owner, guard) => {
             const ref = this.db.collection(this.collection).doc(projectId);
             return this.db.runTransaction(async (txn) => {
                 const snap = await txn.get(ref);
@@ -56,8 +62,9 @@ class VideoProjectRepository {
                 const project = this.hydrate(snap.data());
                 if (project.isDeleted)
                     throw NotFound("Video project not found");
-                // Becomes an accountId comparison in Phase 06, in this one place.
-                if (project.createdBy !== userId)
+                // Phase 06: the account, not the author. Inside the transaction, because a
+                // check performed outside it guarantees nothing about the write.
+                if (project.accountId !== owner.accountId)
                     throw Forbidden();
                 for (const required of guard.requires) {
                     if (project.pipeline[required]?.status !== "completed") {
@@ -129,10 +136,10 @@ class VideoProjectRepository {
                 return null;
             return this.hydrate(doc.data());
         };
-        this.list = async (userId, { status, limit, cursor }) => {
+        this.list = async (accountId, { status, limit, cursor }) => {
             let query = this.db
                 .collection(this.collection)
-                .where("createdBy", "==", userId)
+                .where("accountId", "==", accountId)
                 .where("isDeleted", "==", false);
             if (status) {
                 query = query.where("overallStatus", "==", status);
@@ -170,19 +177,19 @@ class VideoProjectRepository {
                 updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
             });
         };
-        this.findByIdeaId = async (ideaId, userId) => {
+        this.findByIdeaId = async (ideaId, accountId) => {
             // Equality-only filters (no orderBy) so no composite index is required.
             const snap = await this.db.collection(this.collection)
-                .where("createdBy", "==", userId)
+                .where("accountId", "==", accountId)
                 .where("ideaId", "==", ideaId)
                 .where("isDeleted", "==", false)
                 .get();
             return snap.docs.map((doc) => this.hydrate(doc.data()));
         };
-        this.findByScriptId = async (scriptId, userId) => {
+        this.findByScriptId = async (scriptId, accountId) => {
             const snap = await this.db.collection(this.collection)
                 .where("scriptId", "==", scriptId)
-                .where("createdBy", "==", userId)
+                .where("accountId", "==", accountId)
                 .where("isDeleted", "==", false)
                 .limit(1)
                 .get();

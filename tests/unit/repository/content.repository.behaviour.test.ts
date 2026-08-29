@@ -50,6 +50,7 @@ jest.mock("../../../src/config/firebase", () => ({
 }));
 
 import ContentRepository from "../../../src/repository/content.repository";
+import { TEST_ACCOUNT_ID, testOwner } from "../../helpers/account";
 
 describe("ContentRepository.getIdeas — query scoping and pagination", () => {
   let repo: ContentRepository;
@@ -59,24 +60,24 @@ describe("ContentRepository.getIdeas — query scoping and pagination", () => {
     repo = new ContentRepository();
   });
 
-  it("filters by createdBy first — security + index invariant", async () => {
+  it("filters by accountId first — security + index invariant", async () => {
     getMock.mockResolvedValue({ docs: [] });
 
     await repo.getIdeas({
-      userId: "user-1",
+      accountId: TEST_ACCOUNT_ID,
       limit: 9,
       cursor: { createdAt: "", docId: "" },
       filters: {},
     });
 
-    expect(chain.where.mock.calls[0]).toEqual(["createdBy", "==", "user-1"]);
+    expect(chain.where.mock.calls[0]).toEqual(["accountId", "==", TEST_ACCOUNT_ID]);
   });
 
   it("orders page 1 and a cursor page identically, so 'load more' can't skip or repeat", async () => {
     getMock.mockResolvedValue({ docs: [] });
 
     await repo.getIdeas({
-      userId: "user-1",
+      accountId: TEST_ACCOUNT_ID,
       limit: 9,
       cursor: { createdAt: "", docId: "" },
       filters: {},
@@ -85,7 +86,7 @@ describe("ContentRepository.getIdeas — query scoping and pagination", () => {
     chain.orderBy.mockClear();
 
     await repo.getIdeas({
-      userId: "user-1",
+      accountId: TEST_ACCOUNT_ID,
       limit: 9,
       cursor: { createdAt: "2026-01-01T00:00:00.000Z", docId: "doc-9" },
       filters: {},
@@ -103,7 +104,7 @@ describe("ContentRepository.getIdeas — query scoping and pagination", () => {
     getMock.mockResolvedValue({ docs: [] });
 
     await repo.getIdeas({
-      userId: "user-1",
+      accountId: TEST_ACCOUNT_ID,
       limit: 9,
       cursor: { createdAt: "2026-01-01T00:00:00.000Z", docId: "doc-9" },
       filters: {},
@@ -121,7 +122,7 @@ describe("ContentRepository.getIdeas — query scoping and pagination", () => {
       docs: [{ data: () => ({ id: "1", title: "Apple video" }) }],
     });
     await repo.getIdeas({
-      userId: "user-1",
+      accountId: TEST_ACCOUNT_ID,
       limit: 9,
       cursor: {},
       filters: { searchText: "a" },
@@ -136,7 +137,7 @@ describe("ContentRepository.getIdeas — query scoping and pagination", () => {
       docs: [{ data: () => ({ id: "2", title: "Avocado video" }) }],
     });
     await repo.getIdeas({
-      userId: "user-1",
+      accountId: TEST_ACCOUNT_ID,
       limit: 9,
       // The shape the service emits for a search page — echoed back by the client.
       cursor: { title: "Apple video", docId: "1" },
@@ -156,7 +157,7 @@ describe("ContentRepository.getIdeas — query scoping and pagination", () => {
     getMock.mockResolvedValueOnce({ docs: [] });
 
     await repo.getIdeas({
-      userId: "user-1",
+      accountId: TEST_ACCOUNT_ID,
       limit: 9,
       cursor: {},
       filters: { searchText: "a" },
@@ -185,7 +186,7 @@ describe("ContentRepository.archiveUserIdeas", () => {
       ],
     });
 
-    await repo.archiveUserIdeas("user-1");
+    await repo.archiveUserIdeas(TEST_ACCOUNT_ID);
 
     expect(batchUpdate).toHaveBeenCalledTimes(2);
     expect(batchUpdate).toHaveBeenCalledWith({ id: "d1" }, { archived: true, updatedAt: "SERVER_TS" });
@@ -203,7 +204,7 @@ describe("ContentRepository.archiveUserIdeas", () => {
       ],
     });
 
-    await repo.archiveUserIdeas("user-1", "keep-me");
+    await repo.archiveUserIdeas(TEST_ACCOUNT_ID, "keep-me");
 
     expect(batchUpdate).toHaveBeenCalledTimes(1);
     expect(batchUpdate).toHaveBeenCalledWith({ id: "d2" }, expect.objectContaining({ archived: true }));
@@ -222,7 +223,7 @@ describe("ContentRepository.archiveUserIdeas", () => {
       .mockResolvedValueOnce({ empty: false, size: 450, docs: fullPage })
       .mockResolvedValueOnce({ empty: false, size: 1, docs: midRunPage });
 
-    await repo.archiveUserIdeas("user-1");
+    await repo.archiveUserIdeas(TEST_ACCOUNT_ID);
 
     expect(getMock).toHaveBeenCalledTimes(2);
     expect(batchUpdate).toHaveBeenCalledWith({ id: "mid-run-doc" }, expect.objectContaining({ archived: true }));
@@ -300,10 +301,10 @@ describe("ContentRepository.getIdeasForClustering — the KMeans input guards", 
   it("scopes to the caller first, then excludes archived ideas", async () => {
     getMock.mockResolvedValueOnce({ docs: [] });
 
-    await repo.getIdeasForClustering("user-1");
+    await repo.getIdeasForClustering(TEST_ACCOUNT_ID);
 
     // userId filter first — security and composite-index efficiency.
-    expect(chain.where.mock.calls[0]).toEqual(["createdBy", "==", "user-1"]);
+    expect(chain.where.mock.calls[0]).toEqual(["accountId", "==", TEST_ACCOUNT_ID]);
     // Archived ideas must never reach the clusterer.
     expect(chain.where.mock.calls).toContainEqual(["archived", "==", false]);
   });
@@ -311,7 +312,7 @@ describe("ContentRepository.getIdeasForClustering — the KMeans input guards", 
   it("caps the read at 200 documents", async () => {
     getMock.mockResolvedValueOnce({ docs: [] });
 
-    await repo.getIdeasForClustering("user-1");
+    await repo.getIdeasForClustering(TEST_ACCOUNT_ID);
 
     // Non-negotiable per ai-generation-patterns.md: an uncapped KMeans run times
     // out on Vercel. The cap is a query limit, not a slice in the util.
@@ -321,7 +322,7 @@ describe("ContentRepository.getIdeasForClustering — the KMeans input guards", 
   it("projects only the fields clustering needs", async () => {
     getMock.mockResolvedValueOnce({ docs: [] });
 
-    await repo.getIdeasForClustering("user-1");
+    await repo.getIdeasForClustering(TEST_ACCOUNT_ID);
 
     expect(chain.select).toHaveBeenCalledWith("title", "embedding");
   });
@@ -334,7 +335,7 @@ describe("ContentRepository.getIdeasForClustering — the KMeans input guards", 
       ],
     });
 
-    const result = await repo.getIdeasForClustering("user-1");
+    const result = await repo.getIdeasForClustering(TEST_ACCOUNT_ID);
 
     expect(result).toEqual([
       { title: "A", embedding: [0.1, 0.2] },
@@ -361,7 +362,7 @@ describe("ContentRepository.getIdeas — the isScriptGenerated filter", () => {
 
   const run = (filters: Record<string, unknown>) =>
     repo.getIdeas({
-      userId: "user-1",
+      accountId: TEST_ACCOUNT_ID,
       limit: 9,
       cursor: { createdAt: "", docId: "" },
       filters: filters as never,
@@ -402,6 +403,6 @@ describe("ContentRepository.getIdeas — the isScriptGenerated filter", () => {
 
     await run({ isScriptGenerated: false });
 
-    expect(chain.where.mock.calls[0]).toEqual(["createdBy", "==", "user-1"]);
+    expect(chain.where.mock.calls[0]).toEqual(["accountId", "==", TEST_ACCOUNT_ID]);
   });
 });

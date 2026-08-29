@@ -24,32 +24,55 @@ jest.mock("../../../src/config/firebase", () => ({
 }));
 
 import AccountService, {
-  __clearAccountIdCache,
   deriveDisplayName,
   deriveHandle,
 } from "../../../src/service/account.service";
 import AccountRepository from "../../../src/repository/account.repository";
 import UserRepository from "../../../src/repository/user.repository";
+import { testOwner } from "../../helpers/account";
 
 const UUID_V4 =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+/**
+ * A stand-in user record that REMEMBERS its pointer.
+ *
+ * The real `createWithContext` writes `lastActiveAccountId` inside the claim
+ * transaction, and `userRepo.update` writes it on the membership-repair path — so
+ * a second `ensureDefaultAccount` for the same user reads a pointer and returns
+ * early. A fake that always replayed the ORIGINAL record made every call look
+ * like a first call, and idempotency appeared to hold only because a
+ * process-lifetime cache sat in front of it. That cache is gone (Phase 06 made
+ * the active account per-request), so the fake has to model the store instead.
+ */
 const make = (user: Record<string, unknown> | null, members: unknown[] = []) => {
+  const stored = user === null ? null : { ...user };
+
   const repo = {
     findByMember: jest.fn().mockResolvedValue(members),
     // Returns the id that WON the claim — normally the one it was handed.
-    createWithContext: jest.fn(async (a: { id: string }) => a.id),
+    createWithContext: jest.fn(async (a: { id: string }) => {
+      if (stored) stored.lastActiveAccountId = a.id;
+      return a.id;
+    }),
   } as unknown as jest.Mocked<AccountRepository>;
 
   const userRepo = {
-    get: jest.fn().mockResolvedValue(user),
-    update: jest.fn().mockResolvedValue(undefined),
+    get: jest.fn(async () => stored),
+    update: jest.fn(async (_uid: string, patch: Record<string, unknown>) => {
+      if (stored) Object.assign(stored, patch);
+    }),
   } as unknown as jest.Mocked<UserRepository>;
 
   return { service: new AccountService(repo, userRepo), repo, userRepo };
 };
 
-beforeEach(() => __clearAccountIdCache());
+// No cache to clear any more. `ensureDefaultAccount` memoized uid → accountId for
+// the life of the process, which was safe only while every user had exactly one
+// account that never changed. Phase 06 made the active account per-REQUEST, and a
+// process-lifetime map beside a per-request account is a user working in channel B
+// whose records are stamped channel A — intermittent, because it rebuilds on every
+// deploy. It was deleted rather than invalidated.
 
 describe("ensureDefaultAccount — minting", () => {
   it("mints a UUID v4 that is NOT the uid", async () => {
@@ -190,14 +213,17 @@ describe("ensureDefaultAccount — never mints twice", () => {
     });
   });
 
-  it("is stable across calls — a second call re-reads nothing and returns the same id", async () => {
-    const { service, userRepo } = make({});
+  it("is stable across calls — the second call mints nothing and returns the same id", async () => {
+    // Idempotency comes from the STORED pointer, not from a cache. It used to
+    // come from both, which meant this passed without the pointer ever being
+    // consulted; the cache is gone and the pointer is now load-bearing.
+    const { service, repo } = make({});
 
     const first = await service.ensureDefaultAccount("uid-123");
     const second = await service.ensureDefaultAccount("uid-123");
 
     expect(second).toBe(first);
-    expect(userRepo.get).toHaveBeenCalledTimes(1);
+    expect(repo.createWithContext).toHaveBeenCalledTimes(1);
   });
 
   it("adopts the id the claim returns, not the one it optimistically minted", async () => {
@@ -212,27 +238,27 @@ describe("ensureDefaultAccount — never mints twice", () => {
 
     expect(accountId).toBe("acc-winner");
     expect(accountId).not.toBe(repo.createWithContext.mock.calls[0][0].id);
-    // And the cache holds the winner, so every later write in this process agrees.
+    // And the pointer holds the WINNER, so every later call agrees with it rather
+    // than with the id this request optimistically minted.
     expect(await service.ensureDefaultAccount("uid-123")).toBe("acc-winner");
   });
 
-  // The contract is "every user has exactly ONE account", and the ids have to
-  // agree across every write path or that user's records split between two
-  // accounts. `event.service.ts` deliberately constructs its OWN AccountService
-  // to avoid an import cycle with the container, so "one account" is only true
-  // because the cache is module-scoped. Move it to an instance field and events
-  // would be tagged with a different account than the ideas from the same
-  // request — with nothing failing.
-  it("two independently-constructed services resolve one user to the SAME account", async () => {
-    const container = make({});
-    const telemetry = make({}); // what event.service.ts really does
+  // The contract is "every user has exactly ONE account". This used to be tested
+  // across two independently-constructed services, because `event.service.ts`
+  // built its own AccountService to dodge an import cycle and the agreement
+  // between them rested on the cache being module-scoped. Phase 06 removed that
+  // dependency entirely — events carry the caller's account in — so the property
+  // to hold now is that a SECOND service, sharing only the database, agrees.
+  it("a second service sharing the same user record resolves the same account", async () => {
+    const first = make({});
+    const second = { ...first, service: new AccountService(first.repo, first.userRepo) };
 
-    const fromContainer = await container.service.ensureDefaultAccount("uid-123");
-    const fromTelemetry = await telemetry.service.ensureDefaultAccount("uid-123");
+    const a = await first.service.ensureDefaultAccount("uid-123");
+    const b = await second.service.ensureDefaultAccount("uid-123");
 
-    expect(fromTelemetry).toBe(fromContainer);
-    // ...and the second instance minted nothing of its own.
-    expect(telemetry.repo.createWithContext).not.toHaveBeenCalled();
+    expect(b).toBe(a);
+    // One mint total, across both instances — the pointer is what they share.
+    expect(first.repo.createWithContext).toHaveBeenCalledTimes(1);
   });
 
   it("never returns an empty-string account id", async () => {

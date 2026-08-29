@@ -13,7 +13,6 @@ import {
 } from "../constants/firebase.js";
 import { GenerationConfig } from "@google/generative-ai";
 import PackagingRepository from "../repository/packaging.repository.js";
-import AccountService from "./account.service.js";
 import VideoProjectService from "./video-project.service.js";
 import ContextService from "./context.service.js";
 import ResearchContextService from "./research-context.service.js";
@@ -22,6 +21,7 @@ import { firebase } from "../config/firebase.js";
 import { BadRequest, Forbidden, NotFound } from "../utlils/errors.js";
 import { IPackagingItemStatuses } from "../types/routes/video-project.js";
 import { PackagingItemName } from "../types/routes/packaging.js";
+import { RecordOwner } from "../utlils/content.js";
 import { IChannelContext } from "../types/routes/context.js";
 import {
   buildCreatorContextBlock,
@@ -46,7 +46,6 @@ class PackagingService {
     repo: PackagingRepository,
     private videoProjectService: VideoProjectService,
     private contextService: ContextService,
-    private accountService: AccountService,
     private researchContext?: ResearchContextService
   ) {
     this.repo = repo;
@@ -57,12 +56,12 @@ class PackagingService {
   // An explicit body script wins over the stored one (supports edited-but-
   // unsaved scripts and keeps existing calls behaving identically).
   private resolveGenerationInputs = async (
-    userId: string,
+    owner: RecordOwner,
     videoProjectId?: string,
     explicitScript?: string
   ): Promise<IGenerationInputs> => {
     const ctx = await this.contextService.assemble(
-      userId,
+      owner,
       videoProjectId ? { videoProjectId } : {}
     );
     return {
@@ -99,8 +98,8 @@ class PackagingService {
   // live competitive title research → 3 scored variations. Research query =
   // the project's working title when available (specific beats broad), else
   // the script's opening. Research failure degrades to context-only titles.
-  private runTitle = async (userId: string, script?: string, videoProjectId?: string) => {
-    const inputs = await this.resolveGenerationInputs(userId, videoProjectId, script);
+  private runTitle = async (owner: RecordOwner, script?: string, videoProjectId?: string) => {
+    const inputs = await this.resolveGenerationInputs(owner, videoProjectId, script);
     if (!inputs.script) {
       throw BadRequest("Script is required — provide one or use a project with a generated script");
     }
@@ -121,12 +120,12 @@ class PackagingService {
   };
 
   private runDescription = async (
-    userId: string,
+    owner: RecordOwner,
     script: string | undefined,
     title: string,
     videoProjectId?: string
   ) => {
-    const inputs = await this.resolveGenerationInputs(userId, videoProjectId, script);
+    const inputs = await this.resolveGenerationInputs(owner, videoProjectId, script);
     const userPrompt = fillTemplate(GENERATE_DESCRIPTION_PROMPT, {
       "{title}": title,
       "{creatorContext}": buildCreatorContextBlock(inputs.channel),
@@ -137,12 +136,12 @@ class PackagingService {
   };
 
   private runThumbnail = async (
-    userId: string,
+    owner: RecordOwner,
     script: string | undefined,
     title: string,
     videoProjectId?: string
   ) => {
-    const inputs = await this.resolveGenerationInputs(userId, videoProjectId, script);
+    const inputs = await this.resolveGenerationInputs(owner, videoProjectId, script);
     const format = resolveVideoFormat(inputs.channel?.format);
     const userPrompt = fillTemplate(GENERATE_THUMBNAIL_PROMPT, {
       "{title}": title,
@@ -154,10 +153,10 @@ class PackagingService {
     return this.generateContent(userPrompt, GENERATION_CONFIG_THUMBNAIL, "thumbnail briefs");
   };
 
-  private runShorts = async (userId: string, script: string | undefined, duration: number, videoProjectId?: string) => {
+  private runShorts = async (owner: RecordOwner, script: string | undefined, duration: number, videoProjectId?: string) => {
     // Script is pipeline-native but resolved server-side: an explicit body
     // script wins, else it's pulled from the project (best-available context).
-    const inputs = await this.resolveGenerationInputs(userId, videoProjectId, script);
+    const inputs = await this.resolveGenerationInputs(owner, videoProjectId, script);
     if (!inputs.script) {
       throw BadRequest("Provide a script or a videoProjectId with a generated script");
     }
@@ -173,41 +172,41 @@ class PackagingService {
   // first generation for a project) — the client never round-trips generated
   // content back through /save. Each returns the persisted content plus the
   // packagingId. Without a videoProjectId it's a stateless preview (no persist).
-  generateTitle = async (userId: string, script?: string, videoProjectId?: string) => {
-    const raw = await this.runTitle(userId, script, videoProjectId);
+  generateTitle = async (owner: RecordOwner, script?: string, videoProjectId?: string) => {
+    const raw = await this.runTitle(owner, script, videoProjectId);
     if (!videoProjectId) return raw;
-    const { packagingId, canonical } = await this.persistGeneratedItem(userId, videoProjectId, "title", raw);
+    const { packagingId, canonical } = await this.persistGeneratedItem(owner, videoProjectId, "title", raw);
     return { titles: canonical, packagingId };
   };
 
   generateDescription = async (
-    userId: string,
+    owner: RecordOwner,
     script: string | undefined,
     title: string,
     videoProjectId?: string
   ) => {
-    const raw = await this.runDescription(userId, script, title, videoProjectId);
+    const raw = await this.runDescription(owner, script, title, videoProjectId);
     if (!videoProjectId) return raw;
-    const { packagingId, canonical } = await this.persistGeneratedItem(userId, videoProjectId, "description", raw);
+    const { packagingId, canonical } = await this.persistGeneratedItem(owner, videoProjectId, "description", raw);
     return { description: canonical, packagingId };
   };
 
   generateThumbnail = async (
-    userId: string,
+    owner: RecordOwner,
     script: string | undefined,
     title: string,
     videoProjectId?: string
   ) => {
-    const raw = await this.runThumbnail(userId, script, title, videoProjectId);
+    const raw = await this.runThumbnail(owner, script, title, videoProjectId);
     if (!videoProjectId) return raw;
-    const { packagingId, canonical } = await this.persistGeneratedItem(userId, videoProjectId, "thumbnail", raw);
+    const { packagingId, canonical } = await this.persistGeneratedItem(owner, videoProjectId, "thumbnail", raw);
     return { descriptions: canonical, packagingId };
   };
 
-  generateShorts = async (userId: string, script: string | undefined, duration: number, videoProjectId?: string) => {
-    const raw = await this.runShorts(userId, script, duration, videoProjectId);
+  generateShorts = async (owner: RecordOwner, script: string | undefined, duration: number, videoProjectId?: string) => {
+    const raw = await this.runShorts(owner, script, duration, videoProjectId);
     if (!videoProjectId) return raw;
-    const { packagingId, canonical } = await this.persistGeneratedItem(userId, videoProjectId, "shorts", raw);
+    const { packagingId, canonical } = await this.persistGeneratedItem(owner, videoProjectId, "shorts", raw);
     return { ...(canonical as Record<string, unknown>), packagingId };
   };
 
@@ -219,13 +218,14 @@ class PackagingService {
   // racing can't split into two docs or both skip completion. Content write is
   // critical; pipeline transitions are best-effort (logged), matching savePackaging.
   private persistGeneratedItem = async (
-    userId: string,
+    owner: RecordOwner,
     videoProjectId: string,
     item: PackagingItemName,
     rawContent: unknown
   ): Promise<{ packagingId: string; canonical: unknown }> => {
+    const { userId } = owner;
     // Ownership check (throws if the project isn't the caller's).
-    await this.videoProjectService.getById(videoProjectId, userId);
+    await this.videoProjectService.getById(videoProjectId, owner);
 
     // Storage field == item name, except title lives under "titles". Normalize
     // BEFORE the write so malformed content throws here (no orphaned doc).
@@ -234,7 +234,7 @@ class PackagingService {
 
     const { packagingId, created, statuses } = await this.repo.upsertGeneratedItem(
       videoProjectId,
-      { userId, accountId: await this.accountService.ensureDefaultAccount(userId) },
+      owner,
       field,
       item,
       canonical
@@ -245,9 +245,9 @@ class PackagingService {
     // hiccup must not fail generation.
     try {
       if (created) {
-        await this.videoProjectService.linkResource(videoProjectId, "packaging", packagingId, userId);
+        await this.videoProjectService.linkResource(videoProjectId, "packaging", packagingId, owner);
       }
-      await this.videoProjectService.startStep(videoProjectId, step, userId);
+      await this.videoProjectService.startStep(videoProjectId, step, owner);
       // Packaging completes when its three items exist; the title step completes
       // on selection, never here.
       if (step === "packaging" &&
@@ -255,7 +255,7 @@ class PackagingService {
         statuses.thumbnail === "completed" &&
         statuses.shorts === "completed"
       ) {
-        await this.videoProjectService.completeStep(videoProjectId, "packaging", userId);
+        await this.videoProjectService.completeStep(videoProjectId, "packaging", owner);
       }
     } catch (pipelineError) {
       console.error(JSON.stringify({ event: "pipeline_transition_failed", step, projectId: videoProjectId, packagingId, item, userId, message: (pipelineError as Error)?.message }));
@@ -347,7 +347,8 @@ class PackagingService {
     return "Untitled video";
   };
 
-  savePackaging = async (userId: string, data: Record<string, unknown>, videoProjectId?: string) => {
+  savePackaging = async (owner: RecordOwner, data: Record<string, unknown>, videoProjectId?: string) => {
+    const { userId } = owner;
     // Coerce any present content field to its canonical stored shape so the
     // persisted doc matches what regenerateItem and the readers expect.
     const normalized: Record<string, unknown> = { ...data };
@@ -373,10 +374,10 @@ class PackagingService {
     // the pipeline. Either branch leaves us with a project for the save below.
     let projectId = videoProjectId;
     if (projectId) {
-      await this.videoProjectService.getById(projectId, userId);
+      await this.videoProjectService.getById(projectId, owner);
     } else {
       const project = await this.videoProjectService.createFromTitle(
-        userId,
+        owner,
         this.deriveWorkingTitle(normalized)
       );
       projectId = project.id;
@@ -386,8 +387,8 @@ class PackagingService {
       ...normalized,
       // AFTER the spread, like createdBy — though packagingSaveSchema, not field
       // order, is what stops these keys reaching the service at all.
-      createdBy: userId,
-      accountId: await this.accountService.ensureDefaultAccount(userId),
+      createdBy: owner.userId,
+      accountId: owner.accountId,
       videoProjectId: projectId,
     };
 
@@ -433,7 +434,7 @@ class PackagingService {
       settled.shorts === "completed";
 
     try {
-      await this.videoProjectService.linkResource(projectId, "packaging", result.id as string, userId);
+      await this.videoProjectService.linkResource(projectId, "packaging", result.id as string, owner);
       // And even with all three present, a STALE package stays stale: completeStep
       // moves `stale` straight to `completed`, so an edit-save would clear the
       // project's stale badge without anything being regenerated. Un-staling is an
@@ -443,8 +444,8 @@ class PackagingService {
       // which completeStep rejects — start it first (startStep no-ops if already
       // in_progress/completed), so both the door and pipeline paths complete cleanly.
       if (packagingComplete && !existing?.isStale) {
-        await this.videoProjectService.startStep(projectId, "packaging", userId);
-        await this.videoProjectService.completeStep(projectId, "packaging", userId);
+        await this.videoProjectService.startStep(projectId, "packaging", owner);
+        await this.videoProjectService.completeStep(projectId, "packaging", owner);
       }
     } catch (pipelineError) {
       console.error(JSON.stringify({ event: "pipeline_transition_failed", step: "packaging", projectId, packagingId: result.id, userId, message: (pipelineError as Error)?.message }));
@@ -452,26 +453,27 @@ class PackagingService {
     return result;
   };
 
-  getPackaging = async (packagingId: string, userId: string) => {
+  getPackaging = async (packagingId: string, owner: RecordOwner) => {
     const result = await this.repo.get(packagingId);
     if (!result) return null;
-    if (result.createdBy !== userId) throw Forbidden();
+    if (result.accountId !== owner.accountId) throw Forbidden();
     return result;
   };
 
-  getPackagingByUser = async (userId: string) => {
-    return this.repo.getByUserId(userId);
+  getPackagingByAccount = async (owner: RecordOwner) => {
+    return this.repo.getByAccountId(owner.accountId);
   };
 
   // Title continuity (§7.3): the user finalizes one of the generated Title
   // variations. Persist the choice and promote it to the project's display title
   // (the idea working-title was only ever a placeholder).
-  selectTitle = async (userId: string, packagingId: string, index: number) => {
+  selectTitle = async (owner: RecordOwner, packagingId: string, index: number) => {
+    const { userId } = owner;
     const pkg = await this.repo.get(packagingId);
     if (!pkg) {
       throw NotFound("Packaging not found");
     }
-    if (pkg.createdBy !== userId) {
+    if (pkg.accountId !== owner.accountId) {
       throw Forbidden();
     }
     if (!Array.isArray(pkg.titles) || pkg.titles.length === 0) {
@@ -492,11 +494,11 @@ class PackagingService {
     // NOT best-effort — the rename IS the feature, so a failure must surface (→ FE
     // toast → retry, which is idempotent) rather than be silently swallowed.
     if (pkg.videoProjectId) {
-      await this.videoProjectService.update(pkg.videoProjectId, userId, { title: titleText });
+      await this.videoProjectService.update(pkg.videoProjectId, owner, { title: titleText });
       // Selecting a title IS the completion of the Title pipeline step. Best-effort
       // (like other pipeline transitions) so a step hiccup can't fail the rename.
       try {
-        await this.videoProjectService.completeStep(pkg.videoProjectId, "title", userId);
+        await this.videoProjectService.completeStep(pkg.videoProjectId, "title", owner);
       } catch (stepError) {
         console.error(JSON.stringify({ event: "pipeline_transition_failed", step: "title", projectId: pkg.videoProjectId, packagingId, userId, message: (stepError as Error)?.message }));
       }
@@ -506,18 +508,19 @@ class PackagingService {
   };
 
   regenerateItem = async (
-    userId: string,
+    owner: RecordOwner,
     packagingId: string,
     item: string,
     script?: string,
     title?: string,
     duration?: number
   ) => {
+    const { userId } = owner;
     const pkg = await this.repo.get(packagingId);
     if (!pkg) {
       throw NotFound("Packaging not found");
     }
-    if (pkg.createdBy !== userId) {
+    if (pkg.accountId !== owner.accountId) {
       throw Forbidden();
     }
     // Resolve the selected hook (and stored script) from the STORED project on
@@ -532,7 +535,7 @@ class PackagingService {
     // description/thumbnail degrade to best-available context (phases 1D).
     // The body script (if sent) wins; otherwise the project's stored script
     // is resolved server-side, so no body script is needed at all.
-    const resolved = await this.resolveGenerationInputs(userId, videoProjectId, script);
+    const resolved = await this.resolveGenerationInputs(owner, videoProjectId, script);
     if ((item === "title" || item === "shorts") && !resolved.script) {
       throw BadRequest("script is required");
     }
@@ -553,18 +556,18 @@ class PackagingService {
       // does its own targeted update + stale handling below, so it must not
       // double-persist through the public wrappers.
       if (item === "title") {
-        result = await this.runTitle(userId, resolved.script, videoProjectId);
+        result = await this.runTitle(owner, resolved.script, videoProjectId);
         fieldKey = "titles";
       } else if (item === "description") {
-        result = await this.runDescription(userId, resolved.script || undefined, title!, videoProjectId);
+        result = await this.runDescription(owner, resolved.script || undefined, title!, videoProjectId);
         fieldKey = "description";
       } else if (item === "thumbnail") {
-        result = await this.runThumbnail(userId, resolved.script || undefined, title!, videoProjectId);
+        result = await this.runThumbnail(owner, resolved.script || undefined, title!, videoProjectId);
         fieldKey = "thumbnail";
       } else {
         // Same default the generate-shorts path uses client-side; regenerate
         // must not 400 when the client omits it (it always did).
-        result = await this.runShorts(userId, resolved.script, duration ?? 60, videoProjectId);
+        result = await this.runShorts(owner, resolved.script, duration ?? 60, videoProjectId);
         fieldKey = "shorts";
       }
     } catch (genError) {
@@ -636,7 +639,7 @@ class PackagingService {
     // must not fail the already-saved regeneration.
     if (!anyStillStale && videoProjectId) {
       try {
-        await this.videoProjectService.refreshPackagingStep(videoProjectId, userId);
+        await this.videoProjectService.refreshPackagingStep(videoProjectId, owner);
       } catch (syncError) {
         console.error(JSON.stringify({ event: "stale_cascade_clear_failed", projectId: videoProjectId, packagingId, userId, message: (syncError as Error)?.message }));
       }
@@ -648,7 +651,7 @@ class PackagingService {
           // The pick is gone with the old variations — reopen the step so the
           // creator is asked to choose again rather than shown a green step over
           // a project name that no longer matches any title on screen.
-          await this.videoProjectService.reopenTitleStep(videoProjectId, userId);
+          await this.videoProjectService.reopenTitleStep(videoProjectId, owner);
         } else {
           // Regenerating the item that was MISSING is how a creator recovers from a
           // partial generation failure. `refreshPackagingStep` only ever un-stales,
@@ -660,8 +663,8 @@ class PackagingService {
             settled.thumbnail === "completed" &&
             settled.shorts === "completed"
           ) {
-            await this.videoProjectService.startStep(videoProjectId, "packaging", userId);
-            await this.videoProjectService.completeStep(videoProjectId, "packaging", userId);
+            await this.videoProjectService.startStep(videoProjectId, "packaging", owner);
+            await this.videoProjectService.completeStep(videoProjectId, "packaging", owner);
           }
         }
       } catch (stepError) {
@@ -674,7 +677,7 @@ class PackagingService {
     if (item === "thumbnail" && videoProjectId) {
       try {
         const briefs = updateData.thumbnail as string[] | undefined;
-        await this.videoProjectService.setThumbnailHint(videoProjectId, briefs?.[0] ?? null, userId);
+        await this.videoProjectService.setThumbnailHint(videoProjectId, briefs?.[0] ?? null, owner);
       } catch (hintError) {
         console.error(JSON.stringify({ event: "thumbnail_hint_refresh_failed", projectId: videoProjectId, packagingId, userId, message: (hintError as Error)?.message }));
       }
@@ -683,12 +686,12 @@ class PackagingService {
     return { id: packagingId, item, data: canonical };
   };
 
-  exportPackaging = async (userId: string, packagingId: string) => {
+  exportPackaging = async (owner: RecordOwner, packagingId: string) => {
     const pkg = await this.repo.get(packagingId);
     if (!pkg) {
       throw NotFound("Packaging not found");
     }
-    if (pkg.createdBy !== userId) {
+    if (pkg.accountId !== owner.accountId) {
       throw Forbidden();
     }
 

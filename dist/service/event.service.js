@@ -1,41 +1,37 @@
 import EventRepository from "../repository/event.repository.js";
-import AccountRepository from "../repository/account.repository.js";
-import UserRepository from "../repository/user.repository.js";
-import AccountService from "./account.service.js";
 // Cross-cutting telemetry writer. Exported as a singleton (like a logger) so any
 // controller can fire signals without threading a new constructor dependency
 // through every route/controller. Only the repository touches Firestore.
 class EventService {
-    constructor(repo, accounts) {
+    constructor(repo) {
         this.repo = repo;
-        this.accounts = accounts;
     }
     // Fire-and-forget: never awaited by callers, never throws — a telemetry write
     // failure must not affect the user-facing request (§10 best-effort pattern).
-    capture(userId, type, metadata) {
-        if (!userId)
+    capture(owner, type, metadata) {
+        const { userId, accountId } = owner ?? {};
+        // Both, explicitly. The account used to be resolved here with
+        // `ensureDefaultAccount`, because this singleton had no request context — so
+        // an event was tagged with the user's DEFAULT channel rather than the one they
+        // were acting in. Phase 06 gives every controller `ownerOf(req)`, so the
+        // active account travels in. An untagged event is worse than a missing one:
+        // `ignoreUndefinedProperties: true` drops the field and the write still
+        // succeeds, so it fails silently.
+        if (!userId || !accountId) {
+            console.error(JSON.stringify({ event: "event_owner_missing", type, userId: userId ?? null }));
             return;
-        // Resolved here rather than in the signature: this singleton is called from
-        // 12 controller sites with no request context, and one missed site would
-        // write an untagged event. `ignoreUndefinedProperties: true` makes that
-        // failure silent, hence the explicit guard rather than trusting it through.
-        void this.accounts
-            .ensureDefaultAccount(userId)
-            .then((accountId) => {
-            if (!accountId) {
-                console.error(JSON.stringify({ event: "event_account_unresolved", type, userId }));
-                return;
-            }
-            // Undefined metadata keys (e.g. PROJECT_CREATED carries either ideaId or
-            // title) are dropped globally by Firestore's ignoreUndefinedProperties.
-            return this.repo.add({ type, createdBy: userId, accountId, metadata });
-        })
+        }
+        // Undefined metadata keys (e.g. PROJECT_CREATED carries either ideaId or
+        // title) are dropped globally by Firestore's ignoreUndefinedProperties.
+        void this.repo
+            .add({ type, createdBy: userId, accountId, metadata })
             .catch((err) => console.error("event capture failed", type, err));
     }
 }
-// Builds its own AccountService rather than importing the container: the
-// container imports the controllers, which import THIS singleton — reaching back
-// would close the cycle. Free: repositories are stateless and the uid→accountId
-// cache is module-scoped, so this shares the container instance's cache.
-export const eventService = new EventService(new EventRepository(), new AccountService(new AccountRepository(), new UserRepository()));
+// A bare repository now. It used to carry an AccountService purely to resolve the
+// account, built here rather than taken from the container because the container
+// imports the controllers, which import THIS singleton — reaching back would close
+// the cycle. The account arrives with the caller instead, so the dependency is gone
+// and so is the cycle it worked around.
+export const eventService = new EventService(new EventRepository());
 export default EventService;

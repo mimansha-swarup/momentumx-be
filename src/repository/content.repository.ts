@@ -1,7 +1,7 @@
 import { Firestore } from "firebase-admin/firestore";
 import { COLLECTIONS } from "../constants/collection.js";
 import { db, firebase } from "../config/firebase.js";
-import { IGetIdeaByUserIdArgs } from "../types/repository/content.js";
+import { IGetIdeaQueryArgs } from "../types/repository/content.js";
 import { IIdea, IScript } from "../types/routes/content.js";
 
 class ContentRepository {
@@ -19,15 +19,15 @@ class ContentRepository {
   };
 
   getIdeas = async ({
-    userId,
+    accountId,
     limit = 8,
     cursor,
     filters,
-  }: IGetIdeaByUserIdArgs) => {
+  }: IGetIdeaQueryArgs) => {
     try {
       let query = this.db
         .collection(this.collection)
-        .where("createdBy", "==", userId)
+        .where("accountId", "==", accountId)
         // Active batch only — archived ideas must never appear in the list
         .where("archived", "==", false);
 
@@ -98,11 +98,11 @@ class ContentRepository {
   // Bounded read for KMeans clustering — projects to title + embedding only and
   // caps at 200 docs at the query level so we never pull every embedding array.
   getIdeasForClustering = async (
-    userId: string,
+    accountId: string,
   ): Promise<Pick<IIdea, "title" | "embedding">[]> => {
     const snapshot = await this.db
       .collection(this.collection)
-      .where("createdBy", "==", userId)
+      .where("accountId", "==", accountId)
       .where("archived", "==", false)
       .limit(200)
       .select("title", "embedding")
@@ -112,11 +112,11 @@ class ContentRepository {
     );
   };
 
-  getScripts = async (userId: string): Promise<IScript[]> => {
+  getScripts = async (accountId: string): Promise<IScript[]> => {
     try {
       const snapshot = await this.db
         .collection(this.script_collection)
-        .where("createdBy", "==", userId)
+        .where("accountId", "==", accountId)
         .orderBy("createdAt", "desc")
         .get();
       return snapshot.docs.map((doc) => {
@@ -174,11 +174,11 @@ class ContentRepository {
 
   // Active batch for regenerate/export — excludes embeddings (not needed here).
   getActiveBatch = async (
-    userId: string,
+    accountId: string,
   ): Promise<Pick<IIdea, "id" | "title" | "concept" | "ideaType" | "createdAt" | "videoProjectId">[]> => {
     const snapshot = await this.db
       .collection(this.collection)
-      .where("createdBy", "==", userId)
+      .where("accountId", "==", accountId)
       .where("archived", "==", false)
       .select("title", "concept", "ideaType", "createdAt", "videoProjectId")
       .get();
@@ -198,7 +198,7 @@ class ContentRepository {
   // so records that appeared mid-run are picked up by a later pass. The loop
   // terminates because every pass archives the page it just read, which
   // permanently removes those documents from `archived == false`.
-  archiveUserIdeas = async (userId: string, excludeBatchId?: string) => {
+  archiveUserIdeas = async (accountId: string, excludeBatchId?: string) => {
     // Firestore caps a batch at 500 ops — stay under it so a commit never throws.
     const CHUNK_SIZE = 450;
     // A generation writes 10 ideas, so this is far more headroom than any real
@@ -208,7 +208,7 @@ class ContentRepository {
     for (let pass = 0; pass < MAX_PASSES; pass++) {
       const snapshot = await this.db
         .collection(this.collection)
-        .where("createdBy", "==", userId)
+        .where("accountId", "==", accountId)
         .where("archived", "==", false)
         .select("batchId")
         .limit(CHUNK_SIZE)
@@ -238,7 +238,7 @@ class ContentRepository {
     }
 
     console.warn(
-      JSON.stringify({ event: "archive_max_passes_reached", userId, maxPasses: MAX_PASSES })
+      JSON.stringify({ event: "archive_max_passes_reached", accountId, maxPasses: MAX_PASSES })
     );
   };
 

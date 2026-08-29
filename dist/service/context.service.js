@@ -29,10 +29,13 @@ class ContextService {
         this.contentRepo = contentRepo;
         this.hooksRepo = hooksRepo;
         this.videoProjectService = videoProjectService;
-        this.assemble = async (userId, options = {}) => {
+        this.assemble = async (owner, options = {}) => {
             const [channelContext, sessionContext] = await Promise.all([
-                this.buildChannelContext(userId, options.overrides),
-                this.buildSessionContext(userId, options.videoProjectId),
+                // Channel context is still read from the USER record — Phase 06b is what
+                // moves it onto the account. The session half is account-scoped already,
+                // because the project it loads is.
+                this.buildChannelContext(owner.userId, options.overrides),
+                this.buildSessionContext(owner, options.videoProjectId),
             ]);
             return { channelContext, sessionContext };
         };
@@ -67,13 +70,13 @@ class ContextService {
             const applied = Object.fromEntries(Object.entries(overrides).filter(([, value]) => value !== undefined));
             return { ...base, ...applied };
         };
-        this.buildSessionContext = async (userId, videoProjectId) => {
+        this.buildSessionContext = async (owner, videoProjectId) => {
             if (!videoProjectId) {
                 return { ...EMPTY_SESSION };
             }
             // Throws NotFound/Forbidden for a bad or foreign project id — an invalid
             // target is a caller error, not "absent upstream content".
-            const project = await this.videoProjectService.getById(videoProjectId, userId);
+            const project = await this.videoProjectService.getById(videoProjectId, owner);
             const [workingTitle, script, selectedHook] = await Promise.all([
                 this.resolveWorkingTitle(project.ideaId, project.title),
                 this.resolveScript(project.scriptId),

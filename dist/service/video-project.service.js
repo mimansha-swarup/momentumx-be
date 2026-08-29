@@ -18,24 +18,23 @@ const computeOverallStatus = (pipeline) => {
             : "in_progress";
 };
 class VideoProjectService {
-    constructor(repo, contentRepo, packagingRepo, hooksRepo, accountService) {
+    constructor(repo, contentRepo, packagingRepo, hooksRepo) {
         this.repo = repo;
         this.contentRepo = contentRepo;
         this.packagingRepo = packagingRepo;
         this.hooksRepo = hooksRepo;
-        this.accountService = accountService;
-        this.create = async (userId, ideaId) => {
+        this.create = async (owner, ideaId) => {
             const idea = await this.contentRepo.getIdea(ideaId);
             if (!idea) {
                 throw NotFound("Idea not found");
             }
-            if (idea.createdBy !== userId) {
+            if (idea.accountId !== owner.accountId) {
                 throw Forbidden();
             }
             const now = firebase.firestore.FieldValue.serverTimestamp();
             const projectData = {
-                createdBy: userId,
-                accountId: await this.accountService.ensureDefaultAccount(userId),
+                createdBy: owner.userId,
+                accountId: owner.accountId,
                 title: idea.title,
                 ideaId,
                 scriptId: null,
@@ -65,27 +64,24 @@ class VideoProjectService {
             await this.contentRepo.updateIdea(ideaId, { videoProjectId: project.id });
             return project;
         };
-        this.createFromTitle = async (userId, title) => {
-            assertOwner(userId);
+        this.createFromTitle = async (owner, title) => {
+            assertOwner(owner.userId);
             if (!title || !title.trim()) {
                 throw BadRequest("title is required");
             }
-            const formatted = await formatGeneratedTitle(title.trim(), {
-                userId,
-                accountId: await this.accountService.ensureDefaultAccount(userId),
-            });
+            const formatted = await formatGeneratedTitle(title.trim(), owner);
             const [saved] = await this.contentRepo.batchSaveIdeas([formatted]);
-            return this.create(userId, saved.id);
+            return this.create(owner, saved.id);
         };
-        this.getProjectsByIdea = async (ideaId, userId) => {
-            return this.repo.findByIdeaId(ideaId, userId);
+        this.getProjectsByIdea = async (ideaId, owner) => {
+            return this.repo.findByIdeaId(ideaId, owner.accountId);
         };
-        this.list = async (userId, { status, limit = 20, cursor }) => {
+        this.list = async (owner, { status, limit = 20, cursor }) => {
             const validStatuses = ["in_progress", "completed", "stale"];
             if (status && !validStatuses.includes(status)) {
                 throw BadRequest("Invalid status value");
             }
-            const { projects, hasMore, nextCursor } = await this.repo.list(userId, {
+            const { projects, hasMore, nextCursor } = await this.repo.list(owner.accountId, {
                 status,
                 limit,
                 cursor,
@@ -101,12 +97,12 @@ class VideoProjectService {
             }));
             return { projects: mapped, hasMore, nextCursor };
         };
-        this.getById = async (projectId, userId) => {
+        this.getById = async (projectId, owner) => {
             const project = await this.repo.findById(projectId);
             if (!project || project.isDeleted) {
                 throw NotFound();
             }
-            if (project.createdBy !== userId) {
+            if (project.accountId !== owner.accountId) {
                 throw Forbidden();
             }
             return project;
@@ -145,8 +141,8 @@ class VideoProjectService {
                 recommendedNextStep,
             };
         };
-        this.getReconciledById = async (projectId, userId) => {
-            const project = await this.getById(projectId, userId);
+        this.getReconciledById = async (projectId, owner) => {
+            const project = await this.getById(projectId, owner);
             return this.reconcileView(project);
         };
         /**
@@ -156,8 +152,8 @@ class VideoProjectService {
          * the step isn't stale. overallStatus stays "stale" if script/hooks are still stale.
          * Caller must gate on "no packaging item remains stale".
          */
-        this.refreshPackagingStep = async (projectId, userId) => {
-            const project = await this.getById(projectId, userId);
+        this.refreshPackagingStep = async (projectId, owner) => {
+            const project = await this.getById(projectId, owner);
             if (project.pipeline.packaging.status !== "stale")
                 return;
             const updatedPipeline = {
@@ -172,24 +168,24 @@ class VideoProjectService {
         };
         // Keep the dashboard thumbnailHint in sync when the thumbnail is regenerated
         // (it is otherwise only set at save-time via linkResource, so a regen would leave it stale).
-        this.setThumbnailHint = async (projectId, hint, userId) => {
-            await this.getById(projectId, userId);
+        this.setThumbnailHint = async (projectId, hint, owner) => {
+            await this.getById(projectId, owner);
             await this.repo.update(projectId, { thumbnailHint: hint });
         };
-        this.update = async (projectId, userId, data) => {
-            await this.getById(projectId, userId);
+        this.update = async (projectId, owner, data) => {
+            await this.getById(projectId, owner);
             if (!data.title || typeof data.title !== "string" || data.title.trim() === "") {
                 throw BadRequest("title is required");
             }
             await this.repo.update(projectId, { title: data.title });
             return { title: data.title };
         };
-        this.delete = async (projectId, userId) => {
+        this.delete = async (projectId, owner) => {
             const project = await this.repo.findById(projectId);
             if (!project) {
                 throw NotFound();
             }
-            if (project.createdBy !== userId) {
+            if (project.accountId !== owner.accountId) {
                 throw Forbidden();
             }
             if (project.isDeleted) {
@@ -214,11 +210,11 @@ class VideoProjectService {
             }
             return { id: projectId, isDeleted: true };
         };
-        this.startStep = async (projectId, stepName, userId) => {
+        this.startStep = async (projectId, stepName, owner) => {
             if (!VALID_MUTABLE_STEPS.includes(stepName)) {
                 throw BadRequest(`Invalid step. Must be one of: ${VALID_MUTABLE_STEPS.join(", ")}`);
             }
-            const project = await this.getById(projectId, userId);
+            const project = await this.getById(projectId, owner);
             const step = stepName;
             const currentStatus = project.pipeline[step].status;
             if (currentStatus === "completed") {
@@ -254,11 +250,11 @@ class VideoProjectService {
                 [`pipeline.${stepName}.startedAt`]: null,
             });
         };
-        this.completeStep = async (projectId, stepName, userId) => {
+        this.completeStep = async (projectId, stepName, owner) => {
             if (!VALID_MUTABLE_STEPS.includes(stepName)) {
                 throw BadRequest(`Invalid step. Must be one of: ${VALID_MUTABLE_STEPS.join(", ")}`);
             }
-            const project = await this.getById(projectId, userId);
+            const project = await this.getById(projectId, owner);
             const step = stepName;
             const currentStatus = project.pipeline[step].status;
             if (currentStatus === "not_started") {
@@ -320,7 +316,7 @@ class VideoProjectService {
                 overallStatus: newOverallStatus,
             };
         };
-        this.linkResource = async (projectId, resourceType, resourceId, userId) => {
+        this.linkResource = async (projectId, resourceType, resourceId, owner) => {
             const validTypes = ["script", "hooks", "packaging"];
             if (!validTypes.includes(resourceType)) {
                 throw BadRequest(`Invalid resourceType. Must be one of: ${validTypes.join(", ")}`);
@@ -328,7 +324,7 @@ class VideoProjectService {
             if (!resourceId || resourceId.trim() === "") {
                 throw BadRequest("resourceId is required");
             }
-            await this.getById(projectId, userId);
+            await this.getById(projectId, owner);
             // Validating the PROJECT is not enough — the resource id comes straight from the
             // request body. Without this, anyone holding a leaked scriptId/hooksId/packagingId
             // could attach it to their own project and read it back: `packaging` copies the
@@ -343,7 +339,7 @@ class VideoProjectService {
             if (!resource) {
                 throw NotFound(`${resourceType} not found`);
             }
-            if (resource.createdBy !== userId) {
+            if (resource.accountId !== owner.accountId) {
                 throw Forbidden();
             }
             const fieldMap = {
@@ -366,8 +362,8 @@ class VideoProjectService {
             await this.repo.update(projectId, updates);
             return { id: projectId, ...updates };
         };
-        this.setSelectedHook = async (projectId, hooksId, hookIndex, userId) => {
-            await this.getById(projectId, userId);
+        this.setSelectedHook = async (projectId, hooksId, hookIndex, owner) => {
+            await this.getById(projectId, owner);
             await this.repo.update(projectId, { hooksId, selectedHookIndex: hookIndex });
             return { id: projectId, hooksId, selectedHookIndex: hookIndex };
         };
@@ -376,15 +372,15 @@ class VideoProjectService {
         // the project is still NAMED after one of them. Move the step back to
         // "needs a pick" so the UI prompts instead of showing a green step over a title
         // that isn't in the list any more.
-        this.reopenTitleStep = async (projectId, userId) => {
-            await this.getById(projectId, userId);
+        this.reopenTitleStep = async (projectId, owner) => {
+            await this.getById(projectId, owner);
             await this.repo.update(projectId, {
                 "pipeline.title.status": "in_progress",
                 "pipeline.title.completedAt": null,
             });
         };
-        this.clearSelectedHook = async (projectId, userId) => {
-            await this.getById(projectId, userId);
+        this.clearSelectedHook = async (projectId, owner) => {
+            await this.getById(projectId, owner);
             // Regenerating hooks invalidates the prior selection but NOT the batch
             // itself — the batch doc is updated in place, so hooksId still points at a
             // valid (newer) batch and must be kept. Clear only the selection and move
@@ -396,8 +392,8 @@ class VideoProjectService {
                 "pipeline.hooks.completedAt": null,
             });
         };
-        this.getByScriptId = async (scriptId, userId) => {
-            return this.repo.findByScriptId(scriptId, userId);
+        this.getByScriptId = async (scriptId, owner) => {
+            return this.repo.findByScriptId(scriptId, owner.accountId);
         };
         this.markStale = async (projectId, fromStep) => {
             const project = await this.repo.findById(projectId);

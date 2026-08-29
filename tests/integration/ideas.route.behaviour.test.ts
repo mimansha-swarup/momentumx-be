@@ -75,7 +75,7 @@ jest.mock("../../src/utlils/content", () => ({
 import request from "supertest";
 import app from "../../src/app";
 import { useSharedServer } from "./shared-server";
-import { TEST_ACCOUNT_ID } from "../helpers/account";
+import { testOwner, TEST_ACCOUNT_ID } from "../helpers/account";
 
 // One HTTP server for the whole file. `request(app)` starts and tears down a
 // FRESH ephemeral server per call; across ~113 requests that intermittently
@@ -155,7 +155,8 @@ describe("POST /v1/ideas/generate", () => {
       .set(...AUTH_HEADER)
       .send({ userId: "someone-elses-uid" });
 
-    expect(mockContentService.generateIdeas).toHaveBeenCalledWith("user-1", true, undefined);
+    expect(mockContentService.generateIdeas).toHaveBeenCalledWith(
+      testOwner("user-1"), true, undefined);
   });
 
   it("returns 400 with a field-prefixed message for an oversized context.niche", async () => {
@@ -210,13 +211,13 @@ describe("GET /v1/ideas", () => {
     expect(res.body).toMatchObject({ success: true, data: expect.any(Object) });
   });
 
-  it("scopes the query to the authenticated uid, not any query-string override", async () => {
+  it("scopes the query to the request's account, not any query-string override", async () => {
     mockContentService.getPaginatedUsersIdeas.mockResolvedValueOnce({ ideas: [], hasMore: false });
 
     await request(server()).get("/v1/ideas?userId=someone-else").set(...AUTH_HEADER);
 
     expect(mockContentService.getPaginatedUsersIdeas).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: "user-1" })
+      expect.objectContaining({ accountId: TEST_ACCOUNT_ID })
     );
   });
 
@@ -355,7 +356,7 @@ describe("PATCH /v1/ideas/edit/:ideaId", () => {
       .set(...AUTH_HEADER)
       .send({ title: "New title", userId: "someone-elses-uid" });
 
-    expect(mockContentService.editIdeas).toHaveBeenCalledWith("idea-1", "user-1", expect.anything());
+    expect(mockContentService.editIdeas).toHaveBeenCalledWith("idea-1", testOwner("user-1"), expect.anything());
   });
 
   // The editable field is `title`, not `workingTitle`. These tests originally sent

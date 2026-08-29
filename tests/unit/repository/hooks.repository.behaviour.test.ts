@@ -23,10 +23,12 @@ jest.mock("../../../src/config/firebase", () => ({
 
 import HooksRepository from "../../../src/repository/hooks.repository";
 import { IHooksBatch } from "../../../src/types/routes/hooks";
+import { TEST_ACCOUNT_ID } from "../../helpers/account";
 
 const baseBatch = {
   videoProjectId: "proj-1",
   createdBy: "user-1",
+  accountId: TEST_ACCOUNT_ID,
   hooks: ["hook one", "hook two"],
   hookFeedback: {},
 } as unknown as Omit<IHooksBatch, "id" | "createdAt">;
@@ -73,7 +75,7 @@ describe("HooksRepository.findById — point read", () => {
   });
 
   it("returns the stored batch data for an existing document", async () => {
-    const stored = { id: "hooks-1", videoProjectId: "proj-1", createdBy: "user-1", hooks: ["h1", "h2"] };
+    const stored = { id: "hooks-1", videoProjectId: "proj-1", createdBy: "user-1", accountId: TEST_ACCOUNT_ID, hooks: ["h1", "h2"] };
     docGet.mockResolvedValueOnce({ exists: true, data: () => stored });
 
     const result = await repo.findById("hooks-1");

@@ -41,7 +41,7 @@ jest.mock("../../../src/config/ai", () => ({
 import ContentService from "../../../src/service/content.service";
 import ContentRepository from "../../../src/repository/content.repository";
 import UserRepository from "../../../src/repository/user.repository";
-import { makeTestAccountService } from "../../helpers/account";
+import { makeTestAccountService, testOwner } from "../../helpers/account";
 
 jest.mock("../../../src/repository/content.repository");
 jest.mock("../../../src/repository/user.repository");
@@ -59,7 +59,7 @@ const makeService = (docs: unknown[]) => {
   const repo = new (ContentRepository as jest.MockedClass<typeof ContentRepository>)() as jest.Mocked<ContentRepository>;
   repo.getIdeas = jest.fn().mockResolvedValue(docs);
   const userRepo = new (UserRepository as jest.MockedClass<typeof UserRepository>)() as jest.Mocked<UserRepository>;
-  return { service: new ContentService(repo, userRepo, {} as never, makeTestAccountService()), repo };
+  return { service: new ContentService(repo, userRepo, {} as never), repo };
 };
 
 describe("getPaginatedUsersIdeas — the cursor must match the ordering the page used", () => {

@@ -59,17 +59,17 @@ export const videoProjectRepository = new VideoProjectRepository();
 
 // --- Services --------------------------------------------------------------
 
-// Phase 03. Resolves (and lazily mints) the caller's single account, so every
-// write can be stamped with an `accountId` while every read still filters on
-// `createdBy`.
+// Phase 03, narrowed by Phase 06. It no longer stamps writes — the account now
+// arrives on the request as `req.accountId`, already membership-checked. What is
+// left is the lazy first-mint and the tombstone repair, both used only by
+// `accountMiddleware`.
 export const accountService = new AccountService(accountRepository, userRepository);
 
 export const videoProjectService = new VideoProjectService(
   videoProjectRepository,
   contentRepository,
   packagingRepository,
-  hooksRepository,
-  accountService
+  hooksRepository
 );
 
 export const contextService = new ContextService(
@@ -92,7 +92,6 @@ export const contentService = new ContentService(
   contentRepository,
   userRepository,
   videoProjectService,
-  accountService,
   researchContextService
 );
 
@@ -105,15 +104,13 @@ export const hooksService = new HooksService(
   hooksRepository,
   videoProjectService,
   contextService,
-  stepRunner,
-  accountService
+  stepRunner
 );
 
 export const packagingService = new PackagingService(
   packagingRepository,
   videoProjectService,
   contextService,
-  accountService,
   researchContextService
 );
 

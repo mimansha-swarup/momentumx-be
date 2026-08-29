@@ -54,11 +54,11 @@ class PackagingRepository {
     }
   };
 
-  getByUserId = async (userId: string): Promise<IPackaging[]> => {
+  getByAccountId = async (accountId: string): Promise<IPackaging[]> => {
     try {
       const snapshot = await this.db
         .collection(this.collection)
-        .where("createdBy", "==", userId)
+        .where("accountId", "==", accountId)
         .orderBy("createdAt", "desc")
         .get();
 

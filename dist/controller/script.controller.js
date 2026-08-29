@@ -1,4 +1,5 @@
 import { asyncHandler } from "../middleware/async_handler.js";
+import { ownerOf } from "../utlils/content.js";
 import { eventService } from "../service/event.service.js";
 class ScriptController {
     constructor(service) {
@@ -8,7 +9,7 @@ class ScriptController {
         this.generateScript = async (req, res) => {
             try {
                 const projectId = req.params.projectId;
-                await this.service.generateScripts(req.userId, projectId, res);
+                await this.service.generateScripts(ownerOf(req), projectId, res);
             }
             catch (error) {
                 // If the stream hasn't started (e.g. ownership failure before flushHeaders),
@@ -23,14 +24,14 @@ class ScriptController {
             }
         };
         this.retrieveScripts = asyncHandler(async (req, res) => {
-            const data = await this.service.getUsersScript(req.userId);
+            const data = await this.service.getUsersScript(ownerOf(req));
             res.sendSuccess({
                 message: "successfully retrieved scripts",
                 data,
             });
         });
         this.retrieveScriptById = asyncHandler(async (req, res) => {
-            const data = await this.service.getScriptById(req.params.scriptId, req.userId);
+            const data = await this.service.getScriptById(req.params.scriptId, ownerOf(req));
             res.sendSuccess({
                 message: "successfully retrieved script",
                 data,
@@ -38,7 +39,7 @@ class ScriptController {
         });
         this.editScript = asyncHandler(async (req, res) => {
             const scriptId = req.params.scriptId;
-            const data = await this.service.editScript(scriptId, req.userId, req.body);
+            const data = await this.service.editScript(scriptId, ownerOf(req), req.body);
             res.sendSuccess({
                 message: "Script updated successfully",
                 data: { ...data, scriptId },
@@ -46,14 +47,14 @@ class ScriptController {
         });
         this.regenerateScript = asyncHandler(async (req, res) => {
             const { scriptId } = req.params;
-            const data = await this.service.regenerateScript(req.userId, scriptId);
-            eventService.capture(req.userId, "regenerate" /* EventType.REGENERATE */, { resource: "script", scriptId });
+            const data = await this.service.regenerateScript(ownerOf(req), scriptId);
+            eventService.capture(ownerOf(req), "regenerate" /* EventType.REGENERATE */, { resource: "script", scriptId });
             res.sendSuccess({ message: "Script regenerated successfully", data });
         });
         this.exportScript = asyncHandler(async (req, res) => {
             const { scriptId } = req.params;
-            const data = await this.service.exportScript(req.userId, scriptId);
-            eventService.capture(req.userId, "export" /* EventType.EXPORT */, { resource: "script", scriptId });
+            const data = await this.service.exportScript(ownerOf(req), scriptId);
+            eventService.capture(ownerOf(req), "export" /* EventType.EXPORT */, { resource: "script", scriptId });
             res.sendSuccess({ message: "Script exported successfully", data });
         });
         this.service = service;

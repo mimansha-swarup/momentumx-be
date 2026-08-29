@@ -2,6 +2,7 @@ import StepRunner from "../../src/service/step-runner";
 import VideoProjectRepository from "../../src/repository/video-project.repository";
 import { IVideoProject, StepName } from "../../src/types/routes/video-project";
 import { BadRequest, Conflict, Forbidden, NotFound } from "../../src/utlils/errors";
+import { RecordOwner } from "../../src/utlils/content";
 
 /**
  * A StepRunner backed by an in-memory project, for SERVICE-level flow tests.
@@ -35,14 +36,14 @@ export function makeTestStepRunner(opts: {
     acquireStep: async (
       _projectId: string,
       step: StepName,
-      userId: string,
+      owner: RecordOwner,
       guard: { requires: readonly StepName[]; lockMs: number }
     ): Promise<IVideoProject> => {
       const project =
         typeof opts.project === "function" ? await opts.project() : opts.project;
       if (!project) throw NotFound("Video project not found");
       if (project.isDeleted) throw NotFound("Video project not found");
-      if (project.createdBy !== userId) throw Forbidden();
+      if (project.accountId !== owner.accountId) throw Forbidden();
 
       for (const required of guard.requires) {
         if (project.pipeline[required]?.status !== "completed") {

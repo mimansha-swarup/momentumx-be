@@ -5,17 +5,16 @@ import { firebase } from "../config/firebase.js";
 import { BadRequest, Forbidden, NotFound } from "../utlils/errors.js";
 import { buildCreatorContextBlock, buildHookSection, buildScriptSection, fillTemplate, THUMBNAIL_FORMAT_DIRECTIVE, resolveVideoFormat, } from "../utlils/prompt-blocks.js";
 class PackagingService {
-    constructor(repo, videoProjectService, contextService, accountService, researchContext) {
+    constructor(repo, videoProjectService, contextService, researchContext) {
         this.videoProjectService = videoProjectService;
         this.contextService = contextService;
-        this.accountService = accountService;
         this.researchContext = researchContext;
         // Best-available context (phases 1D): channel context always, script/hook
         // resolved server-side from the project when not supplied by the client.
         // An explicit body script wins over the stored one (supports edited-but-
         // unsaved scripts and keeps existing calls behaving identically).
-        this.resolveGenerationInputs = async (userId, videoProjectId, explicitScript) => {
-            const ctx = await this.contextService.assemble(userId, videoProjectId ? { videoProjectId } : {});
+        this.resolveGenerationInputs = async (owner, videoProjectId, explicitScript) => {
+            const ctx = await this.contextService.assemble(owner, videoProjectId ? { videoProjectId } : {});
             return {
                 channel: ctx.channelContext,
                 script: explicitScript?.trim()
@@ -40,8 +39,8 @@ class PackagingService {
         // live competitive title research → 3 scored variations. Research query =
         // the project's working title when available (specific beats broad), else
         // the script's opening. Research failure degrades to context-only titles.
-        this.runTitle = async (userId, script, videoProjectId) => {
-            const inputs = await this.resolveGenerationInputs(userId, videoProjectId, script);
+        this.runTitle = async (owner, script, videoProjectId) => {
+            const inputs = await this.resolveGenerationInputs(owner, videoProjectId, script);
             if (!inputs.script) {
                 throw BadRequest("Script is required — provide one or use a project with a generated script");
             }
@@ -58,8 +57,8 @@ class PackagingService {
             });
             return this.generateContent(userPrompt, GENERATION_CONFIG_TITLE_VARIATIONS, "titles");
         };
-        this.runDescription = async (userId, script, title, videoProjectId) => {
-            const inputs = await this.resolveGenerationInputs(userId, videoProjectId, script);
+        this.runDescription = async (owner, script, title, videoProjectId) => {
+            const inputs = await this.resolveGenerationInputs(owner, videoProjectId, script);
             const userPrompt = fillTemplate(GENERATE_DESCRIPTION_PROMPT, {
                 "{title}": title,
                 "{creatorContext}": buildCreatorContextBlock(inputs.channel),
@@ -68,8 +67,8 @@ class PackagingService {
             });
             return this.generateContent(userPrompt, GENERATION_CONFIG_DESCRIPTION, "a description");
         };
-        this.runThumbnail = async (userId, script, title, videoProjectId) => {
-            const inputs = await this.resolveGenerationInputs(userId, videoProjectId, script);
+        this.runThumbnail = async (owner, script, title, videoProjectId) => {
+            const inputs = await this.resolveGenerationInputs(owner, videoProjectId, script);
             const format = resolveVideoFormat(inputs.channel?.format);
             const userPrompt = fillTemplate(GENERATE_THUMBNAIL_PROMPT, {
                 "{title}": title,
@@ -80,10 +79,10 @@ class PackagingService {
             });
             return this.generateContent(userPrompt, GENERATION_CONFIG_THUMBNAIL, "thumbnail briefs");
         };
-        this.runShorts = async (userId, script, duration, videoProjectId) => {
+        this.runShorts = async (owner, script, duration, videoProjectId) => {
             // Script is pipeline-native but resolved server-side: an explicit body
             // script wins, else it's pulled from the project (best-available context).
-            const inputs = await this.resolveGenerationInputs(userId, videoProjectId, script);
+            const inputs = await this.resolveGenerationInputs(owner, videoProjectId, script);
             if (!inputs.script) {
                 throw BadRequest("Provide a script or a videoProjectId with a generated script");
             }
@@ -98,32 +97,32 @@ class PackagingService {
         // first generation for a project) — the client never round-trips generated
         // content back through /save. Each returns the persisted content plus the
         // packagingId. Without a videoProjectId it's a stateless preview (no persist).
-        this.generateTitle = async (userId, script, videoProjectId) => {
-            const raw = await this.runTitle(userId, script, videoProjectId);
+        this.generateTitle = async (owner, script, videoProjectId) => {
+            const raw = await this.runTitle(owner, script, videoProjectId);
             if (!videoProjectId)
                 return raw;
-            const { packagingId, canonical } = await this.persistGeneratedItem(userId, videoProjectId, "title", raw);
+            const { packagingId, canonical } = await this.persistGeneratedItem(owner, videoProjectId, "title", raw);
             return { titles: canonical, packagingId };
         };
-        this.generateDescription = async (userId, script, title, videoProjectId) => {
-            const raw = await this.runDescription(userId, script, title, videoProjectId);
+        this.generateDescription = async (owner, script, title, videoProjectId) => {
+            const raw = await this.runDescription(owner, script, title, videoProjectId);
             if (!videoProjectId)
                 return raw;
-            const { packagingId, canonical } = await this.persistGeneratedItem(userId, videoProjectId, "description", raw);
+            const { packagingId, canonical } = await this.persistGeneratedItem(owner, videoProjectId, "description", raw);
             return { description: canonical, packagingId };
         };
-        this.generateThumbnail = async (userId, script, title, videoProjectId) => {
-            const raw = await this.runThumbnail(userId, script, title, videoProjectId);
+        this.generateThumbnail = async (owner, script, title, videoProjectId) => {
+            const raw = await this.runThumbnail(owner, script, title, videoProjectId);
             if (!videoProjectId)
                 return raw;
-            const { packagingId, canonical } = await this.persistGeneratedItem(userId, videoProjectId, "thumbnail", raw);
+            const { packagingId, canonical } = await this.persistGeneratedItem(owner, videoProjectId, "thumbnail", raw);
             return { descriptions: canonical, packagingId };
         };
-        this.generateShorts = async (userId, script, duration, videoProjectId) => {
-            const raw = await this.runShorts(userId, script, duration, videoProjectId);
+        this.generateShorts = async (owner, script, duration, videoProjectId) => {
+            const raw = await this.runShorts(owner, script, duration, videoProjectId);
             if (!videoProjectId)
                 return raw;
-            const { packagingId, canonical } = await this.persistGeneratedItem(userId, videoProjectId, "shorts", raw);
+            const { packagingId, canonical } = await this.persistGeneratedItem(owner, videoProjectId, "shorts", raw);
             return { ...canonical, packagingId };
         };
         // Persist one freshly generated item into the project's packaging doc and
@@ -133,29 +132,30 @@ class PackagingService {
         // + status snapshot is a single atomic repo transaction so two generations
         // racing can't split into two docs or both skip completion. Content write is
         // critical; pipeline transitions are best-effort (logged), matching savePackaging.
-        this.persistGeneratedItem = async (userId, videoProjectId, item, rawContent) => {
+        this.persistGeneratedItem = async (owner, videoProjectId, item, rawContent) => {
+            const { userId } = owner;
             // Ownership check (throws if the project isn't the caller's).
-            await this.videoProjectService.getById(videoProjectId, userId);
+            await this.videoProjectService.getById(videoProjectId, owner);
             // Storage field == item name, except title lives under "titles". Normalize
             // BEFORE the write so malformed content throws here (no orphaned doc).
             const field = item === "title" ? "titles" : item;
             const canonical = this.normalizeField(field, rawContent);
-            const { packagingId, created, statuses } = await this.repo.upsertGeneratedItem(videoProjectId, { userId, accountId: await this.accountService.ensureDefaultAccount(userId) }, field, item, canonical);
+            const { packagingId, created, statuses } = await this.repo.upsertGeneratedItem(videoProjectId, owner, field, item, canonical);
             const step = item === "title" ? "title" : "packaging";
             // Pipeline sync is best-effort: the content is already saved, so a transition
             // hiccup must not fail generation.
             try {
                 if (created) {
-                    await this.videoProjectService.linkResource(videoProjectId, "packaging", packagingId, userId);
+                    await this.videoProjectService.linkResource(videoProjectId, "packaging", packagingId, owner);
                 }
-                await this.videoProjectService.startStep(videoProjectId, step, userId);
+                await this.videoProjectService.startStep(videoProjectId, step, owner);
                 // Packaging completes when its three items exist; the title step completes
                 // on selection, never here.
                 if (step === "packaging" &&
                     statuses.description === "completed" &&
                     statuses.thumbnail === "completed" &&
                     statuses.shorts === "completed") {
-                    await this.videoProjectService.completeStep(videoProjectId, "packaging", userId);
+                    await this.videoProjectService.completeStep(videoProjectId, "packaging", owner);
                 }
             }
             catch (pipelineError) {
@@ -242,7 +242,8 @@ class PackagingService {
             }
             return "Untitled video";
         };
-        this.savePackaging = async (userId, data, videoProjectId) => {
+        this.savePackaging = async (owner, data, videoProjectId) => {
+            const { userId } = owner;
             // Coerce any present content field to its canonical stored shape so the
             // persisted doc matches what regenerateItem and the readers expect.
             const normalized = { ...data };
@@ -268,18 +269,18 @@ class PackagingService {
             // the pipeline. Either branch leaves us with a project for the save below.
             let projectId = videoProjectId;
             if (projectId) {
-                await this.videoProjectService.getById(projectId, userId);
+                await this.videoProjectService.getById(projectId, owner);
             }
             else {
-                const project = await this.videoProjectService.createFromTitle(userId, this.deriveWorkingTitle(normalized));
+                const project = await this.videoProjectService.createFromTitle(owner, this.deriveWorkingTitle(normalized));
                 projectId = project.id;
             }
             const packagingData = {
                 ...normalized,
                 // AFTER the spread, like createdBy — though packagingSaveSchema, not field
                 // order, is what stops these keys reaching the service at all.
-                createdBy: userId,
-                accountId: await this.accountService.ensureDefaultAccount(userId),
+                createdBy: owner.userId,
+                accountId: owner.accountId,
                 videoProjectId: projectId,
             };
             // Stale flags are set fresh ONLY when the document is first created — a
@@ -321,7 +322,7 @@ class PackagingService {
                 settled.thumbnail === "completed" &&
                 settled.shorts === "completed";
             try {
-                await this.videoProjectService.linkResource(projectId, "packaging", result.id, userId);
+                await this.videoProjectService.linkResource(projectId, "packaging", result.id, owner);
                 // And even with all three present, a STALE package stays stale: completeStep
                 // moves `stale` straight to `completed`, so an edit-save would clear the
                 // project's stale badge without anything being regenerated. Un-staling is an
@@ -331,8 +332,8 @@ class PackagingService {
                 // which completeStep rejects — start it first (startStep no-ops if already
                 // in_progress/completed), so both the door and pipeline paths complete cleanly.
                 if (packagingComplete && !existing?.isStale) {
-                    await this.videoProjectService.startStep(projectId, "packaging", userId);
-                    await this.videoProjectService.completeStep(projectId, "packaging", userId);
+                    await this.videoProjectService.startStep(projectId, "packaging", owner);
+                    await this.videoProjectService.completeStep(projectId, "packaging", owner);
                 }
             }
             catch (pipelineError) {
@@ -340,26 +341,27 @@ class PackagingService {
             }
             return result;
         };
-        this.getPackaging = async (packagingId, userId) => {
+        this.getPackaging = async (packagingId, owner) => {
             const result = await this.repo.get(packagingId);
             if (!result)
                 return null;
-            if (result.createdBy !== userId)
+            if (result.accountId !== owner.accountId)
                 throw Forbidden();
             return result;
         };
-        this.getPackagingByUser = async (userId) => {
-            return this.repo.getByUserId(userId);
+        this.getPackagingByAccount = async (owner) => {
+            return this.repo.getByAccountId(owner.accountId);
         };
         // Title continuity (§7.3): the user finalizes one of the generated Title
         // variations. Persist the choice and promote it to the project's display title
         // (the idea working-title was only ever a placeholder).
-        this.selectTitle = async (userId, packagingId, index) => {
+        this.selectTitle = async (owner, packagingId, index) => {
+            const { userId } = owner;
             const pkg = await this.repo.get(packagingId);
             if (!pkg) {
                 throw NotFound("Packaging not found");
             }
-            if (pkg.createdBy !== userId) {
+            if (pkg.accountId !== owner.accountId) {
                 throw Forbidden();
             }
             if (!Array.isArray(pkg.titles) || pkg.titles.length === 0) {
@@ -378,11 +380,11 @@ class PackagingService {
             // NOT best-effort — the rename IS the feature, so a failure must surface (→ FE
             // toast → retry, which is idempotent) rather than be silently swallowed.
             if (pkg.videoProjectId) {
-                await this.videoProjectService.update(pkg.videoProjectId, userId, { title: titleText });
+                await this.videoProjectService.update(pkg.videoProjectId, owner, { title: titleText });
                 // Selecting a title IS the completion of the Title pipeline step. Best-effort
                 // (like other pipeline transitions) so a step hiccup can't fail the rename.
                 try {
-                    await this.videoProjectService.completeStep(pkg.videoProjectId, "title", userId);
+                    await this.videoProjectService.completeStep(pkg.videoProjectId, "title", owner);
                 }
                 catch (stepError) {
                     console.error(JSON.stringify({ event: "pipeline_transition_failed", step: "title", projectId: pkg.videoProjectId, packagingId, userId, message: stepError?.message }));
@@ -390,12 +392,13 @@ class PackagingService {
             }
             return { id: packagingId, selectedTitleIndex: index, title: titleText };
         };
-        this.regenerateItem = async (userId, packagingId, item, script, title, duration) => {
+        this.regenerateItem = async (owner, packagingId, item, script, title, duration) => {
+            const { userId } = owner;
             const pkg = await this.repo.get(packagingId);
             if (!pkg) {
                 throw NotFound("Packaging not found");
             }
-            if (pkg.createdBy !== userId) {
+            if (pkg.accountId !== owner.accountId) {
                 throw Forbidden();
             }
             // Resolve the selected hook (and stored script) from the STORED project on
@@ -410,7 +413,7 @@ class PackagingService {
             // description/thumbnail degrade to best-available context (phases 1D).
             // The body script (if sent) wins; otherwise the project's stored script
             // is resolved server-side, so no body script is needed at all.
-            const resolved = await this.resolveGenerationInputs(userId, videoProjectId, script);
+            const resolved = await this.resolveGenerationInputs(owner, videoProjectId, script);
             if ((item === "title" || item === "shorts") && !resolved.script) {
                 throw BadRequest("script is required");
             }
@@ -428,21 +431,21 @@ class PackagingService {
                 // does its own targeted update + stale handling below, so it must not
                 // double-persist through the public wrappers.
                 if (item === "title") {
-                    result = await this.runTitle(userId, resolved.script, videoProjectId);
+                    result = await this.runTitle(owner, resolved.script, videoProjectId);
                     fieldKey = "titles";
                 }
                 else if (item === "description") {
-                    result = await this.runDescription(userId, resolved.script || undefined, title, videoProjectId);
+                    result = await this.runDescription(owner, resolved.script || undefined, title, videoProjectId);
                     fieldKey = "description";
                 }
                 else if (item === "thumbnail") {
-                    result = await this.runThumbnail(userId, resolved.script || undefined, title, videoProjectId);
+                    result = await this.runThumbnail(owner, resolved.script || undefined, title, videoProjectId);
                     fieldKey = "thumbnail";
                 }
                 else {
                     // Same default the generate-shorts path uses client-side; regenerate
                     // must not 400 when the client omits it (it always did).
-                    result = await this.runShorts(userId, resolved.script, duration ?? 60, videoProjectId);
+                    result = await this.runShorts(owner, resolved.script, duration ?? 60, videoProjectId);
                     fieldKey = "shorts";
                 }
             }
@@ -506,7 +509,7 @@ class PackagingService {
             // must not fail the already-saved regeneration.
             if (!anyStillStale && videoProjectId) {
                 try {
-                    await this.videoProjectService.refreshPackagingStep(videoProjectId, userId);
+                    await this.videoProjectService.refreshPackagingStep(videoProjectId, owner);
                 }
                 catch (syncError) {
                     console.error(JSON.stringify({ event: "stale_cascade_clear_failed", projectId: videoProjectId, packagingId, userId, message: syncError?.message }));
@@ -518,7 +521,7 @@ class PackagingService {
                         // The pick is gone with the old variations — reopen the step so the
                         // creator is asked to choose again rather than shown a green step over
                         // a project name that no longer matches any title on screen.
-                        await this.videoProjectService.reopenTitleStep(videoProjectId, userId);
+                        await this.videoProjectService.reopenTitleStep(videoProjectId, owner);
                     }
                     else {
                         // Regenerating the item that was MISSING is how a creator recovers from a
@@ -529,8 +532,8 @@ class PackagingService {
                         if (settled.description === "completed" &&
                             settled.thumbnail === "completed" &&
                             settled.shorts === "completed") {
-                            await this.videoProjectService.startStep(videoProjectId, "packaging", userId);
-                            await this.videoProjectService.completeStep(videoProjectId, "packaging", userId);
+                            await this.videoProjectService.startStep(videoProjectId, "packaging", owner);
+                            await this.videoProjectService.completeStep(videoProjectId, "packaging", owner);
                         }
                     }
                 }
@@ -543,7 +546,7 @@ class PackagingService {
             if (item === "thumbnail" && videoProjectId) {
                 try {
                     const briefs = updateData.thumbnail;
-                    await this.videoProjectService.setThumbnailHint(videoProjectId, briefs?.[0] ?? null, userId);
+                    await this.videoProjectService.setThumbnailHint(videoProjectId, briefs?.[0] ?? null, owner);
                 }
                 catch (hintError) {
                     console.error(JSON.stringify({ event: "thumbnail_hint_refresh_failed", projectId: videoProjectId, packagingId, userId, message: hintError?.message }));
@@ -551,12 +554,12 @@ class PackagingService {
             }
             return { id: packagingId, item, data: canonical };
         };
-        this.exportPackaging = async (userId, packagingId) => {
+        this.exportPackaging = async (owner, packagingId) => {
             const pkg = await this.repo.get(packagingId);
             if (!pkg) {
                 throw NotFound("Packaging not found");
             }
-            if (pkg.createdBy !== userId) {
+            if (pkg.accountId !== owner.accountId) {
                 throw Forbidden();
             }
             const today = new Date().toLocaleDateString("en-US", {

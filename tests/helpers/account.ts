@@ -17,6 +17,16 @@ import { RecordOwner } from "../../src/utlils/content";
 export const TEST_ACCOUNT_ID = "acc-11111111-2222-4333-8444-555555555555";
 
 /**
+ * A SECOND channel, for the cross-tenant cases.
+ *
+ * From Phase 06 "belongs to someone else" is a different `accountId`, not a
+ * different `createdBy`. A fixture that varies only the author now describes a
+ * co-member of the SAME channel — who is allowed — so it would assert a 403 that
+ * no longer happens, or worse, stop asserting anything.
+ */
+export const OTHER_ACCOUNT_ID = "acc-99999999-8888-4777-8666-555555555555";
+
+/**
  * A pass-through `src/middleware/account` for ROUTE suites.
  *
  * Those suites mock `config/firebase` with an empty `db`, so the real middleware
@@ -61,7 +71,14 @@ export function makeTestAccountService(accountId = TEST_ACCOUNT_ID): AccountServ
   } as unknown as AccountService;
 }
 
-/** The owner stamp the helpers above produce, for asserting on a written doc. */
+/**
+ * The owner stamp the helpers above produce — for asserting on a written doc, and
+ * (from Phase 06) on the argument a controller hands its service.
+ *
+ * Asserting the whole object is what keeps the route suites meaningful. Right uid
+ * plus WRONG account is the bug this phase can introduce, and an assertion that
+ * checked only the uid would wave it through.
+ */
 export const testOwner = (userId: string, accountId = TEST_ACCOUNT_ID): RecordOwner => ({
   userId,
   accountId,

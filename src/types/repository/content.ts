@@ -25,8 +25,13 @@ export interface IIdeaCursor {
   docId?: string;
 }
 
-export interface IGetIdeaByUserIdArgs {
-  userId: string;
+/**
+ * Phase 06: scoped by ACCOUNT, not by user. Named properties rather than
+ * positional parameters, so swapping the two ids is a compile error here even
+ * though both are `string`.
+ */
+export interface IGetIdeaQueryArgs {
+  accountId: string;
   limit: number;
   cursor: IIdeaCursor;
   filters: IIdeaFilters;

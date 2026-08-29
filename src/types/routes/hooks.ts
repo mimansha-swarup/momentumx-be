@@ -4,8 +4,15 @@ export interface IHooksBatch {
   id: string;
   videoProjectId: string;
   createdBy: string;
-  /** Phase 03 dual-write. Stamped on create, read by nothing until Phase 06. */
-  accountId?: string;
+  /**
+   * The channel this record belongs to (Phase 03 writes it, Phase 06 reads it).
+   *
+   * REQUIRED, and it is the permission field — `createdBy` is authorship only.
+   * Optional here would make `doc.accountId !== owner.accountId` compile against
+   * a document type that admits `undefined`, which is the comparison silently
+   * passing for a record nobody can prove belongs anywhere.
+   */
+  accountId: string;
   hooks: string[];
   hookFeedback: Record<string, "like" | "dislike" | null>;
   createdAt: Timestamp;

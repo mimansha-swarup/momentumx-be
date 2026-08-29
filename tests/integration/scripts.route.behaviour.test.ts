@@ -64,6 +64,7 @@ import request from "supertest";
 import app from "../../src/app";
 import { ServiceUnavailable } from "../../src/utlils/errors";
 import { useSharedServer } from "./shared-server";
+import { testOwner, OTHER_ACCOUNT_ID } from "../helpers/account";
 
 const server = useSharedServer(app);
 
@@ -150,7 +151,7 @@ describe("GET /v1/scripts/stream/:projectId — the EventSource exception", () =
     expect(res.status).toBe(200);
     expect(mockVerifyIdToken).toHaveBeenCalledWith("valid-token");
     expect(mockContentService.generateScripts).toHaveBeenCalledWith(
-      "user-1",
+      testOwner("user-1"),
       "proj-1",
       expect.anything()
     );
@@ -216,7 +217,8 @@ describe("GET /v1/scripts and /:scriptId", () => {
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ success: true, data: [{ id: "script-1" }] });
     // Identity comes from the verified token, never the query string.
-    expect(mockContentService.getUsersScript).toHaveBeenCalledWith("user-1");
+    expect(mockContentService.getUsersScript).toHaveBeenCalledWith(
+      testOwner("user-1"));
   });
 
   it("ignores a userId supplied by the client and uses the token's uid", async () => {
@@ -224,7 +226,8 @@ describe("GET /v1/scripts and /:scriptId", () => {
 
     await request(server()).get("/v1/scripts?userId=someone-else").set(...AUTH_HEADER);
 
-    expect(mockContentService.getUsersScript).toHaveBeenCalledWith("user-1");
+    expect(mockContentService.getUsersScript).toHaveBeenCalledWith(
+      testOwner("user-1"));
   });
 
   it("passes scriptId from the path and userId from the token, in that order", async () => {
@@ -235,7 +238,7 @@ describe("GET /v1/scripts and /:scriptId", () => {
     expect(res.status).toBe(200);
     // A swapped pair here would read one user's id as a document id — the exact
     // wiring bug nothing was watching for on this router.
-    expect(mockContentService.getScriptById).toHaveBeenCalledWith("script-1", "user-1");
+    expect(mockContentService.getScriptById).toHaveBeenCalledWith("script-1", testOwner("user-1"));
   });
 
   it("does not let /:scriptId swallow the /stream path", async () => {
@@ -253,7 +256,8 @@ describe("GET /v1/scripts and /:scriptId", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.data).toMatchObject({ text: "SCRIPT" });
-    expect(mockContentService.exportScript).toHaveBeenCalledWith("user-1", "script-1");
+    expect(mockContentService.exportScript).toHaveBeenCalledWith(
+      testOwner("user-1"), "script-1");
     expect(mockContentService.getScriptById).not.toHaveBeenCalled();
   });
 });
@@ -274,7 +278,7 @@ describe("PATCH /v1/scripts/edit/:scriptId", () => {
     expect(res.status).toBe(200);
     expect(mockContentService.editScript).toHaveBeenCalledWith(
       "script-1",
-      "user-1",
+      testOwner("user-1"),
       { script: "new text" }
     );
     // The client needs the id back to update its own store.
@@ -307,9 +311,9 @@ describe("PATCH /v1/scripts/edit/:scriptId", () => {
     await request(server())
       .patch("/v1/scripts/edit/script-1")
       .set(...AUTH_HEADER)
-      .send({ script: "ok", createdBy: "someone-else", videoProjectId: "proj-9" });
+      .send({ script: "ok", createdBy: "someone-else", accountId: OTHER_ACCOUNT_ID, videoProjectId: "proj-9" });
 
-    expect(mockContentService.editScript).toHaveBeenCalledWith("script-1", "user-1", {
+    expect(mockContentService.editScript).toHaveBeenCalledWith("script-1", testOwner("user-1"), {
       script: "ok",
     });
   });
@@ -340,7 +344,8 @@ describe("POST /v1/scripts/:scriptId/regenerate", () => {
       .set(...AUTH_HEADER);
 
     expect(res.status).toBe(200);
-    expect(mockContentService.regenerateScript).toHaveBeenCalledWith("user-1", "script-1");
+    expect(mockContentService.regenerateScript).toHaveBeenCalledWith(
+      testOwner("user-1"), "script-1");
     expect(res.body.data).toMatchObject({ id: "script-1" });
   });
 

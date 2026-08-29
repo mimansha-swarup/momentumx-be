@@ -6,17 +6,19 @@ import {
   STEP_LOCK_MS,
 } from "../constants/pipeline.js";
 import { StaleReason, StepState } from "../types/routes/video-project.js";
+import { RecordOwner } from "../utlils/content.js";
 
 /**
- * Who is generating.
+ * Who is generating — Phase 06 made `accountId` required, which is what this seam
+ * was for.
  *
- * Phase 05 adds `accountId` here and nowhere else — that is the point of having a
- * seam at all. Optional today so nothing has to change twice.
+ * It is `RecordOwner` rather than a second interface of the same shape: two
+ * structurally identical types are indistinguishable to the compiler, so nothing
+ * would stop one drifting from the other, and the reason both exist — an OBJECT,
+ * because `userId` and `accountId` are both `string` and a positional parameter
+ * silently accepts the wrong one — is exactly the same reason.
  */
-export interface Actor {
-  userId: string;
-  accountId?: string;
-}
+export type Actor = RecordOwner;
 
 export interface GenerationSpec {
   actor: Actor;
@@ -92,7 +94,7 @@ class StepRunner {
       const project = await this.projects.acquireStep(
         spec.projectId,
         step,
-        spec.actor.userId,
+        spec.actor,
         { requires: REQUIRES[step], lockMs: STEP_LOCK_MS }
       );
       const state = project.pipeline[step];

@@ -23,19 +23,9 @@ function formatCompetitorUrls(competitors) {
         .join(", ");
 }
 class ContentService {
-    constructor(repo, userRepo, videoProjectService, accountService, researchContext) {
+    constructor(repo, userRepo, videoProjectService, researchContext) {
         this.videoProjectService = videoProjectService;
-        this.accountService = accountService;
         this.researchContext = researchContext;
-        /**
-         * The owner stamp for a new record. Public only because `idea.controller.ts`
-         * assembles the idea write shape itself — a layering violation that predates
-         * this phase. Phase 05 replaces the body with `req.accountId`.
-         */
-        this.resolveOwner = async (userId) => ({
-            userId,
-            accountId: await this.accountService.ensureDefaultAccount(userId),
-        });
         // Builds the script user prompt from the creator's profile + a title.
         // Shared by generateScripts (SSE) and regenerateScript so the placeholder
         // replacement chain lives in one place.
@@ -47,13 +37,9 @@ class ContentService {
             "{websiteContent}": userRecord?.websiteContent ?? "",
             "{title}": title,
         });
-        this.getPaginatedUsersIdeas = async ({ userId, limit, cursor, filters, }) => {
-            const docs = await this.repo.getIdeas({
-                userId,
-                limit,
-                cursor,
-                filters,
-            });
+        this.getPaginatedUsersIdeas = async (args) => {
+            const { limit, filters } = args;
+            const docs = await this.repo.getIdeas(args);
             const lastDoc = docs[docs.length - 1];
             // The cursor must match the ORDERING the repository used, and search orders
             // by title while the default orders by createdAt. Emitting a createdAt cursor
@@ -88,10 +74,11 @@ class ContentService {
         // video concepts — headline optimization happens post-script at the Title
         // step, never here. Research signals are an enhancer: their failure
         // degrades to channel-context-only generation, it never blocks.
-        this.generateIdeas = async (userId, countTowardStats = true, override) => {
-            assertOwner(userId);
+        this.generateIdeas = async (owner, countTowardStats = true, override) => {
+            const { userId } = owner;
+            assertOwner(owner.userId);
             const [similarTitles, userRecord] = await Promise.all([
-                getClusteredTitles(userId, this.repo),
+                getClusteredTitles(owner.accountId, this.repo),
                 this.userRepo.get(userId),
             ]);
             if (!userRecord && !override) {
@@ -144,11 +131,12 @@ class ContentService {
         this.saveBatchIdeas = async (data) => {
             return this.repo.batchSaveIdeas(data);
         };
-        this.editIdeas = async (titleId, userId, resBody) => {
+        this.editIdeas = async (titleId, owner, resBody) => {
+            const { userId } = owner;
             const idea = await this.repo.getIdea(titleId);
             if (!idea)
                 throw NotFound("Idea not found");
-            if (idea.createdBy !== userId)
+            if (idea.accountId !== owner.accountId)
                 throw Forbidden();
             // Whitelist: only `title` is client-editable. Never let the client touch
             // server-owned fields (archived, videoProjectId, embedding, isScriptGenerated, createdBy, batchId).
@@ -161,11 +149,12 @@ class ContentService {
             await this.repo.updateIdea(titleId, updates);
             return updates;
         };
-        this.editScript = async (scriptId, userId, resBody) => {
+        this.editScript = async (scriptId, owner, resBody) => {
+            const { userId } = owner;
             const script = await this.repo.getScriptById(scriptId);
             if (!script)
                 throw NotFound("Script not found");
-            if (script.createdBy !== userId)
+            if (script.accountId !== owner.accountId)
                 throw Forbidden();
             // Whitelist: only `script` and `title` are client-editable.
             const updates = {};
@@ -181,7 +170,7 @@ class ContentService {
             // regenerate does (parity with regenerateScript). A title rename doesn't.
             if (typeof updates.script === "string") {
                 try {
-                    const project = await this.videoProjectService.getByScriptId(scriptId, userId);
+                    const project = await this.videoProjectService.getByScriptId(scriptId, owner);
                     if (project) {
                         await this.videoProjectService.markStale(project.id, "script");
                         await this.videoProjectService.markPackagingDocumentStale(project.id, "script_regenerated");
@@ -193,12 +182,13 @@ class ContentService {
             }
             return updates;
         };
-        this.generateScripts = async (userId, projectId, res) => {
-            assertOwner(userId);
+        this.generateScripts = async (owner, projectId, res) => {
+            const { userId } = owner;
+            assertOwner(owner.userId);
             try {
                 // Project is mandatory now — load it first (throws NotFound/Forbidden).
                 const vps = this.videoProjectService;
-                const project = await vps.getById(projectId, userId);
+                const project = await vps.getById(projectId, owner);
                 // Idempotent start: if a script already exists, replay it instead of
                 // generating again — auto-starting clients can never double-generate.
                 // A fresh generation is only reachable via the explicit regenerate endpoint.
@@ -235,7 +225,7 @@ class ContentService {
                 const userPrompt = this.buildScriptUserPrompt(userRecord, idea.title);
                 const systemPrompt = SCRIPT_SYSTEM_PROMPT.replace("{videoFormatStyle}", SCRIPT_FORMAT_STYLE[resolveVideoFormat(userRecord?.format)]);
                 try {
-                    await vps.startStep(projectId, "script", userId);
+                    await vps.startStep(projectId, "script", owner);
                 }
                 catch (stepError) {
                     console.error(JSON.stringify({ event: "pipeline_start_failed", step: "script", projectId, userId, message: stepError?.message }));
@@ -272,7 +262,7 @@ class ContentService {
                     return accumulatedRes;
                 }
                 try {
-                    const formattedData = formatGeneratedScript(idea.title, scriptId, project.ideaId, projectId, accumulatedRes, await this.resolveOwner(userId));
+                    const formattedData = formatGeneratedScript(idea.title, scriptId, project.ideaId, projectId, accumulatedRes, owner);
                     await this.repo.saveScript(scriptId, formattedData);
                     await this.repo.updateIdea(project.ideaId, {
                         isScriptGenerated: true,
@@ -281,8 +271,8 @@ class ContentService {
                     // actually runs — fire-and-forget after res.end() can be dropped on serverless —
                     // and logged with context instead of silently swallowed.
                     try {
-                        await vps.linkResource(projectId, "script", scriptId, userId);
-                        await vps.completeStep(projectId, "script", userId);
+                        await vps.linkResource(projectId, "script", scriptId, owner);
+                        await vps.completeStep(projectId, "script", owner);
                     }
                     catch (pipelineError) {
                         console.error(JSON.stringify({ event: "pipeline_transition_failed", step: "script", projectId, scriptId, userId, message: pipelineError?.message }));
@@ -302,24 +292,26 @@ class ContentService {
                 throw error;
             }
         };
-        this.getUsersScript = async (userId) => {
-            return this.repo.getScripts(userId);
+        this.getUsersScript = async (owner) => {
+            return this.repo.getScripts(owner.accountId);
         };
-        this.getScriptById = async (scriptId, userId) => {
+        this.getScriptById = async (scriptId, owner) => {
+            const { userId } = owner;
             const doc = await this.repo.getScriptById(scriptId);
             if (!doc)
                 return null;
-            if (doc.createdBy !== userId)
+            if (doc.accountId !== owner.accountId)
                 throw Forbidden();
             return doc;
         };
         // An idea's content changed underneath its projects — stale every project
         // built from it. An idea can back multiple video projects, so this fans out
         // via the project index, not idea.videoProjectId (which reaches only one).
-        this.cascadeIdeaStale = async (ideaId, userId) => {
+        this.cascadeIdeaStale = async (ideaId, owner) => {
+            const { userId } = owner;
             let projects = [];
             try {
-                projects = await this.videoProjectService.getProjectsByIdea(ideaId, userId);
+                projects = await this.videoProjectService.getProjectsByIdea(ideaId, owner);
             }
             catch (err) {
                 console.error(JSON.stringify({ event: "stale_cascade_lookup_failed", from: "research", ideaId, userId, message: err?.message }));
@@ -335,20 +327,20 @@ class ContentService {
                 }
             }
         };
-        this.regenerateAll = async (userId) => {
+        this.regenerateAll = async (owner) => {
+            const { userId } = owner;
             // Before the archive below — this method destroys the previous batch, so an
             // owner problem must surface while there is still something to lose.
-            assertOwner(userId);
-            const activeIdeas = await this.repo.getActiveBatch(userId);
+            assertOwner(owner.userId);
+            const activeIdeas = await this.repo.getActiveBatch(owner.accountId);
             for (const idea of activeIdeas) {
-                await this.cascadeIdeaStale(idea.id, userId);
+                await this.cascadeIdeaStale(idea.id, owner);
             }
             // Archive current active batch
-            await this.repo.archiveUserIdeas(userId);
+            await this.repo.archiveUserIdeas(owner.accountId);
             // Generate a fresh idea batch
-            const ideas = await this.generateIdeas(userId);
+            const ideas = await this.generateIdeas(owner);
             const batchId = randomUUID();
-            const owner = await this.resolveOwner(userId);
             const formattedResults = await Promise.allSettled(ideas.map((idea) => formatGeneratedIdea(idea, owner, batchId)));
             const formatted = formattedResults
                 .filter((r) => r.status === "fulfilled")
@@ -361,23 +353,24 @@ class ContentService {
             }
             return this.saveBatchIdeas(formatted);
         };
-        this.regenerateOne = async (userId, ideaId) => {
-            assertOwner(userId);
+        this.regenerateOne = async (owner, ideaId) => {
+            const { userId } = owner;
+            assertOwner(owner.userId);
             const idea = await this.repo.getIdea(ideaId);
             if (!idea) {
                 throw NotFound("Idea not found");
             }
-            if (idea.createdBy !== userId) {
+            if (idea.accountId !== owner.accountId) {
                 throw Forbidden();
             }
             // Suppress the batch-length stats increment — regenerating a single slot
             // keeps only ideas[0], so a full +batch.length here would 10x-inflate stats.ideas.
-            const ideas = await this.generateIdeas(userId, false);
+            const ideas = await this.generateIdeas(owner, false);
             // Regenerate into the same slot type when the old doc had one.
             const preferredType = idea.ideaType;
             const newIdea = (preferredType && ideas.find((idea) => idea.type === preferredType)) ||
                 ideas[0];
-            const formatted = await formatGeneratedIdea(newIdea, await this.resolveOwner(userId), idea.batchId ?? undefined);
+            const formatted = await formatGeneratedIdea(newIdea, owner, idea.batchId ?? undefined);
             await this.repo.updateIdea(ideaId, {
                 title: formatted.title,
                 concept: formatted.concept,
@@ -389,29 +382,31 @@ class ContentService {
                 userFeedback: null,
             });
             // Same cascade as regenerateAll — this slot's content changed too.
-            await this.cascadeIdeaStale(ideaId, userId);
+            await this.cascadeIdeaStale(ideaId, owner);
             // One idea regenerated -> count exactly one toward stats.
             await this.userRepo.update(userId, {
                 "stats.ideas": firebase.firestore.FieldValue.increment(1),
             });
             return { ...formatted, id: ideaId };
         };
-        this.exportScript = async (userId, scriptId) => {
+        this.exportScript = async (owner, scriptId) => {
+            const { userId } = owner;
             const script = await this.repo.getScriptById(scriptId);
             if (!script) {
                 throw NotFound("Script not found");
             }
-            if (script.createdBy !== userId) {
+            if (script.accountId !== owner.accountId) {
                 throw Forbidden();
             }
             return { title: script.title, text: script.script };
         };
-        this.regenerateScript = async (userId, scriptId) => {
+        this.regenerateScript = async (owner, scriptId) => {
+            const { userId } = owner;
             const scriptDoc = await this.repo.getScriptById(scriptId);
             if (!scriptDoc) {
                 throw NotFound("Script not found");
             }
-            if (scriptDoc.createdBy !== userId) {
+            if (scriptDoc.accountId !== owner.accountId) {
                 throw Forbidden();
             }
             const userRecord = await this.userRepo.get(userId);
@@ -434,7 +429,7 @@ class ContentService {
             await this.repo.editScript(scriptId, { script: accumulatedRes });
             if (scriptDoc.videoProjectId) {
                 try {
-                    const proj = await this.videoProjectService.getById(scriptDoc.videoProjectId, userId);
+                    const proj = await this.videoProjectService.getById(scriptDoc.videoProjectId, owner);
                     if (proj) {
                         await this.videoProjectService.markStale(proj.id, "script");
                         await this.videoProjectService.markPackagingDocumentStale(proj.id, "script_regenerated");
@@ -446,8 +441,9 @@ class ContentService {
             }
             return { id: scriptId, title: scriptDoc.title, script: accumulatedRes };
         };
-        this.exportIdeas = async (userId) => {
-            const activeIdeas = await this.repo.getActiveBatch(userId);
+        this.exportIdeas = async (owner) => {
+            const { userId } = owner;
+            const activeIdeas = await this.repo.getActiveBatch(owner.accountId);
             const sorted = [...activeIdeas].sort((a, b) => {
                 const aTime = a.createdAt?.toDate?.()?.getTime?.() ?? 0;
                 const bTime = b.createdAt?.toDate?.()?.getTime?.() ?? 0;

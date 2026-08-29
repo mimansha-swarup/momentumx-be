@@ -30,7 +30,7 @@ class StepRunner {
                 // (precondition), 409 (already running) — are exactly what the caller
                 // should surface, and every controller already renders them correctly,
                 // including the SSE one, which runs this before flushHeaders().
-                const project = await this.projects.acquireStep(spec.projectId, step, spec.actor.userId, { requires: REQUIRES[step], lockMs: STEP_LOCK_MS });
+                const project = await this.projects.acquireStep(spec.projectId, step, spec.actor, { requires: REQUIRES[step], lockMs: STEP_LOCK_MS });
                 const state = project.pipeline[step];
                 prior = {
                     status: state.status,

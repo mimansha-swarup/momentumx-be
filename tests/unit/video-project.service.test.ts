@@ -44,7 +44,7 @@ import HooksRepository from "../../src/repository/hooks.repository";
 import { IVideoProject } from "../../src/types/routes/video-project";
 import { IIdea } from "../../src/types/routes/content";
 import { formatGeneratedTitle } from "../../src/utlils/content";
-import { makeTestAccountService, TEST_ACCOUNT_ID } from "../helpers/account";
+import { makeTestAccountService, TEST_ACCOUNT_ID, testOwner, OTHER_ACCOUNT_ID } from "../helpers/account";
 
 // ---------------------------------------------------------------------------
 // Factories
@@ -54,6 +54,7 @@ function makeProject(overrides: Partial<IVideoProject> = {}): IVideoProject {
   return {
     id: "proj-1",
     createdBy: "user-1",
+    accountId: TEST_ACCOUNT_ID,
     title: "My Video",
     ideaId: "idea-1",
     scriptId: null,
@@ -87,6 +88,7 @@ function makeIdea(overrides: Partial<IIdea> = {}): IIdea {
     id: "idea-1",
     title: "My Idea",
     createdBy: "user-1",
+    accountId: TEST_ACCOUNT_ID,
     createdAt: null as any,
     isScriptGenerated: false,
     embedding: [],
@@ -141,7 +143,7 @@ describe("VideoProjectService", () => {
     contentRepo = makeMockContentRepo();
     packagingRepo = makeMockPackagingRepo();
     hooksRepo = makeMockHooksRepo();
-    service = new VideoProjectService(repo, contentRepo, packagingRepo, hooksRepo, makeTestAccountService());
+    service = new VideoProjectService(repo, contentRepo, packagingRepo, hooksRepo);
   });
 
   // --------------------------------------------------------------------------
@@ -150,10 +152,10 @@ describe("VideoProjectService", () => {
 
   describe("create(userId, ideaId)", () => {
     it("returns project when idea exists and belongs to the user", async () => {
-      contentRepo.getIdea.mockResolvedValue(makeIdea({ title: "My Idea", createdBy: "user-1" }));
+      contentRepo.getIdea.mockResolvedValue(makeIdea({ title: "My Idea", createdBy: "user-1", accountId: TEST_ACCOUNT_ID }));
       repo.create.mockResolvedValue(makeProject());
 
-      const result = await service.create("user-1", "idea-1");
+      const result = await service.create(testOwner("user-1"), "idea-1");
 
       expect(result).toBeDefined();
       expect(contentRepo.getIdea).toHaveBeenCalledWith("idea-1");
@@ -164,10 +166,10 @@ describe("VideoProjectService", () => {
       // The project document itself, not the idea it was built from. The
       // createFromTitle test below asserts the owner reaching formatGeneratedTitle,
       // which is a different write — dropping this stamp left that test green.
-      contentRepo.getIdea.mockResolvedValue(makeIdea({ title: "My Idea", createdBy: "user-1" }));
+      contentRepo.getIdea.mockResolvedValue(makeIdea({ title: "My Idea", createdBy: "user-1", accountId: TEST_ACCOUNT_ID }));
       repo.create.mockResolvedValue(makeProject());
 
-      await service.create("user-1", "idea-1");
+      await service.create(testOwner("user-1"), "idea-1");
 
       const [projectData] = repo.create.mock.calls[0] as [Record<string, unknown>];
       expect(projectData.createdBy).toBe("user-1");
@@ -178,7 +180,7 @@ describe("VideoProjectService", () => {
     it("throws 404 when idea is not found", async () => {
       contentRepo.getIdea.mockResolvedValue(null as any);
 
-      await expect(service.create("user-1", "idea-1")).rejects.toMatchObject({
+      await expect(service.create(testOwner("user-1"), "idea-1")).rejects.toMatchObject({
         message: "Idea not found",
         statusCode: 404,
       });
@@ -188,15 +190,15 @@ describe("VideoProjectService", () => {
     it("throws 404 when idea is undefined", async () => {
       contentRepo.getIdea.mockResolvedValue(undefined as any);
 
-      await expect(service.create("user-1", "idea-1")).rejects.toMatchObject({
+      await expect(service.create(testOwner("user-1"), "idea-1")).rejects.toMatchObject({
         statusCode: 404,
       });
     });
 
     it("throws 403 when idea belongs to a different user", async () => {
-      contentRepo.getIdea.mockResolvedValue(makeIdea({ title: "Their Idea", createdBy: "other-user" }));
+      contentRepo.getIdea.mockResolvedValue(makeIdea({ title: "Their Idea", createdBy: "other-user", accountId: OTHER_ACCOUNT_ID }));
 
-      await expect(service.create("user-1", "idea-1")).rejects.toMatchObject({
+      await expect(service.create(testOwner("user-1"), "idea-1")).rejects.toMatchObject({
         message: "Forbidden",
         statusCode: 403,
       });
@@ -204,10 +206,10 @@ describe("VideoProjectService", () => {
     });
 
     it("passes correct initial pipeline state to repo.create", async () => {
-      contentRepo.getIdea.mockResolvedValue(makeIdea({ title: "My Idea", createdBy: "user-1" }));
+      contentRepo.getIdea.mockResolvedValue(makeIdea({ title: "My Idea", createdBy: "user-1", accountId: TEST_ACCOUNT_ID }));
       repo.create.mockResolvedValue(makeProject());
 
-      await service.create("user-1", "idea-1");
+      await service.create(testOwner("user-1"), "idea-1");
 
       const payload = repo.create.mock.calls[0][0] as any;
       expect(payload.pipeline.research.status).toBe("completed");
@@ -217,10 +219,10 @@ describe("VideoProjectService", () => {
     });
 
     it("sets overallStatus 'in_progress' and currentStep 'research' at creation", async () => {
-      contentRepo.getIdea.mockResolvedValue(makeIdea({ title: "My Idea", createdBy: "user-1" }));
+      contentRepo.getIdea.mockResolvedValue(makeIdea({ title: "My Idea", createdBy: "user-1", accountId: TEST_ACCOUNT_ID }));
       repo.create.mockResolvedValue(makeProject());
 
-      await service.create("user-1", "idea-1");
+      await service.create(testOwner("user-1"), "idea-1");
 
       const payload = repo.create.mock.calls[0][0] as any;
       expect(payload.overallStatus).toBe("in_progress");
@@ -234,12 +236,12 @@ describe("VideoProjectService", () => {
 
   describe("createFromTitle(userId, title)", () => {
     it("creates a idea from the title, then a project from the saved idea id", async () => {
-      (formatGeneratedTitle as jest.Mock).mockResolvedValue({ title: "My Idea", createdBy: "user-1" });
-      contentRepo.batchSaveIdeas.mockResolvedValue([{ id: "idea-x", title: "My Idea", createdBy: "user-1" }] as any);
-      contentRepo.getIdea.mockResolvedValue(makeIdea({ title: "My Idea", createdBy: "user-1" }));
+      (formatGeneratedTitle as jest.Mock).mockResolvedValue({ title: "My Idea", createdBy: "user-1", accountId: TEST_ACCOUNT_ID });
+      contentRepo.batchSaveIdeas.mockResolvedValue([{ id: "idea-x", title: "My Idea", createdBy: "user-1", accountId: TEST_ACCOUNT_ID }] as any);
+      contentRepo.getIdea.mockResolvedValue(makeIdea({ title: "My Idea", createdBy: "user-1", accountId: TEST_ACCOUNT_ID }));
       repo.create.mockResolvedValue(makeProject({ ideaId: "idea-x" }));
 
-      const result = await service.createFromTitle("user-1", "My Idea");
+      const result = await service.createFromTitle(testOwner("user-1"), "My Idea");
 
       // Phase 03: the owner is one object, so a bare userId cannot be passed
       // where an accountId belongs.
@@ -255,7 +257,7 @@ describe("VideoProjectService", () => {
     });
 
     it("throws 400 on a blank/whitespace title and does not create anything", async () => {
-      await expect(service.createFromTitle("user-1", "   ")).rejects.toMatchObject({ statusCode: 400 });
+      await expect(service.createFromTitle(testOwner("user-1"), "   ")).rejects.toMatchObject({ statusCode: 400 });
       expect(formatGeneratedTitle).not.toHaveBeenCalled();
       expect(contentRepo.batchSaveIdeas).not.toHaveBeenCalled();
       expect(repo.create).not.toHaveBeenCalled();
@@ -264,7 +266,7 @@ describe("VideoProjectService", () => {
     // Phase 01 item 1: an empty owner is a real value that every orphaned record
     // would share, so it must be refused before anything is written.
     it("refuses an empty userId before writing anything", async () => {
-      await expect(service.createFromTitle("", "My Idea")).rejects.toMatchObject({ statusCode: 401 });
+      await expect(service.createFromTitle(testOwner(""), "My Idea")).rejects.toMatchObject({ statusCode: 401 });
       expect(formatGeneratedTitle).not.toHaveBeenCalled();
       expect(contentRepo.batchSaveIdeas).not.toHaveBeenCalled();
       expect(repo.create).not.toHaveBeenCalled();
@@ -279,9 +281,9 @@ describe("VideoProjectService", () => {
     it("delegates to repo.findByIdeaId and returns all matching projects", async () => {
       repo.findByIdeaId.mockResolvedValue([makeProject(), makeProject({ id: "proj-2" })]);
 
-      const result = await service.getProjectsByIdea("idea-1", "user-1");
+      const result = await service.getProjectsByIdea("idea-1", testOwner("user-1"));
 
-      expect(repo.findByIdeaId).toHaveBeenCalledWith("idea-1", "user-1");
+      expect(repo.findByIdeaId).toHaveBeenCalledWith("idea-1", TEST_ACCOUNT_ID);
       expect(result).toHaveLength(2);
     });
   });
@@ -295,7 +297,7 @@ describe("VideoProjectService", () => {
       const project = makeProject({ thumbnailHint: "Some hint" });
       repo.list.mockResolvedValue({ projects: [project], hasMore: false, nextCursor: null });
 
-      const result = await service.list("user-1", {});
+      const result = await service.list(testOwner("user-1"), {});
       const item = result.projects[0] as any;
 
       expect(item.id).toBe("proj-1");
@@ -307,7 +309,7 @@ describe("VideoProjectService", () => {
     });
 
     it("throws 400 for an invalid status value", async () => {
-      await expect(service.list("user-1", { status: "invalid" as any })).rejects.toMatchObject({
+      await expect(service.list(testOwner("user-1"), { status: "invalid" as any })).rejects.toMatchObject({
         statusCode: 400,
       });
     });
@@ -315,16 +317,16 @@ describe("VideoProjectService", () => {
     it("accepts all valid status values without throwing", async () => {
       repo.list.mockResolvedValue({ projects: [], hasMore: false, nextCursor: null });
       for (const status of ["in_progress", "completed", "stale"] as const) {
-        await expect(service.list("user-1", { status })).resolves.toBeDefined();
+        await expect(service.list(testOwner("user-1"), { status })).resolves.toBeDefined();
       }
     });
 
     it("passes options through to repo.list", async () => {
       repo.list.mockResolvedValue({ projects: [], hasMore: false, nextCursor: null });
 
-      await service.list("user-1", { status: "completed", limit: 5, cursor: "cursor-abc" });
+      await service.list(testOwner("user-1"), { status: "completed", limit: 5, cursor: "cursor-abc" });
 
-      expect(repo.list).toHaveBeenCalledWith("user-1", {
+      expect(repo.list).toHaveBeenCalledWith(TEST_ACCOUNT_ID, {
         status: "completed",
         limit: 5,
         cursor: "cursor-abc",
@@ -334,7 +336,7 @@ describe("VideoProjectService", () => {
     it("returns hasMore and nextCursor from repo", async () => {
       repo.list.mockResolvedValue({ projects: [], hasMore: true, nextCursor: "next-cursor" });
 
-      const result = await service.list("user-1", {});
+      const result = await service.list(testOwner("user-1"), {});
 
       expect(result.hasMore).toBe(true);
       expect(result.nextCursor).toBe("next-cursor");
@@ -350,7 +352,7 @@ describe("VideoProjectService", () => {
       const project = makeProject();
       repo.findById.mockResolvedValue(project);
 
-      const result = await service.getById("proj-1", "user-1");
+      const result = await service.getById("proj-1", testOwner("user-1"));
 
       expect(result).toEqual(project);
     });
@@ -358,7 +360,7 @@ describe("VideoProjectService", () => {
     it("throws 404 when project is not found", async () => {
       repo.findById.mockResolvedValue(null);
 
-      await expect(service.getById("proj-1", "user-1")).rejects.toMatchObject({
+      await expect(service.getById("proj-1", testOwner("user-1"))).rejects.toMatchObject({
         statusCode: 404,
       });
     });
@@ -366,15 +368,15 @@ describe("VideoProjectService", () => {
     it("throws 404 when project is soft-deleted", async () => {
       repo.findById.mockResolvedValue(makeProject({ isDeleted: true }));
 
-      await expect(service.getById("proj-1", "user-1")).rejects.toMatchObject({
+      await expect(service.getById("proj-1", testOwner("user-1"))).rejects.toMatchObject({
         statusCode: 404,
       });
     });
 
     it("throws 403 when project belongs to a different user", async () => {
-      repo.findById.mockResolvedValue(makeProject({ createdBy: "other-user" }));
+      repo.findById.mockResolvedValue(makeProject({ createdBy: "other-user", accountId: OTHER_ACCOUNT_ID }));
 
-      await expect(service.getById("proj-1", "user-1")).rejects.toMatchObject({
+      await expect(service.getById("proj-1", testOwner("user-1"))).rejects.toMatchObject({
         message: "Forbidden",
         statusCode: 403,
       });
@@ -401,7 +403,7 @@ describe("VideoProjectService", () => {
         })
       );
 
-      const result = await service.getReconciledById("proj-1", "user-1");
+      const result = await service.getReconciledById("proj-1", testOwner("user-1"));
 
       expect(result.pipeline.script.status).toBe("completed"); // scriptId set
       expect(result.pipeline.hooks.status).toBe("completed"); // selectedHookIndex set
@@ -425,7 +427,7 @@ describe("VideoProjectService", () => {
         })
       );
 
-      const result = await service.getReconciledById("proj-1", "user-1");
+      const result = await service.getReconciledById("proj-1", testOwner("user-1"));
 
       expect(result.pipeline.hooks.status).toBe("stale");
       expect(result.overallStatus).toBe("stale");
@@ -449,7 +451,7 @@ describe("VideoProjectService", () => {
         })
       );
 
-      const result = await service.getReconciledById("proj-1", "user-1");
+      const result = await service.getReconciledById("proj-1", testOwner("user-1"));
 
       expect(result.recommendedNextStep).toBeNull();
     });
@@ -480,7 +482,7 @@ describe("VideoProjectService", () => {
     it("clears the stale packaging step and recomputes overallStatus to completed when all else is done", async () => {
       repo.findById.mockResolvedValue(staleProject());
 
-      await service.refreshPackagingStep("proj-1", "user-1");
+      await service.refreshPackagingStep("proj-1", testOwner("user-1"));
 
       expect(repo.update).toHaveBeenCalledWith("proj-1", {
         "pipeline.packaging.status": "completed",
@@ -495,7 +497,7 @@ describe("VideoProjectService", () => {
         staleProject({ script: { status: "stale", startedAt: null, completedAt: null } })
       );
 
-      await service.refreshPackagingStep("proj-1", "user-1");
+      await service.refreshPackagingStep("proj-1", testOwner("user-1"));
 
       expect(repo.update).toHaveBeenCalledWith("proj-1", {
         "pipeline.packaging.status": "completed",
@@ -509,14 +511,14 @@ describe("VideoProjectService", () => {
         makeProject({ packagingId: "pkg-1", pipeline: { ...makeProject().pipeline, packaging: { status: "completed", startedAt: null, completedAt: null } } })
       );
 
-      await service.refreshPackagingStep("proj-1", "user-1");
+      await service.refreshPackagingStep("proj-1", testOwner("user-1"));
 
       expect(repo.update).not.toHaveBeenCalled();
     });
 
     it("throws (caller catches) when the project is not owned by the user", async () => {
       repo.findById.mockResolvedValue(staleProject({}));
-      await expect(service.refreshPackagingStep("proj-1", "other-user")).rejects.toMatchObject({ statusCode: 403 });
+      await expect(service.refreshPackagingStep("proj-1", testOwner("other-user", OTHER_ACCOUNT_ID))).rejects.toMatchObject({ statusCode: 403 });
       expect(repo.update).not.toHaveBeenCalled();
     });
   });
@@ -530,7 +532,7 @@ describe("VideoProjectService", () => {
       repo.findById.mockResolvedValue(makeProject());
       repo.update.mockResolvedValue(undefined);
 
-      await service.setThumbnailHint("proj-1", "New first brief", "user-1");
+      await service.setThumbnailHint("proj-1", "New first brief", testOwner("user-1"));
 
       expect(repo.update).toHaveBeenCalledWith("proj-1", { thumbnailHint: "New first brief" });
     });
@@ -539,14 +541,14 @@ describe("VideoProjectService", () => {
       repo.findById.mockResolvedValue(makeProject());
       repo.update.mockResolvedValue(undefined);
 
-      await service.setThumbnailHint("proj-1", null, "user-1");
+      await service.setThumbnailHint("proj-1", null, testOwner("user-1"));
 
       expect(repo.update).toHaveBeenCalledWith("proj-1", { thumbnailHint: null });
     });
 
     it("throws 403 when the project is not owned by the user", async () => {
-      repo.findById.mockResolvedValue(makeProject({ createdBy: "other-user" }));
-      await expect(service.setThumbnailHint("proj-1", "x", "user-1")).rejects.toMatchObject({ statusCode: 403 });
+      repo.findById.mockResolvedValue(makeProject({ createdBy: "other-user", accountId: OTHER_ACCOUNT_ID }));
+      await expect(service.setThumbnailHint("proj-1", "x", testOwner("user-1"))).rejects.toMatchObject({ statusCode: 403 });
       expect(repo.update).not.toHaveBeenCalled();
     });
   });
@@ -560,7 +562,7 @@ describe("VideoProjectService", () => {
       repo.findById.mockResolvedValue(makeProject());
       repo.update.mockResolvedValue(undefined);
 
-      await service.update("proj-1", "user-1", { title: "New Title" });
+      await service.update("proj-1", testOwner("user-1"), { title: "New Title" });
 
       expect(repo.update).toHaveBeenCalledWith("proj-1", { title: "New Title" });
     });
@@ -568,7 +570,7 @@ describe("VideoProjectService", () => {
     it("throws 400 when title is empty string", async () => {
       repo.findById.mockResolvedValue(makeProject());
 
-      await expect(service.update("proj-1", "user-1", { title: "" })).rejects.toMatchObject({
+      await expect(service.update("proj-1", testOwner("user-1"), { title: "" })).rejects.toMatchObject({
         statusCode: 400,
       });
       expect(repo.update).not.toHaveBeenCalled();
@@ -577,7 +579,7 @@ describe("VideoProjectService", () => {
     it("throws 400 when title is undefined", async () => {
       repo.findById.mockResolvedValue(makeProject());
 
-      await expect(service.update("proj-1", "user-1", {})).rejects.toMatchObject({
+      await expect(service.update("proj-1", testOwner("user-1"), {})).rejects.toMatchObject({
         statusCode: 400,
       });
       expect(repo.update).not.toHaveBeenCalled();
@@ -586,7 +588,7 @@ describe("VideoProjectService", () => {
     it("throws 400 when title is whitespace only", async () => {
       repo.findById.mockResolvedValue(makeProject());
 
-      await expect(service.update("proj-1", "user-1", { title: "   " })).rejects.toMatchObject({
+      await expect(service.update("proj-1", testOwner("user-1"), { title: "   " })).rejects.toMatchObject({
         statusCode: 400,
       });
     });
@@ -594,7 +596,7 @@ describe("VideoProjectService", () => {
     it("throws 404 when project not found (delegates to getById)", async () => {
       repo.findById.mockResolvedValue(null);
 
-      await expect(service.update("proj-1", "user-1", { title: "Title" })).rejects.toMatchObject({
+      await expect(service.update("proj-1", testOwner("user-1"), { title: "Title" })).rejects.toMatchObject({
         statusCode: 404,
       });
     });
@@ -609,7 +611,7 @@ describe("VideoProjectService", () => {
       repo.findById.mockResolvedValue(makeProject());
       repo.update.mockResolvedValue(undefined);
 
-      await service.delete("proj-1", "user-1");
+      await service.delete("proj-1", testOwner("user-1"));
 
       expect(repo.update).toHaveBeenCalledWith(
         "proj-1",
@@ -620,7 +622,7 @@ describe("VideoProjectService", () => {
     it("returns idempotently without writing when already deleted", async () => {
       repo.findById.mockResolvedValue(makeProject({ isDeleted: true }));
 
-      await service.delete("proj-1", "user-1");
+      await service.delete("proj-1", testOwner("user-1"));
 
       expect(repo.update).not.toHaveBeenCalled();
     });
@@ -628,15 +630,15 @@ describe("VideoProjectService", () => {
     it("throws 404 when project not found", async () => {
       repo.findById.mockResolvedValue(null);
 
-      await expect(service.delete("proj-1", "user-1")).rejects.toMatchObject({
+      await expect(service.delete("proj-1", testOwner("user-1"))).rejects.toMatchObject({
         statusCode: 404,
       });
     });
 
     it("throws 403 when project belongs to a different user", async () => {
-      repo.findById.mockResolvedValue(makeProject({ createdBy: "other-user" }));
+      repo.findById.mockResolvedValue(makeProject({ createdBy: "other-user", accountId: OTHER_ACCOUNT_ID }));
 
-      await expect(service.delete("proj-1", "user-1")).rejects.toMatchObject({
+      await expect(service.delete("proj-1", testOwner("user-1"))).rejects.toMatchObject({
         statusCode: 403,
       });
     });
@@ -650,7 +652,7 @@ describe("VideoProjectService", () => {
     it("throws 400 for invalid stepName 'research'", async () => {
       repo.findById.mockResolvedValue(makeProject());
 
-      await expect(service.startStep("proj-1", "research", "user-1")).rejects.toMatchObject({
+      await expect(service.startStep("proj-1", "research", testOwner("user-1"))).rejects.toMatchObject({
         statusCode: 400,
       });
     });
@@ -658,7 +660,7 @@ describe("VideoProjectService", () => {
     it("throws 400 for unknown stepName", async () => {
       repo.findById.mockResolvedValue(makeProject());
 
-      await expect(service.startStep("proj-1", "unknown", "user-1")).rejects.toMatchObject({
+      await expect(service.startStep("proj-1", "unknown", testOwner("user-1"))).rejects.toMatchObject({
         statusCode: 400,
       });
     });
@@ -668,7 +670,7 @@ describe("VideoProjectService", () => {
         makeProject({ currentStep: "script", pipeline: { ...makeProject().pipeline, script: { status: "in_progress", startedAt: null, completedAt: null } } })
       );
 
-      const result = await service.startStep("proj-1", "script", "user-1");
+      const result = await service.startStep("proj-1", "script", testOwner("user-1"));
 
       expect(result).toEqual({ id: "proj-1", currentStep: expect.any(String) });
       // The refresh keeps the in-flight lock honest: only startedAt is touched.
@@ -684,7 +686,7 @@ describe("VideoProjectService", () => {
         makeProject({ currentStep: "hooks", pipeline: { ...makeProject().pipeline, script: { status: "completed", startedAt: null, completedAt: null } } })
       );
 
-      const result = await service.startStep("proj-1", "script", "user-1");
+      const result = await service.startStep("proj-1", "script", testOwner("user-1"));
 
       expect(result).toHaveProperty("id");
       expect(result).toHaveProperty("currentStep");
@@ -695,7 +697,7 @@ describe("VideoProjectService", () => {
       repo.findById.mockResolvedValue(makeProject({ currentStep: "research" }));
       repo.update.mockResolvedValue(undefined);
 
-      await service.startStep("proj-1", "script", "user-1");
+      await service.startStep("proj-1", "script", testOwner("user-1"));
 
       expect(repo.update).toHaveBeenCalledWith(
         "proj-1",
@@ -707,7 +709,7 @@ describe("VideoProjectService", () => {
       repo.findById.mockResolvedValue(makeProject({ currentStep: "research" }));
       repo.update.mockResolvedValue(undefined);
 
-      await service.startStep("proj-1", "script", "user-1");
+      await service.startStep("proj-1", "script", testOwner("user-1"));
 
       expect(repo.update).toHaveBeenCalledWith(
         "proj-1",
@@ -719,7 +721,7 @@ describe("VideoProjectService", () => {
       repo.findById.mockResolvedValue(makeProject({ currentStep: "packaging" }));
       repo.update.mockResolvedValue(undefined);
 
-      await service.startStep("proj-1", "hooks", "user-1");
+      await service.startStep("proj-1", "hooks", testOwner("user-1"));
 
       const callArg = repo.update.mock.calls[0][1] as any;
       expect(callArg.currentStep).toBeUndefined();
@@ -734,7 +736,7 @@ describe("VideoProjectService", () => {
     it("throws 400 for invalid stepName 'research'", async () => {
       repo.findById.mockResolvedValue(makeProject());
 
-      await expect(service.completeStep("proj-1", "research", "user-1")).rejects.toMatchObject({
+      await expect(service.completeStep("proj-1", "research", testOwner("user-1"))).rejects.toMatchObject({
         statusCode: 400,
       });
     });
@@ -742,7 +744,7 @@ describe("VideoProjectService", () => {
     it("throws 400 when step is not_started", async () => {
       repo.findById.mockResolvedValue(makeProject());
 
-      await expect(service.completeStep("proj-1", "script", "user-1")).rejects.toMatchObject({
+      await expect(service.completeStep("proj-1", "script", testOwner("user-1"))).rejects.toMatchObject({
         statusCode: 400,
       });
     });
@@ -752,7 +754,7 @@ describe("VideoProjectService", () => {
         makeProject({ pipeline: { ...makeProject().pipeline, script: { status: "completed", startedAt: null, completedAt: null } } })
       );
 
-      const result = await service.completeStep("proj-1", "script", "user-1");
+      const result = await service.completeStep("proj-1", "script", testOwner("user-1"));
 
       expect(result).toHaveProperty("id");
       expect(result).toHaveProperty("currentStep");
@@ -765,7 +767,7 @@ describe("VideoProjectService", () => {
       );
       repo.update.mockResolvedValue(undefined);
 
-      await service.completeStep("proj-1", "script", "user-1");
+      await service.completeStep("proj-1", "script", testOwner("user-1"));
 
       expect(repo.update).toHaveBeenCalledWith(
         "proj-1",
@@ -779,7 +781,7 @@ describe("VideoProjectService", () => {
       );
       repo.update.mockResolvedValue(undefined);
 
-      const result = await service.completeStep("proj-1", "script", "user-1");
+      const result = await service.completeStep("proj-1", "script", testOwner("user-1"));
 
       expect(result.currentStep).toBe("hooks");
     });
@@ -790,7 +792,7 @@ describe("VideoProjectService", () => {
       );
       repo.update.mockResolvedValue(undefined);
 
-      const result = await service.completeStep("proj-1", "hooks", "user-1");
+      const result = await service.completeStep("proj-1", "hooks", testOwner("user-1"));
 
       expect(result.currentStep).toBe("title");
     });
@@ -801,7 +803,7 @@ describe("VideoProjectService", () => {
       );
       repo.update.mockResolvedValue(undefined);
 
-      const result = await service.completeStep("proj-1", "title", "user-1");
+      const result = await service.completeStep("proj-1", "title", testOwner("user-1"));
 
       expect(result.currentStep).toBe("packaging");
     });
@@ -812,7 +814,7 @@ describe("VideoProjectService", () => {
       );
       repo.update.mockResolvedValue(undefined);
 
-      const result = await service.completeStep("proj-1", "packaging", "user-1");
+      const result = await service.completeStep("proj-1", "packaging", testOwner("user-1"));
 
       expect(result.currentStep).toBe("packaging");
     });
@@ -828,7 +830,7 @@ describe("VideoProjectService", () => {
       repo.findById.mockResolvedValue(makeProject({ pipeline: allCompletedPipeline }));
       repo.update.mockResolvedValue(undefined);
 
-      await service.completeStep("proj-1", "packaging", "user-1");
+      await service.completeStep("proj-1", "packaging", testOwner("user-1"));
 
       expect(repo.update).toHaveBeenCalledWith(
         "proj-1",
@@ -842,7 +844,7 @@ describe("VideoProjectService", () => {
       );
       repo.update.mockResolvedValue(undefined);
 
-      await service.completeStep("proj-1", "script", "user-1");
+      await service.completeStep("proj-1", "script", testOwner("user-1"));
 
       const callArg = repo.update.mock.calls[0][1] as any;
       expect(callArg.overallStatus).toBe("in_progress");
@@ -861,7 +863,7 @@ describe("VideoProjectService", () => {
       );
       repo.update.mockResolvedValue(undefined);
 
-      await service.completeStep("proj-1", "packaging", "user-1");
+      await service.completeStep("proj-1", "packaging", testOwner("user-1"));
 
       const callArg = repo.update.mock.calls[0][1] as any;
       expect(callArg.overallStatus).not.toBe("stale");
@@ -876,7 +878,7 @@ describe("VideoProjectService", () => {
       );
       repo.update.mockResolvedValue(undefined);
 
-      const result = await service.completeStep("proj-1", "script", "user-1");
+      const result = await service.completeStep("proj-1", "script", testOwner("user-1"));
 
       expect(result.pipeline).toBeDefined();
       expect(result.pipeline.script.status).toBe("completed");
@@ -886,13 +888,13 @@ describe("VideoProjectService", () => {
     it("returns the same full shape on the idempotent already-completed path", async () => {
       repo.findById.mockResolvedValue(makeProject()); // research is completed at creation
 
-      const result = await service.completeStep("proj-1", "research", "user-1").catch((e) => e);
+      const result = await service.completeStep("proj-1", "research", testOwner("user-1")).catch((e) => e);
 
       // research isn't a mutable step, so use a genuinely completed mutable one:
       repo.findById.mockResolvedValue(
         makeProject({ pipeline: { ...makeProject().pipeline, script: { status: "completed", startedAt: null, completedAt: null } } })
       );
-      const done = await service.completeStep("proj-1", "script", "user-1");
+      const done = await service.completeStep("proj-1", "script", testOwner("user-1"));
 
       expect(done.pipeline).toBeDefined();
       expect(done.overallStatus).toBeDefined();
@@ -911,7 +913,7 @@ describe("VideoProjectService", () => {
       );
       repo.update.mockResolvedValue(undefined);
 
-      await service.completeStep("proj-1", "packaging", "user-1");
+      await service.completeStep("proj-1", "packaging", testOwner("user-1"));
 
       expect(packagingRepo.clearStale).toHaveBeenCalledWith("pkg-abc");
     });
@@ -925,7 +927,7 @@ describe("VideoProjectService", () => {
       );
       repo.update.mockResolvedValue(undefined);
 
-      await service.completeStep("proj-1", "packaging", "user-1");
+      await service.completeStep("proj-1", "packaging", testOwner("user-1"));
 
       expect(packagingRepo.clearStale).not.toHaveBeenCalled();
     });
@@ -940,7 +942,7 @@ describe("VideoProjectService", () => {
       repo.update.mockResolvedValue(undefined);
       (packagingRepo.clearStale as jest.Mock).mockRejectedValue(new Error("firestore down"));
 
-      await expect(service.completeStep("proj-1", "packaging", "user-1")).resolves.toMatchObject({
+      await expect(service.completeStep("proj-1", "packaging", testOwner("user-1"))).resolves.toMatchObject({
         id: "proj-1",
       });
       expect(repo.update).toHaveBeenCalledWith(
@@ -958,7 +960,7 @@ describe("VideoProjectService", () => {
     it("throws 400 for invalid resourceType", async () => {
       repo.findById.mockResolvedValue(makeProject());
 
-      await expect(service.linkResource("proj-1", "invalid", "res-1", "user-1")).rejects.toMatchObject({
+      await expect(service.linkResource("proj-1", "invalid", "res-1", testOwner("user-1"))).rejects.toMatchObject({
         statusCode: 400,
       });
     });
@@ -966,7 +968,7 @@ describe("VideoProjectService", () => {
     it("throws 400 when resourceId is empty string", async () => {
       repo.findById.mockResolvedValue(makeProject());
 
-      await expect(service.linkResource("proj-1", "script", "", "user-1")).rejects.toMatchObject({
+      await expect(service.linkResource("proj-1", "script", "", testOwner("user-1"))).rejects.toMatchObject({
         statusCode: 400,
       });
     });
@@ -974,9 +976,9 @@ describe("VideoProjectService", () => {
     it("sets scriptId for resourceType 'script'", async () => {
       repo.findById.mockResolvedValue(makeProject());
       repo.update.mockResolvedValue(undefined);
-      contentRepo.getScriptById.mockResolvedValue({ createdBy: "user-1" } as any);
+      contentRepo.getScriptById.mockResolvedValue({ createdBy: "user-1", accountId: TEST_ACCOUNT_ID } as any);
 
-      await service.linkResource("proj-1", "script", "script-abc", "user-1");
+      await service.linkResource("proj-1", "script", "script-abc", testOwner("user-1"));
 
       expect(repo.update).toHaveBeenCalledWith("proj-1", expect.objectContaining({ scriptId: "script-abc" }));
     });
@@ -984,9 +986,9 @@ describe("VideoProjectService", () => {
     it("sets hooksId for resourceType 'hooks'", async () => {
       repo.findById.mockResolvedValue(makeProject());
       repo.update.mockResolvedValue(undefined);
-      hooksRepo.findById.mockResolvedValue({ createdBy: "user-1" } as any);
+      hooksRepo.findById.mockResolvedValue({ createdBy: "user-1", accountId: TEST_ACCOUNT_ID } as any);
 
-      await service.linkResource("proj-1", "hooks", "hooks-abc", "user-1");
+      await service.linkResource("proj-1", "hooks", "hooks-abc", testOwner("user-1"));
 
       expect(repo.update).toHaveBeenCalledWith("proj-1", expect.objectContaining({ hooksId: "hooks-abc" }));
     });
@@ -1000,20 +1002,20 @@ describe("VideoProjectService", () => {
     // ------------------------------------------------------------------------
     it("throws 403 when the script belongs to another user", async () => {
       repo.findById.mockResolvedValue(makeProject());
-      contentRepo.getScriptById.mockResolvedValue({ createdBy: "someone-else" } as any);
+      contentRepo.getScriptById.mockResolvedValue({ createdBy: "someone-else", accountId: OTHER_ACCOUNT_ID } as any);
 
       await expect(
-        service.linkResource("proj-1", "script", "script-abc", "user-1")
+        service.linkResource("proj-1", "script", "script-abc", testOwner("user-1"))
       ).rejects.toMatchObject({ statusCode: 403 });
       expect(repo.update).not.toHaveBeenCalled();
     });
 
     it("throws 403 when the hooks batch belongs to another user", async () => {
       repo.findById.mockResolvedValue(makeProject());
-      hooksRepo.findById.mockResolvedValue({ createdBy: "someone-else" } as any);
+      hooksRepo.findById.mockResolvedValue({ createdBy: "someone-else", accountId: OTHER_ACCOUNT_ID } as any);
 
       await expect(
-        service.linkResource("proj-1", "hooks", "hooks-abc", "user-1")
+        service.linkResource("proj-1", "hooks", "hooks-abc", testOwner("user-1"))
       ).rejects.toMatchObject({ statusCode: 403 });
       expect(repo.update).not.toHaveBeenCalled();
     });
@@ -1021,12 +1023,12 @@ describe("VideoProjectService", () => {
     it("throws 403 when the packaging doc belongs to another user", async () => {
       repo.findById.mockResolvedValue(makeProject());
       packagingRepo.get.mockResolvedValue({
-        createdBy: "someone-else",
+        createdBy: "someone-else", accountId: OTHER_ACCOUNT_ID,
         thumbnail: ["Leaked brief"],
       } as any);
 
       await expect(
-        service.linkResource("proj-1", "packaging", "pkg-abc", "user-1")
+        service.linkResource("proj-1", "packaging", "pkg-abc", testOwner("user-1"))
       ).rejects.toMatchObject({ statusCode: 403 });
       expect(repo.update).not.toHaveBeenCalled();
     });
@@ -1036,10 +1038,11 @@ describe("VideoProjectService", () => {
       repo.update.mockResolvedValue(undefined);
       packagingRepo.get.mockResolvedValue({
         createdBy: "user-1",
+        accountId: TEST_ACCOUNT_ID,
         thumbnail: ["Bold text here", "Second option", "Third option"],
       } as any);
 
-      await service.linkResource("proj-1", "packaging", "pkg-abc", "user-1");
+      await service.linkResource("proj-1", "packaging", "pkg-abc", testOwner("user-1"));
 
       expect(repo.update).toHaveBeenCalledWith(
         "proj-1",
@@ -1054,11 +1057,12 @@ describe("VideoProjectService", () => {
       repo.update.mockResolvedValue(undefined);
       packagingRepo.get.mockResolvedValue({
         createdBy: "user-1",
+        accountId: TEST_ACCOUNT_ID,
         thumbnail: ["Bold text here", "Second option", "Third option"],
         selectedThumbnailIndex: 2,
       } as any);
 
-      await service.linkResource("proj-1", "packaging", "pkg-abc", "user-1");
+      await service.linkResource("proj-1", "packaging", "pkg-abc", testOwner("user-1"));
 
       expect(repo.update).toHaveBeenCalledWith(
         "proj-1",
@@ -1071,11 +1075,12 @@ describe("VideoProjectService", () => {
       repo.update.mockResolvedValue(undefined);
       packagingRepo.get.mockResolvedValue({
         createdBy: "user-1",
+        accountId: TEST_ACCOUNT_ID,
         thumbnail: ["Only brief"],
         selectedThumbnailIndex: 5,
       } as any);
 
-      await service.linkResource("proj-1", "packaging", "pkg-abc", "user-1");
+      await service.linkResource("proj-1", "packaging", "pkg-abc", testOwner("user-1"));
 
       expect(repo.update).toHaveBeenCalledWith(
         "proj-1",
@@ -1086,9 +1091,9 @@ describe("VideoProjectService", () => {
     it("sets thumbnailHint to null when packaging doc has no thumbnail", async () => {
       repo.findById.mockResolvedValue(makeProject());
       repo.update.mockResolvedValue(undefined);
-      packagingRepo.get.mockResolvedValue({ createdBy: "user-1" } as any);
+      packagingRepo.get.mockResolvedValue({ createdBy: "user-1", accountId: TEST_ACCOUNT_ID } as any);
 
-      await service.linkResource("proj-1", "packaging", "pkg-abc", "user-1");
+      await service.linkResource("proj-1", "packaging", "pkg-abc", testOwner("user-1"));
 
       expect(repo.update).toHaveBeenCalledWith(
         "proj-1",
@@ -1104,7 +1109,7 @@ describe("VideoProjectService", () => {
       packagingRepo.get.mockResolvedValue(null as any);
 
       await expect(
-        service.linkResource("proj-1", "packaging", "pkg-abc", "user-1")
+        service.linkResource("proj-1", "packaging", "pkg-abc", testOwner("user-1"))
       ).rejects.toMatchObject({ statusCode: 404 });
       expect(repo.update).not.toHaveBeenCalled();
     });
@@ -1119,7 +1124,7 @@ describe("VideoProjectService", () => {
       repo.update.mockResolvedValue(undefined);
       contentRepo.updateIdea.mockResolvedValue(undefined as never);
 
-      await service.delete("proj-1", "user-1");
+      await service.delete("proj-1", testOwner("user-1"));
 
       expect(contentRepo.updateIdea).toHaveBeenCalledWith("idea-9", { videoProjectId: null });
     });
@@ -1129,14 +1134,14 @@ describe("VideoProjectService", () => {
       repo.update.mockResolvedValue(undefined);
       (contentRepo.updateIdea as jest.Mock).mockRejectedValue(new Error("firestore down"));
 
-      await expect(service.delete("proj-1", "user-1")).resolves.toMatchObject({ isDeleted: true });
+      await expect(service.delete("proj-1", testOwner("user-1"))).resolves.toMatchObject({ isDeleted: true });
       expect(repo.update).toHaveBeenCalledWith("proj-1", expect.objectContaining({ isDeleted: true }));
     });
 
     it("does not re-delete an already deleted project", async () => {
       repo.findById.mockResolvedValue(makeProject({ isDeleted: true, ideaId: "idea-9" }));
 
-      await service.delete("proj-1", "user-1");
+      await service.delete("proj-1", testOwner("user-1"));
 
       expect(contentRepo.updateIdea).not.toHaveBeenCalled();
       expect(repo.update).not.toHaveBeenCalled();
@@ -1150,7 +1155,7 @@ describe("VideoProjectService", () => {
       repo.findById.mockResolvedValue(makeProject());
       repo.update.mockResolvedValue(undefined);
 
-      await service.reopenTitleStep("proj-1", "user-1");
+      await service.reopenTitleStep("proj-1", testOwner("user-1"));
 
       expect(repo.update).toHaveBeenCalledWith("proj-1", {
         "pipeline.title.status": "in_progress",
@@ -1159,9 +1164,9 @@ describe("VideoProjectService", () => {
     });
 
     it("refuses to touch another user's project", async () => {
-      repo.findById.mockResolvedValue(makeProject({ createdBy: "someone-else" }));
+      repo.findById.mockResolvedValue(makeProject({ createdBy: "someone-else", accountId: OTHER_ACCOUNT_ID }));
 
-      await expect(service.reopenTitleStep("proj-1", "user-1")).rejects.toMatchObject({ statusCode: 403 });
+      await expect(service.reopenTitleStep("proj-1", testOwner("user-1"))).rejects.toMatchObject({ statusCode: 403 });
       expect(repo.update).not.toHaveBeenCalled();
     });
   });
@@ -1312,7 +1317,7 @@ describe("VideoProjectService", () => {
       );
       repo.update.mockResolvedValue(undefined);
 
-      await service.clearSelectedHook("proj-1", "user-1");
+      await service.clearSelectedHook("proj-1", testOwner("user-1"));
 
       const payload = repo.update.mock.calls[0][1] as Record<string, unknown>;
       expect(payload).toMatchObject({

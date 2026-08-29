@@ -5,6 +5,7 @@ import { formatGeneratedIdea, logDroppedFormats } from "../utlils/content.js";
 import { ServiceUnavailable } from "../utlils/errors.js";
 import { IDEAS_PAGE, parseListLimit } from "../utlils/pagination.js";
 import { asyncHandler } from "../middleware/async_handler.js";
+import { ownerOf } from "../utlils/content.js";
 import { eventService } from "../service/event.service.js";
 import { EventType } from "../types/routes/event.js";
 
@@ -50,7 +51,7 @@ class IdeaController {
     };
 
     const data = await this.service.getPaginatedUsersIdeas({
-      userId: req.userId,
+      accountId: req.accountId,
       limit: parseListLimit(limit, IDEAS_PAGE),
       cursor,
       filters,
@@ -65,15 +66,17 @@ class IdeaController {
   generateIdeas = asyncHandler(async (req: Request, res: Response) => {
     // Optional instant-first-idea context (validated by generateIdeasSchema) —
     // absent means generate from the persisted user record as before.
-    const ideas = await this.service.generateIdeas(
-      req.userId,
+    const ideas = await this.service.generateIdeas(ownerOf(req),
       true,
       req.body.context
     );
     const batchId = randomUUID();
-    // Resolved once for the batch, not per idea — ensureDefaultAccount is cached,
-    // but ten concurrent first-calls would otherwise race to mint an account.
-    const owner = await this.service.resolveOwner(req.userId);
+    // Phase 06: the account arrives on the request, already membership-checked, so
+    // there is nothing to resolve and nothing to race. This used to call
+    // `resolveOwner` → `ensureDefaultAccount`, and the only reason that lookup was
+    // hoisted out of the map below was that ten concurrent first-calls would
+    // otherwise race to mint an account.
+    const owner = ownerOf(req);
     const modifiedDataResults = await Promise.allSettled(
       (ideas || [])?.map(async (idea) =>
         formatGeneratedIdea(idea, owner, batchId),
@@ -100,7 +103,7 @@ class IdeaController {
 
   editIdea = asyncHandler(async (req: Request, res: Response) => {
     const ideaId = req.params.ideaId;
-    const data = await this.service.editIdeas(ideaId, req.userId, req.body);
+    const data = await this.service.editIdeas(ideaId, ownerOf(req), req.body);
     res.sendSuccess({
       message: "Title updated successfully",
       data: { ...data, id: ideaId },
@@ -108,20 +111,20 @@ class IdeaController {
   });
 
   regenerateAll = asyncHandler(async (req: Request, res: Response) => {
-    const data = await this.service.regenerateAll(req.userId);
-    eventService.capture(req.userId, EventType.REGENERATE, { resource: "idea", scope: "all" });
+    const data = await this.service.regenerateAll(ownerOf(req));
+    eventService.capture(ownerOf(req), EventType.REGENERATE, { resource: "idea", scope: "all" });
     res.sendSuccess({ message: "Ideas regenerated successfully", data });
   });
 
   regenerateOne = asyncHandler(async (req: Request, res: Response) => {
-    const data = await this.service.regenerateOne(req.userId, req.params.ideaId);
-    eventService.capture(req.userId, EventType.REGENERATE, { resource: "idea", ideaId: req.params.ideaId });
+    const data = await this.service.regenerateOne(ownerOf(req), req.params.ideaId);
+    eventService.capture(ownerOf(req), EventType.REGENERATE, { resource: "idea", ideaId: req.params.ideaId });
     res.sendSuccess({ message: "Idea regenerated successfully", data });
   });
 
   exportIdeas = asyncHandler(async (req: Request, res: Response) => {
-    const data = await this.service.exportIdeas(req.userId);
-    eventService.capture(req.userId, EventType.EXPORT, { resource: "idea" });
+    const data = await this.service.exportIdeas(ownerOf(req));
+    eventService.capture(ownerOf(req), EventType.EXPORT, { resource: "idea" });
     res.sendSuccess({ message: "Ideas exported successfully", data });
   });
 }

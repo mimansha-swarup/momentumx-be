@@ -73,6 +73,20 @@ export interface RecordOwner {
   accountId: string;
 }
 
+/**
+ * The owner for THIS request: who is asking, and which channel they are in.
+ *
+ * Both fields come from middleware — `authMiddleware` sets `userId`,
+ * `accountMiddleware` sets `accountId` only after verifying membership. Neither
+ * is ever read from the body, the query string or a header at this layer; the
+ * header that carries the account is forgeable, and the one unconditional check
+ * that makes it safe lives in the middleware.
+ */
+export const ownerOf = (req: {
+  userId: string;
+  accountId: string;
+}): RecordOwner => ({ userId: req.userId, accountId: req.accountId });
+
 export const formatGeneratedTitle = async (
   title: string,
   { userId, accountId }: RecordOwner,

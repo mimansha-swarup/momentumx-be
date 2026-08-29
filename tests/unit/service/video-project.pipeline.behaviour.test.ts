@@ -51,7 +51,7 @@ import ContentRepository from "../../../src/repository/content.repository";
 import PackagingRepository from "../../../src/repository/packaging.repository";
 import HooksRepository from "../../../src/repository/hooks.repository";
 import { IVideoProject, StepName } from "../../../src/types/routes/video-project";
-import { makeTestAccountService } from "../../helpers/account";
+import { makeTestAccountService, testOwner, TEST_ACCOUNT_ID, OTHER_ACCOUNT_ID } from "../../helpers/account";
 
 // ---------------------------------------------------------------------------
 // Factories
@@ -61,6 +61,7 @@ function makeProject(overrides: Partial<IVideoProject> = {}): IVideoProject {
   return {
     id: "proj-1",
     createdBy: "user-1",
+    accountId: TEST_ACCOUNT_ID,
     title: "My Video",
     ideaId: "idea-1",
     scriptId: null,
@@ -134,7 +135,7 @@ describe("VideoProjectService — pipeline state machine (behaviour)", () => {
     contentRepo = makeMockContentRepo();
     packagingRepo = makeMockPackagingRepo();
     hooksRepo = makeMockHooksRepo();
-    service = new VideoProjectService(repo, contentRepo, packagingRepo, hooksRepo, makeTestAccountService());
+    service = new VideoProjectService(repo, contentRepo, packagingRepo, hooksRepo);
     repo.update.mockResolvedValue(undefined);
   });
 
@@ -155,12 +156,12 @@ describe("VideoProjectService — pipeline state machine (behaviour)", () => {
 
       const mutableSteps: StepName[] = ["script", "hooks", "title", "packaging"];
       for (const step of mutableSteps) {
-        await service.startStep("proj-1", step, "user-1");
+        await service.startStep("proj-1", step, testOwner("user-1"));
         expect(state.pipeline[step].status).toBe("in_progress");
         // Not "completed" for the whole project until every step is done.
         expect(state.overallStatus).not.toBe("completed");
 
-        const result = await service.completeStep("proj-1", step, "user-1");
+        const result = await service.completeStep("proj-1", step, testOwner("user-1"));
         expect(state.pipeline[step].status).toBe("completed");
         expect(result.currentStep).toBe(step === "packaging" ? "packaging" : mutableSteps[mutableSteps.indexOf(step) + 1]);
       }
@@ -177,7 +178,7 @@ describe("VideoProjectService — pipeline state machine (behaviour)", () => {
   describe("illegal transitions are rejected", () => {
     it("rejects completing a step that has not been started (400)", async () => {
       repo.findById.mockResolvedValue(makeProject());
-      await expect(service.completeStep("proj-1", "hooks", "user-1")).rejects.toMatchObject({
+      await expect(service.completeStep("proj-1", "hooks", testOwner("user-1"))).rejects.toMatchObject({
         statusCode: 400,
       });
       expect(repo.update).not.toHaveBeenCalled();
@@ -185,15 +186,15 @@ describe("VideoProjectService — pipeline state machine (behaviour)", () => {
 
     it("rejects starting or completing the research step — it is auto-completed at creation, never a mutable target", async () => {
       repo.findById.mockResolvedValue(makeProject());
-      await expect(service.startStep("proj-1", "research", "user-1")).rejects.toMatchObject({ statusCode: 400 });
-      await expect(service.completeStep("proj-1", "research", "user-1")).rejects.toMatchObject({ statusCode: 400 });
+      await expect(service.startStep("proj-1", "research", testOwner("user-1"))).rejects.toMatchObject({ statusCode: 400 });
+      await expect(service.completeStep("proj-1", "research", testOwner("user-1"))).rejects.toMatchObject({ statusCode: 400 });
       expect(repo.update).not.toHaveBeenCalled();
     });
 
     it("rejects an unrecognized step name for both start and complete (400)", async () => {
       repo.findById.mockResolvedValue(makeProject());
-      await expect(service.startStep("proj-1", "editing", "user-1")).rejects.toMatchObject({ statusCode: 400 });
-      await expect(service.completeStep("proj-1", "editing", "user-1")).rejects.toMatchObject({ statusCode: 400 });
+      await expect(service.startStep("proj-1", "editing", testOwner("user-1"))).rejects.toMatchObject({ statusCode: 400 });
+      await expect(service.completeStep("proj-1", "editing", testOwner("user-1"))).rejects.toMatchObject({ statusCode: 400 });
     });
   });
 
@@ -205,7 +206,7 @@ describe("VideoProjectService — pipeline state machine (behaviour)", () => {
     it("jumping straight to a later step (skipping intermediate ones) is allowed and sets currentStep to it", async () => {
       repo.findById.mockResolvedValue(makeProject({ currentStep: "research" }));
 
-      await service.startStep("proj-1", "title", "user-1");
+      await service.startStep("proj-1", "title", testOwner("user-1"));
 
       expect(repo.update).toHaveBeenCalledWith(
         "proj-1",
@@ -235,7 +236,7 @@ describe("VideoProjectService — pipeline state machine (behaviour)", () => {
         })
       );
 
-      const result = await service.completeStep("proj-1", "hooks", "user-1");
+      const result = await service.completeStep("proj-1", "hooks", testOwner("user-1"));
 
       // EXPECTED (per "currentStep only advances forward"): completing an
       // earlier step must not pull currentStep backward from "packaging".
@@ -339,7 +340,7 @@ describe("VideoProjectService — pipeline state machine (behaviour)", () => {
         })
       );
 
-      const result = await service.completeStep("proj-1", "packaging", "user-1");
+      const result = await service.completeStep("proj-1", "packaging", testOwner("user-1"));
 
       expect(result.pipeline.packaging.status).toBe("completed");
       expect(result.overallStatus).toBe("completed");
@@ -354,7 +355,7 @@ describe("VideoProjectService — pipeline state machine (behaviour)", () => {
         })
       );
 
-      await service.refreshPackagingStep("proj-1", "user-1");
+      await service.refreshPackagingStep("proj-1", testOwner("user-1"));
 
       expect(repo.update).toHaveBeenCalledWith("proj-1", {
         "pipeline.packaging.status": "completed",
@@ -402,7 +403,7 @@ describe("VideoProjectService — pipeline state machine (behaviour)", () => {
     it.failing("reopenTitleStep recomputes overallStatus back to 'in_progress' when the project was 'completed'", async () => {
       repo.findById.mockResolvedValue(makeProject({ overallStatus: "completed", pipeline: allCompletedPipeline() }));
 
-      await service.reopenTitleStep("proj-1", "user-1");
+      await service.reopenTitleStep("proj-1", testOwner("user-1"));
 
       const written = repo.update.mock.calls[0][1] as Record<string, unknown>;
       // EXPECTED (per the invariant every other pipeline mutation upholds):
@@ -419,7 +420,7 @@ describe("VideoProjectService — pipeline state machine (behaviour)", () => {
         })
       );
 
-      await service.clearSelectedHook("proj-1", "user-1");
+      await service.clearSelectedHook("proj-1", testOwner("user-1"));
 
       const written = repo.update.mock.calls[0][1] as Record<string, unknown>;
       // EXPECTED (per the invariant every other pipeline mutation upholds):
@@ -431,32 +432,32 @@ describe("VideoProjectService — pipeline state machine (behaviour)", () => {
   // Ownership — every mutation on an existing project rejects a non-owner.
   // -------------------------------------------------------------------------
   describe("ownership is enforced on every pipeline mutation", () => {
-    const otherUsersProject = () => makeProject({ createdBy: "someone-else" });
+    const otherUsersProject = () => makeProject({ createdBy: "someone-else", accountId: OTHER_ACCOUNT_ID });
 
     it("startStep", async () => {
       repo.findById.mockResolvedValue(otherUsersProject());
-      await expect(service.startStep("proj-1", "script", "user-1")).rejects.toMatchObject({ statusCode: 403 });
+      await expect(service.startStep("proj-1", "script", testOwner("user-1"))).rejects.toMatchObject({ statusCode: 403 });
     });
 
     it("completeStep", async () => {
       repo.findById.mockResolvedValue(otherUsersProject());
-      await expect(service.completeStep("proj-1", "script", "user-1")).rejects.toMatchObject({ statusCode: 403 });
+      await expect(service.completeStep("proj-1", "script", testOwner("user-1"))).rejects.toMatchObject({ statusCode: 403 });
     });
 
     it("markStale is a no-op for a project id that resolves, but is scoped internally (fire-and-forget cascade, not user-callable) — getById-based reads still enforce ownership", async () => {
       repo.findById.mockResolvedValue(otherUsersProject());
-      await expect(service.getReconciledById("proj-1", "user-1")).rejects.toMatchObject({ statusCode: 403 });
+      await expect(service.getReconciledById("proj-1", testOwner("user-1"))).rejects.toMatchObject({ statusCode: 403 });
     });
 
     it("reopenTitleStep", async () => {
       repo.findById.mockResolvedValue(otherUsersProject());
-      await expect(service.reopenTitleStep("proj-1", "user-1")).rejects.toMatchObject({ statusCode: 403 });
+      await expect(service.reopenTitleStep("proj-1", testOwner("user-1"))).rejects.toMatchObject({ statusCode: 403 });
       expect(repo.update).not.toHaveBeenCalled();
     });
 
     it("clearSelectedHook", async () => {
       repo.findById.mockResolvedValue(otherUsersProject());
-      await expect(service.clearSelectedHook("proj-1", "user-1")).rejects.toMatchObject({ statusCode: 403 });
+      await expect(service.clearSelectedHook("proj-1", testOwner("user-1"))).rejects.toMatchObject({ statusCode: 403 });
       expect(repo.update).not.toHaveBeenCalled();
     });
   });

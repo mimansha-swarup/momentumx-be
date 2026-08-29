@@ -2,6 +2,7 @@ import UserRepository from "../repository/user.repository.js";
 import ContentRepository from "../repository/content.repository.js";
 import HooksRepository from "../repository/hooks.repository.js";
 import VideoProjectService from "./video-project.service.js";
+import { RecordOwner } from "../utlils/content.js";
 import { NotFound } from "../utlils/errors.js";
 import { resolveVideoFormat } from "../utlils/prompt-blocks.js";
 import {
@@ -51,12 +52,15 @@ class ContextService {
   ) {}
 
   assemble = async (
-    userId: string,
+    owner: RecordOwner,
     options: IAssembleOptions = {}
   ): Promise<IAssembledContext> => {
     const [channelContext, sessionContext] = await Promise.all([
-      this.buildChannelContext(userId, options.overrides),
-      this.buildSessionContext(userId, options.videoProjectId),
+      // Channel context is still read from the USER record — Phase 06b is what
+      // moves it onto the account. The session half is account-scoped already,
+      // because the project it loads is.
+      this.buildChannelContext(owner.userId, options.overrides),
+      this.buildSessionContext(owner, options.videoProjectId),
     ]);
     return { channelContext, sessionContext };
   };
@@ -104,7 +108,7 @@ class ContextService {
   };
 
   private buildSessionContext = async (
-    userId: string,
+    owner: RecordOwner,
     videoProjectId?: string
   ): Promise<ISessionContext> => {
     if (!videoProjectId) {
@@ -113,10 +117,7 @@ class ContextService {
 
     // Throws NotFound/Forbidden for a bad or foreign project id — an invalid
     // target is a caller error, not "absent upstream content".
-    const project = await this.videoProjectService.getById(
-      videoProjectId,
-      userId
-    );
+    const project = await this.videoProjectService.getById(videoProjectId, owner);
 
     const [workingTitle, script, selectedHook] = await Promise.all([
       this.resolveWorkingTitle(project.ideaId, project.title),

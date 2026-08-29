@@ -5,11 +5,11 @@ class ContentRepository {
             const doc = await this.db.collection(this.collection).doc(ideaId).get();
             return doc.data();
         };
-        this.getIdeas = async ({ userId, limit = 8, cursor, filters, }) => {
+        this.getIdeas = async ({ accountId, limit = 8, cursor, filters, }) => {
             try {
                 let query = this.db
                     .collection(this.collection)
-                    .where("createdBy", "==", userId)
+                    .where("accountId", "==", accountId)
                     // Active batch only — archived ideas must never appear in the list
                     .where("archived", "==", false);
                 // Optional filtering. Test the TYPE, not truthiness: the previous guard
@@ -68,21 +68,21 @@ class ContentRepository {
         };
         // Bounded read for KMeans clustering — projects to title + embedding only and
         // caps at 200 docs at the query level so we never pull every embedding array.
-        this.getIdeasForClustering = async (userId) => {
+        this.getIdeasForClustering = async (accountId) => {
             const snapshot = await this.db
                 .collection(this.collection)
-                .where("createdBy", "==", userId)
+                .where("accountId", "==", accountId)
                 .where("archived", "==", false)
                 .limit(200)
                 .select("title", "embedding")
                 .get();
             return snapshot.docs.map((doc) => doc.data());
         };
-        this.getScripts = async (userId) => {
+        this.getScripts = async (accountId) => {
             try {
                 const snapshot = await this.db
                     .collection(this.script_collection)
-                    .where("createdBy", "==", userId)
+                    .where("accountId", "==", accountId)
                     .orderBy("createdAt", "desc")
                     .get();
                 return snapshot.docs.map((doc) => {
@@ -135,10 +135,10 @@ class ContentRepository {
             }
         };
         // Active batch for regenerate/export — excludes embeddings (not needed here).
-        this.getActiveBatch = async (userId) => {
+        this.getActiveBatch = async (accountId) => {
             const snapshot = await this.db
                 .collection(this.collection)
-                .where("createdBy", "==", userId)
+                .where("accountId", "==", accountId)
                 .where("archived", "==", false)
                 .select("title", "concept", "ideaType", "createdAt", "videoProjectId")
                 .get();
@@ -157,7 +157,7 @@ class ContentRepository {
         // so records that appeared mid-run are picked up by a later pass. The loop
         // terminates because every pass archives the page it just read, which
         // permanently removes those documents from `archived == false`.
-        this.archiveUserIdeas = async (userId, excludeBatchId) => {
+        this.archiveUserIdeas = async (accountId, excludeBatchId) => {
             // Firestore caps a batch at 500 ops — stay under it so a commit never throws.
             const CHUNK_SIZE = 450;
             // A generation writes 10 ideas, so this is far more headroom than any real
@@ -166,7 +166,7 @@ class ContentRepository {
             for (let pass = 0; pass < MAX_PASSES; pass++) {
                 const snapshot = await this.db
                     .collection(this.collection)
-                    .where("createdBy", "==", userId)
+                    .where("accountId", "==", accountId)
                     .where("archived", "==", false)
                     .select("batchId")
                     .limit(CHUNK_SIZE)
@@ -190,7 +190,7 @@ class ContentRepository {
                 if (snapshot.size < CHUNK_SIZE)
                     return;
             }
-            console.warn(JSON.stringify({ event: "archive_max_passes_reached", userId, maxPasses: MAX_PASSES }));
+            console.warn(JSON.stringify({ event: "archive_max_passes_reached", accountId, maxPasses: MAX_PASSES }));
         };
         this.updateIdea = async (ideaId, data) => {
             await this.db

@@ -75,16 +75,10 @@ class AccountService {
    * on their next request instead of being stuck.
    */
   ensureDefaultAccount = async (userId: string): Promise<string> => {
-    const cached = accountIdCache.get(userId);
-    if (cached) return cached;
-
     const user = (await this.userRepo.get(userId)) as Record<string, unknown> | null;
 
     const pointer = user?.lastActiveAccountId;
-    if (typeof pointer === "string" && pointer) {
-      accountIdCache.set(userId, pointer);
-      return pointer;
-    }
+    if (typeof pointer === "string" && pointer) return pointer;
 
     // No pointer. Membership is the authority — a pointer can be missing while
     // the account exists (an interrupted first write, or a restore).
@@ -106,7 +100,6 @@ class AccountService {
     );
     if (found) {
       await this.userRepo.update(userId, { lastActiveAccountId: found.id });
-      accountIdCache.set(userId, found.id);
       return found.id;
     }
 
@@ -131,12 +124,7 @@ class AccountService {
 
     // May return a DIFFERENT id: a concurrent first request can win the claim,
     // in which case nothing was written and we adopt theirs.
-    const accountId = await this.repo.createWithContext(
-      account,
-      toChannelContext(user ?? {})
-    );
-    accountIdCache.set(userId, accountId);
-    return accountId;
+    return this.repo.createWithContext(account, toChannelContext(user ?? {}));
   };
 
   /**
@@ -144,42 +132,16 @@ class AccountService {
    *
    * The repair path for a tombstone. Without it the pointer keeps naming a dead
    * account, `ensureDefaultAccount` keeps returning it from the pointer branch,
-   * and the user gets 410 on every request forever. Evicting the process cache
-   * matters as much as the stored pointer — that cache is checked first.
+   * and the user gets 410 on every request forever.
    *
    * Guarded on the id matching so a stale request cannot clear a pointer the user
    * has since moved somewhere live.
    */
   clearActiveAccount = async (userId: string, accountId: string): Promise<void> => {
-    if (accountIdCache.get(userId) === accountId) accountIdCache.delete(userId);
-
     const user = (await this.userRepo.get(userId)) as Record<string, unknown> | null;
     if (user?.lastActiveAccountId !== accountId) return;
     await this.userRepo.update(userId, { lastActiveAccountId: null });
   };
 }
-
-/**
- * uid → accountId, for the life of the process.
- *
- * ponytail: safe only because every user still has exactly ONE account that never
- * changes. It exists so stamping a write does not cost a user read every time.
- *
- * This comment used to say "Phase 05 introduces switching, delete it then", and
- * Phase 05 has landed — but it named the wrong phase. Phase 05 only RESOLVES the
- * active account (`req.accountId`) and verifies membership; every write path
- * still stamps `ensureDefaultAccount(userId)`, which is deliberate — nothing
- * reads `req.accountId` until Phase 06.
- *
- * DELETE THIS IN PHASE 06, in the same commit that threads `req.accountId` into
- * the write paths. Not after. A process-lifetime uid → accountId map alongside a
- * per-request active account is a user working in channel B whose records are
- * stamped channel A — and rebuilding after a deploy makes it intermittent. Delete
- * it; do not try to invalidate it.
- */
-const accountIdCache = new Map<string, string>();
-
-/** Test seam — the cache is process-wide and would otherwise leak across suites. */
-export const __clearAccountIdCache = () => accountIdCache.clear();
 
 export default AccountService;

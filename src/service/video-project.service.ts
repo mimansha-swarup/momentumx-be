@@ -1,7 +1,6 @@
 import { firebase } from "../config/firebase.js";
 import ContentRepository from "../repository/content.repository.js";
 import HooksRepository from "../repository/hooks.repository.js";
-import AccountService from "./account.service.js";
 import PackagingRepository from "../repository/packaging.repository.js";
 import VideoProjectRepository from "../repository/video-project.repository.js";
 import {
@@ -13,6 +12,7 @@ import {
   StepState,
 } from "../types/routes/video-project.js";
 import { IPackaging } from "../types/routes/packaging.js";
+import { RecordOwner } from "../utlils/content.js";
 import { STEP_ORDER, STEP_LOCK_MS, downstreamOf } from "../constants/pipeline.js";
 import { BadRequest, Forbidden, NotFound } from "../utlils/errors.js";
 import { assertOwner, formatGeneratedTitle } from "../utlils/content.js";
@@ -40,23 +40,22 @@ class VideoProjectService {
     private repo: VideoProjectRepository,
     private contentRepo: ContentRepository,
     private packagingRepo: PackagingRepository,
-    private hooksRepo: HooksRepository,
-    private accountService: AccountService
+    private hooksRepo: HooksRepository
   ) {}
 
-  create = async (userId: string, ideaId: string): Promise<IVideoProject> => {
+  create = async (owner: RecordOwner, ideaId: string): Promise<IVideoProject> => {
     const idea = await this.contentRepo.getIdea(ideaId);
     if (!idea) {
       throw NotFound("Idea not found");
     }
-    if (idea.createdBy !== userId) {
+    if (idea.accountId !== owner.accountId) {
       throw Forbidden();
     }
 
     const now = firebase.firestore.FieldValue.serverTimestamp();
     const projectData = {
-      createdBy: userId,
-      accountId: await this.accountService.ensureDefaultAccount(userId),
+      createdBy: owner.userId,
+      accountId: owner.accountId,
       title: idea.title,
       ideaId,
       scriptId: null,
@@ -88,25 +87,22 @@ class VideoProjectService {
     return project;
   };
 
-  createFromTitle = async (userId: string, title: string): Promise<IVideoProject> => {
-    assertOwner(userId);
+  createFromTitle = async (owner: RecordOwner, title: string): Promise<IVideoProject> => {
+    assertOwner(owner.userId);
     if (!title || !title.trim()) {
       throw BadRequest("title is required");
     }
-    const formatted = await formatGeneratedTitle(title.trim(), {
-      userId,
-      accountId: await this.accountService.ensureDefaultAccount(userId),
-    });
+    const formatted = await formatGeneratedTitle(title.trim(), owner);
     const [saved] = await this.contentRepo.batchSaveIdeas([formatted]);
-    return this.create(userId, saved.id);
+    return this.create(owner, saved.id);
   };
 
-  getProjectsByIdea = async (ideaId: string, userId: string): Promise<IVideoProject[]> => {
-    return this.repo.findByIdeaId(ideaId, userId);
+  getProjectsByIdea = async (ideaId: string, owner: RecordOwner): Promise<IVideoProject[]> => {
+    return this.repo.findByIdeaId(ideaId, owner.accountId);
   };
 
   list = async (
-    userId: string,
+    owner: RecordOwner,
     { status, limit = 20, cursor }: { status?: OverallStatus; limit?: number; cursor?: string }
   ) => {
     const validStatuses: OverallStatus[] = ["in_progress", "completed", "stale"];
@@ -114,7 +110,7 @@ class VideoProjectService {
       throw BadRequest("Invalid status value");
     }
 
-    const { projects, hasMore, nextCursor } = await this.repo.list(userId, {
+    const { projects, hasMore, nextCursor } = await this.repo.list(owner.accountId, {
       status,
       limit,
       cursor,
@@ -133,12 +129,12 @@ class VideoProjectService {
     return { projects: mapped, hasMore, nextCursor };
   };
 
-  getById = async (projectId: string, userId: string): Promise<IVideoProject> => {
+  getById = async (projectId: string, owner: RecordOwner): Promise<IVideoProject> => {
     const project = await this.repo.findById(projectId);
     if (!project || project.isDeleted) {
       throw NotFound();
     }
-    if (project.createdBy !== userId) {
+    if (project.accountId !== owner.accountId) {
       throw Forbidden();
     }
     return project;
@@ -180,8 +176,8 @@ class VideoProjectService {
     };
   };
 
-  getReconciledById = async (projectId: string, userId: string): Promise<IVideoProject> => {
-    const project = await this.getById(projectId, userId);
+  getReconciledById = async (projectId: string, owner: RecordOwner): Promise<IVideoProject> => {
+    const project = await this.getById(projectId, owner);
     return this.reconcileView(project);
   };
 
@@ -192,8 +188,8 @@ class VideoProjectService {
    * the step isn't stale. overallStatus stays "stale" if script/hooks are still stale.
    * Caller must gate on "no packaging item remains stale".
    */
-  refreshPackagingStep = async (projectId: string, userId: string): Promise<void> => {
-    const project = await this.getById(projectId, userId);
+  refreshPackagingStep = async (projectId: string, owner: RecordOwner): Promise<void> => {
+    const project = await this.getById(projectId, owner);
     if (project.pipeline.packaging.status !== "stale") return;
 
     const updatedPipeline: IVideoProjectPipeline = {
@@ -210,17 +206,17 @@ class VideoProjectService {
 
   // Keep the dashboard thumbnailHint in sync when the thumbnail is regenerated
   // (it is otherwise only set at save-time via linkResource, so a regen would leave it stale).
-  setThumbnailHint = async (projectId: string, hint: string | null, userId: string): Promise<void> => {
-    await this.getById(projectId, userId);
+  setThumbnailHint = async (projectId: string, hint: string | null, owner: RecordOwner): Promise<void> => {
+    await this.getById(projectId, owner);
     await this.repo.update(projectId, { thumbnailHint: hint });
   };
 
   update = async (
     projectId: string,
-    userId: string,
+    owner: RecordOwner,
     data: { title?: string }
   ) => {
-    await this.getById(projectId, userId);
+    await this.getById(projectId, owner);
 
     if (!data.title || typeof data.title !== "string" || data.title.trim() === "") {
       throw BadRequest("title is required");
@@ -230,12 +226,12 @@ class VideoProjectService {
     return { title: data.title };
   };
 
-  delete = async (projectId: string, userId: string) => {
+  delete = async (projectId: string, owner: RecordOwner) => {
     const project = await this.repo.findById(projectId);
     if (!project) {
       throw NotFound();
     }
-    if (project.createdBy !== userId) {
+    if (project.accountId !== owner.accountId) {
       throw Forbidden();
     }
     if (project.isDeleted) {
@@ -262,14 +258,14 @@ class VideoProjectService {
     return { id: projectId, isDeleted: true };
   };
 
-  startStep = async (projectId: string, stepName: string, userId: string) => {
+  startStep = async (projectId: string, stepName: string, owner: RecordOwner) => {
     if (!VALID_MUTABLE_STEPS.includes(stepName)) {
       throw BadRequest(
         `Invalid step. Must be one of: ${VALID_MUTABLE_STEPS.join(", ")}`
       );
     }
 
-    const project = await this.getById(projectId, userId);
+    const project = await this.getById(projectId, owner);
     const step = stepName as StepName;
     const currentStatus = project.pipeline[step].status;
 
@@ -312,14 +308,14 @@ class VideoProjectService {
     });
   };
 
-  completeStep = async (projectId: string, stepName: string, userId: string) => {
+  completeStep = async (projectId: string, stepName: string, owner: RecordOwner) => {
     if (!VALID_MUTABLE_STEPS.includes(stepName)) {
       throw BadRequest(
         `Invalid step. Must be one of: ${VALID_MUTABLE_STEPS.join(", ")}`
       );
     }
 
-    const project = await this.getById(projectId, userId);
+    const project = await this.getById(projectId, owner);
     const step = stepName as StepName;
     const currentStatus = project.pipeline[step].status;
 
@@ -394,7 +390,7 @@ class VideoProjectService {
     projectId: string,
     resourceType: string,
     resourceId: string,
-    userId: string
+    owner: RecordOwner
   ) => {
     const validTypes = ["script", "hooks", "packaging"];
     if (!validTypes.includes(resourceType)) {
@@ -407,7 +403,7 @@ class VideoProjectService {
       throw BadRequest("resourceId is required");
     }
 
-    await this.getById(projectId, userId);
+    await this.getById(projectId, owner);
 
     // Validating the PROJECT is not enough — the resource id comes straight from the
     // request body. Without this, anyone holding a leaked scriptId/hooksId/packagingId
@@ -425,7 +421,7 @@ class VideoProjectService {
     if (!resource) {
       throw NotFound(`${resourceType} not found`);
     }
-    if (resource.createdBy !== userId) {
+    if (resource.accountId !== owner.accountId) {
       throw Forbidden();
     }
 
@@ -457,9 +453,9 @@ class VideoProjectService {
     projectId: string,
     hooksId: string,
     hookIndex: number,
-    userId: string
+    owner: RecordOwner
   ): Promise<{ id: string; hooksId: string; selectedHookIndex: number }> => {
-    await this.getById(projectId, userId);
+    await this.getById(projectId, owner);
 
     await this.repo.update(projectId, { hooksId, selectedHookIndex: hookIndex });
     return { id: projectId, hooksId, selectedHookIndex: hookIndex };
@@ -470,16 +466,16 @@ class VideoProjectService {
   // the project is still NAMED after one of them. Move the step back to
   // "needs a pick" so the UI prompts instead of showing a green step over a title
   // that isn't in the list any more.
-  reopenTitleStep = async (projectId: string, userId: string): Promise<void> => {
-    await this.getById(projectId, userId);
+  reopenTitleStep = async (projectId: string, owner: RecordOwner): Promise<void> => {
+    await this.getById(projectId, owner);
     await this.repo.update(projectId, {
       "pipeline.title.status": "in_progress",
       "pipeline.title.completedAt": null,
     });
   };
 
-  clearSelectedHook = async (projectId: string, userId: string): Promise<void> => {
-    await this.getById(projectId, userId);
+  clearSelectedHook = async (projectId: string, owner: RecordOwner): Promise<void> => {
+    await this.getById(projectId, owner);
     // Regenerating hooks invalidates the prior selection but NOT the batch
     // itself — the batch doc is updated in place, so hooksId still points at a
     // valid (newer) batch and must be kept. Clear only the selection and move
@@ -492,8 +488,8 @@ class VideoProjectService {
     });
   };
 
-  getByScriptId = async (scriptId: string, userId: string): Promise<IVideoProject | null> => {
-    return this.repo.findByScriptId(scriptId, userId);
+  getByScriptId = async (scriptId: string, owner: RecordOwner): Promise<IVideoProject | null> => {
+    return this.repo.findByScriptId(scriptId, owner.accountId);
   };
 
   markStale = async (projectId: string, fromStep: StepName): Promise<void> => {

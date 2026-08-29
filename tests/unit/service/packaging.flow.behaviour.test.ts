@@ -65,7 +65,7 @@ import ContentRepository from "../../../src/repository/content.repository";
 import HooksRepository from "../../../src/repository/hooks.repository";
 import { generateStreamingContent } from "../../../src/utlils/ai";
 import { IVideoProject } from "../../../src/types/routes/video-project";
-import { makeTestAccountService } from "../../helpers/account";
+import { makeTestAccountService, testOwner, TEST_ACCOUNT_ID, OTHER_ACCOUNT_ID } from "../../helpers/account";
 
 const mockGenerate = generateStreamingContent as jest.MockedFunction<typeof generateStreamingContent>;
 
@@ -93,6 +93,7 @@ function makeProject(overrides: Partial<IVideoProject> = {}): IVideoProject {
   return {
     id: "proj-1",
     createdBy: "user-1",
+    accountId: TEST_ACCOUNT_ID,
     title: "My Video",
     ideaId: "idea-1",
     scriptId: "script-1",
@@ -151,11 +152,11 @@ function makeWiredServices(initialProject: IVideoProject) {
     getIdea: jest.fn(),
     updateIdea: jest.fn(),
     batchSaveIdeas: jest.fn(),
-    getScriptById: jest.fn().mockResolvedValue({ createdBy: "user-1" }),
+    getScriptById: jest.fn().mockResolvedValue({ createdBy: "user-1", accountId: TEST_ACCOUNT_ID }),
   } as unknown as jest.Mocked<ContentRepository>;
 
   const hooksRepoForVp = {
-    findById: jest.fn().mockResolvedValue({ createdBy: "user-1" }),
+    findById: jest.fn().mockResolvedValue({ createdBy: "user-1", accountId: TEST_ACCOUNT_ID }),
   } as unknown as jest.Mocked<HooksRepository>;
 
   // Stateful fake: tracks per-item statuses across sequential generate-* calls,
@@ -166,7 +167,7 @@ function makeWiredServices(initialProject: IVideoProject) {
   let packagingCreated = false;
 
   const packagingRepo = {
-    get: jest.fn().mockResolvedValue({ createdBy: "user-1", thumbnail: [] }),
+    get: jest.fn().mockResolvedValue({ createdBy: "user-1", accountId: TEST_ACCOUNT_ID, thumbnail: [] }),
     clearStale: jest.fn().mockResolvedValue(undefined),
     upsertGeneratedItem: jest.fn(async (videoProjectId: string, _userId: string, _field: string, item: string) => {
       itemStatuses[item] = "completed";
@@ -176,8 +177,8 @@ function makeWiredServices(initialProject: IVideoProject) {
     }),
   } as unknown as jest.Mocked<PackagingRepository>;
 
-  const vpService = new VideoProjectService(vpRepo, contentRepo, packagingRepo, hooksRepoForVp, makeTestAccountService());
-  const packagingService = new PackagingService(packagingRepo, vpService, makeContextService(), makeTestAccountService());
+  const vpService = new VideoProjectService(vpRepo, contentRepo, packagingRepo, hooksRepoForVp);
+  const packagingService = new PackagingService(packagingRepo, vpService, makeContextService());
 
   return { vpRepo, packagingRepo, vpService, packagingService, getState: () => state };
 }
@@ -189,7 +190,7 @@ describe("Packaging generation flow — persist-on-generate drives the pipeline 
     mockGenerate.mockResolvedValue(makeStream(JSON.stringify({ titles: [{ title: "T1", characterCount: 10 }] })));
     const { packagingService, getState } = makeWiredServices(makeProject());
 
-    await packagingService.generateTitle("user-1", "a script", "proj-1");
+    await packagingService.generateTitle(testOwner("user-1"), "a script", "proj-1");
 
     expect(getState().pipeline.title.status).toBe("in_progress");
     expect(getState().pipeline.packaging.status).toBe("not_started");
@@ -199,21 +200,21 @@ describe("Packaging generation flow — persist-on-generate drives the pipeline 
     const { packagingService, getState } = makeWiredServices(makeProject());
 
     mockGenerate.mockResolvedValueOnce(makeStream(JSON.stringify({ titles: [{ title: "T1", characterCount: 10 }] })));
-    await packagingService.generateTitle("user-1", "a script", "proj-1");
+    await packagingService.generateTitle(testOwner("user-1"), "a script", "proj-1");
     expect(getState().pipeline.packaging.status).toBe("not_started");
 
     mockGenerate.mockResolvedValueOnce(makeStream(JSON.stringify({ description: "An SEO description." })));
-    await packagingService.generateDescription("user-1", "a script", "T1", "proj-1");
+    await packagingService.generateDescription(testOwner("user-1"), "a script", "T1", "proj-1");
     expect(getState().pipeline.packaging.status).toBe("in_progress"); // started, but not all 3 present yet
 
     mockGenerate.mockResolvedValueOnce(makeStream(JSON.stringify({ descriptions: ["Brief one"] })));
-    await packagingService.generateThumbnail("user-1", "a script", "T1", "proj-1");
+    await packagingService.generateThumbnail(testOwner("user-1"), "a script", "T1", "proj-1");
     expect(getState().pipeline.packaging.status).toBe("in_progress"); // shorts still missing
 
     mockGenerate.mockResolvedValueOnce(
       makeStream(JSON.stringify({ segments: [{ startTime: "0:00", endTime: "0:05", content: "x", type: "hook" }], totalDuration: "0:60" }))
     );
-    await packagingService.generateShorts("user-1", "a script", 60, "proj-1");
+    await packagingService.generateShorts(testOwner("user-1"), "a script", 60, "proj-1");
 
     // The THIRD of {description, thumbnail, shorts} to land completes packaging.
     expect(getState().pipeline.packaging.status).toBe("completed");
@@ -227,8 +228,8 @@ describe("Packaging generation flow — persist-on-generate drives the pipeline 
       .mockResolvedValueOnce(makeStream(JSON.stringify({ titles: [{ title: "T1", characterCount: 10 }] })))
       .mockResolvedValueOnce(makeStream(JSON.stringify({ description: "desc" })));
 
-    await packagingService.generateTitle("user-1", "a script", "proj-1");
-    await packagingService.generateDescription("user-1", "a script", "T1", "proj-1");
+    await packagingService.generateTitle(testOwner("user-1"), "a script", "proj-1");
+    await packagingService.generateDescription(testOwner("user-1"), "a script", "T1", "proj-1");
 
     const linkCalls = (vpRepo.update as jest.Mock).mock.calls.filter(
       ([, patch]) => (patch as Record<string, unknown>).packagingId
@@ -244,18 +245,19 @@ describe("Title continuity — the Title step completes on selection, never on g
     mockGenerate.mockResolvedValue(makeStream(JSON.stringify({ titles: [{ title: "Chosen Title", characterCount: 12 }] })));
     const { packagingService, packagingRepo, getState } = makeWiredServices(makeProject());
 
-    const { packagingId } = (await packagingService.generateTitle("user-1", "a script", "proj-1")) as { packagingId: string };
+    const { packagingId } = (await packagingService.generateTitle(testOwner("user-1"), "a script", "proj-1")) as { packagingId: string };
     expect(getState().pipeline.title.status).toBe("in_progress"); // started, not completed
 
     (packagingRepo.get as jest.Mock).mockResolvedValue({
       id: packagingId,
       createdBy: "user-1",
+      accountId: TEST_ACCOUNT_ID,
       videoProjectId: "proj-1",
       titles: [{ title: "Chosen Title", characterCount: 12 }],
     });
     packagingRepo.update = jest.fn().mockResolvedValue({});
 
-    await packagingService.selectTitle("user-1", packagingId, 0);
+    await packagingService.selectTitle(testOwner("user-1"), packagingId, 0);
 
     expect(getState().pipeline.title.status).toBe("completed");
     expect(getState().title).toBe("Chosen Title");
@@ -281,19 +283,19 @@ describe("Door flow — a save with no videoProjectId creates exactly one projec
     } as unknown as PackagingRepository;
 
     const contentRepo = {
-      getIdea: jest.fn().mockResolvedValue({ id: "idea-shallow", createdBy: "user-1", title: "My Title" }),
+      getIdea: jest.fn().mockResolvedValue({ id: "idea-shallow", createdBy: "user-1", accountId: TEST_ACCOUNT_ID, title: "My Title" }),
       updateIdea: jest.fn(),
-      batchSaveIdeas: jest.fn().mockResolvedValue([{ id: "idea-shallow", title: "My Title", createdBy: "user-1" }]),
+      batchSaveIdeas: jest.fn().mockResolvedValue([{ id: "idea-shallow", title: "My Title", createdBy: "user-1", accountId: TEST_ACCOUNT_ID }]),
       getScriptById: jest.fn(),
     } as unknown as ContentRepository;
 
     const { formatGeneratedTitle } = jest.requireMock("../../../src/utlils/content") as { formatGeneratedTitle: jest.Mock };
-    formatGeneratedTitle.mockResolvedValue({ title: "My Title", createdBy: "user-1" });
+    formatGeneratedTitle.mockResolvedValue({ title: "My Title", createdBy: "user-1", accountId: TEST_ACCOUNT_ID });
 
-    const vpService = new VideoProjectService(vpRepo, contentRepo, packagingRepoForSave as any, {} as any, makeTestAccountService());
-    const service = new PackagingService(packagingRepoForSave as any, vpService, makeContextService(), makeTestAccountService());
+    const vpService = new VideoProjectService(vpRepo, contentRepo, packagingRepoForSave as any, {} as any);
+    const service = new PackagingService(packagingRepoForSave as any, vpService, makeContextService());
 
-    await service.savePackaging("user-1", { titles: [{ title: "My Title", characterCount: 8 }] });
+    await service.savePackaging(testOwner("user-1"), { titles: [{ title: "My Title", characterCount: 8 }] });
 
     // Exactly one project created for this door save.
     expect(createSpy).toHaveBeenCalledTimes(1);
@@ -311,14 +313,14 @@ describe("Door flow — a save with no videoProjectId creates exactly one projec
     } as unknown as PackagingRepository;
 
     const contentRepo = { getIdea: jest.fn(), updateIdea: jest.fn(), batchSaveIdeas: jest.fn(), getScriptById: jest.fn() } as unknown as ContentRepository;
-    const vpService = new VideoProjectService(vpRepo, contentRepo, packagingRepoForSave as any, {} as any, makeTestAccountService());
-    const service = new PackagingService(packagingRepoForSave as any, vpService, makeContextService(), makeTestAccountService());
+    const vpService = new VideoProjectService(vpRepo, contentRepo, packagingRepoForSave as any, {} as any);
+    const service = new PackagingService(packagingRepoForSave as any, vpService, makeContextService());
     const createSpy = vpRepo.create as jest.Mock;
 
     // Client adopts the id from the first save and passes it explicitly this time.
     // Post-05a the packaging id IS the project id, so this is a point read hit.
     (packagingRepoForSave.get as jest.Mock).mockResolvedValue({ id: "shallow-1" });
-    await service.savePackaging("user-1", { description: "edit" }, "shallow-1");
+    await service.savePackaging(testOwner("user-1"), { description: "edit" }, "shallow-1");
 
     expect(createSpy).not.toHaveBeenCalled();
   });
@@ -363,6 +365,7 @@ describe("Stale lifecycle — a plain save never clears stale; only regenerate d
       get: jest.fn().mockResolvedValue({
         id: "pkg-1",
         createdBy: "user-1",
+        accountId: TEST_ACCOUNT_ID,
         videoProjectId: "proj-1",
         isStale: true,
         staleReason: "hooks_regenerated",
@@ -375,8 +378,8 @@ describe("Stale lifecycle — a plain save never clears stale; only regenerate d
       clearStale: jest.fn(),
     } as unknown as PackagingRepository;
 
-    const saveService = new PackagingService(packagingRepoForSave as any, vpService, makeContextService(), makeTestAccountService());
-    await saveService.savePackaging("user-1", { description: "Edited text" }, "proj-1");
+    const saveService = new PackagingService(packagingRepoForSave as any, vpService, makeContextService());
+    await saveService.savePackaging(testOwner("user-1"), { description: "Edited text" }, "proj-1");
 
     const savedPatch = (packagingRepoForSave.update as jest.Mock).mock.calls[0][1];
     expect(savedPatch).not.toHaveProperty("isStale");
@@ -390,9 +393,9 @@ describe("Ownership — generation on a project owned by another user is rejecte
 
   it("generateTitle with a videoProjectId owned by someone else throws 403 and never persists", async () => {
     mockGenerate.mockResolvedValue(makeStream(JSON.stringify({ titles: [{ title: "T", characterCount: 1 }] })));
-    const { packagingService, packagingRepo } = makeWiredServices(makeProject({ createdBy: "someone-else" }));
+    const { packagingService, packagingRepo } = makeWiredServices(makeProject({ createdBy: "someone-else", accountId: OTHER_ACCOUNT_ID }));
 
-    const err: any = await packagingService.generateTitle("user-1", "a script", "proj-1").catch((e: any) => e);
+    const err: any = await packagingService.generateTitle(testOwner("user-1"), "a script", "proj-1").catch((e: any) => e);
 
     expect(err.statusCode).toBe(403);
     expect(packagingRepo.upsertGeneratedItem).not.toHaveBeenCalled();

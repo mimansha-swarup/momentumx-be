@@ -37,11 +37,11 @@ class PackagingRepository {
                 throw error;
             }
         };
-        this.getByUserId = async (userId) => {
+        this.getByAccountId = async (accountId) => {
             try {
                 const snapshot = await this.db
                     .collection(this.collection)
-                    .where("createdBy", "==", userId)
+                    .where("accountId", "==", accountId)
                     .orderBy("createdAt", "desc")
                     .get();
                 return snapshot.docs.map((doc) => {

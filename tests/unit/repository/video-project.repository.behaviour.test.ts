@@ -37,6 +37,7 @@ jest.mock("../../../src/config/firebase", () => ({
 
 import { FieldPath } from "firebase-admin/firestore";
 import VideoProjectRepository from "../../../src/repository/video-project.repository";
+import { TEST_ACCOUNT_ID } from "../../helpers/account";
 
 describe("VideoProjectRepository.list — query scoping and pagination", () => {
   let repo: VideoProjectRepository;
@@ -46,24 +47,24 @@ describe("VideoProjectRepository.list — query scoping and pagination", () => {
     repo = new VideoProjectRepository();
   });
 
-  it("filters by createdBy before isDeleted — security invariant", async () => {
+  it("filters by accountId before isDeleted — security invariant", async () => {
     getMock.mockResolvedValue({ docs: [] });
 
-    await repo.list("user-1", { limit: 20 });
+    await repo.list(TEST_ACCOUNT_ID, { limit: 20 });
 
-    expect(chain.where.mock.calls[0]).toEqual(["createdBy", "==", "user-1"]);
+    expect(chain.where.mock.calls[0]).toEqual(["accountId", "==", TEST_ACCOUNT_ID]);
     expect(chain.where.mock.calls[1]).toEqual(["isDeleted", "==", false]);
   });
 
   it("orders page 1 and a cursor page identically", async () => {
     getMock.mockResolvedValue({ docs: [] });
 
-    await repo.list("user-1", { limit: 20 });
+    await repo.list(TEST_ACCOUNT_ID, { limit: 20 });
     const page1Order = [...chain.orderBy.mock.calls];
     chain.orderBy.mockClear();
 
     docGet.mockResolvedValueOnce({ exists: true, id: "last-doc" });
-    await repo.list("user-1", { limit: 20, cursor: "last-doc" });
+    await repo.list(TEST_ACCOUNT_ID, { limit: 20, cursor: "last-doc" });
     const page2Order = [...chain.orderBy.mock.calls];
 
     expect(page2Order).toEqual(page1Order);
@@ -76,7 +77,7 @@ describe("VideoProjectRepository.list — query scoping and pagination", () => {
   it("throws a 400 when the cursor document does not exist", async () => {
     docGet.mockResolvedValueOnce({ exists: false });
 
-    await expect(repo.list("user-1", { limit: 20, cursor: "missing-doc" })).rejects.toMatchObject({
+    await expect(repo.list(TEST_ACCOUNT_ID, { limit: 20, cursor: "missing-doc" })).rejects.toMatchObject({
       message: "Invalid cursor",
       statusCode: 400,
     });
@@ -87,7 +88,7 @@ describe("VideoProjectRepository.list — query scoping and pagination", () => {
     docGet.mockResolvedValueOnce(cursorSnap);
     getMock.mockResolvedValue({ docs: [] });
 
-    await repo.list("user-1", { limit: 20, cursor: "last-seen" });
+    await repo.list(TEST_ACCOUNT_ID, { limit: 20, cursor: "last-seen" });
 
     expect(chain.startAfter).toHaveBeenCalledWith(cursorSnap);
   });
@@ -95,7 +96,7 @@ describe("VideoProjectRepository.list — query scoping and pagination", () => {
   it("does not call startAfter for an un-cursored (page 1) request", async () => {
     getMock.mockResolvedValue({ docs: [] });
 
-    await repo.list("user-1", { limit: 20 });
+    await repo.list(TEST_ACCOUNT_ID, { limit: 20 });
 
     expect(chain.startAfter).not.toHaveBeenCalled();
   });
@@ -104,7 +105,7 @@ describe("VideoProjectRepository.list — query scoping and pagination", () => {
     const docs = Array.from({ length: 4 }, (_, i) => ({ id: `p${i}`, data: () => ({ id: `p${i}` }) }));
     getMock.mockResolvedValue({ docs });
 
-    const result = await repo.list("user-1", { limit: 3 });
+    const result = await repo.list(TEST_ACCOUNT_ID, { limit: 3 });
 
     expect(chain.limit).toHaveBeenCalledWith(4); // limit + 1
     expect(result.projects).toHaveLength(3);
@@ -117,7 +118,7 @@ describe("VideoProjectRepository.list — query scoping and pagination", () => {
     const docs = Array.from({ length: 2 }, (_, i) => ({ id: `p${i}`, data: () => ({ id: `p${i}` }) }));
     getMock.mockResolvedValue({ docs });
 
-    const result = await repo.list("user-1", { limit: 3 });
+    const result = await repo.list(TEST_ACCOUNT_ID, { limit: 3 });
 
     expect(result.hasMore).toBe(false);
     expect(result.nextCursor).toBeNull();
@@ -179,23 +180,23 @@ describe("VideoProjectRepository.findByScriptId / findByIdeaId — ownership sco
     repo = new VideoProjectRepository();
   });
 
-  it("findByScriptId scopes the query by createdBy, not scriptId alone", async () => {
+  it("findByScriptId scopes the query by accountId, not scriptId alone", async () => {
     getMock.mockResolvedValue({ empty: true, docs: [] });
 
-    await repo.findByScriptId("script-1", "user-1");
+    await repo.findByScriptId("script-1", TEST_ACCOUNT_ID);
 
     const whereFields = chain.where.mock.calls.map((call) => call[0]);
-    expect(whereFields).toContain("createdBy");
+    expect(whereFields).toContain("accountId");
     expect(whereFields).toContain("scriptId");
   });
 
-  it("findByIdeaId scopes the query by createdBy, not ideaId alone", async () => {
+  it("findByIdeaId scopes the query by accountId, not ideaId alone", async () => {
     getMock.mockResolvedValue({ empty: true, docs: [] });
 
-    await repo.findByIdeaId("idea-1", "user-1");
+    await repo.findByIdeaId("idea-1", TEST_ACCOUNT_ID);
 
     const whereFields = chain.where.mock.calls.map((call) => call[0]);
-    expect(whereFields).toContain("createdBy");
+    expect(whereFields).toContain("accountId");
     expect(whereFields).toContain("ideaId");
   });
 });

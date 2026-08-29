@@ -52,7 +52,7 @@ import ResearchContextService from "../../src/service/research-context.service";
 import { generateContent } from "../../src/utlils/ai";
 import { formatCreatorsData } from "../../src/utlils/content";
 import { IDEA_USER_PROMPT } from "../../src/constants/prompt";
-import { makeTestAccountService } from "../helpers/account";
+import { makeTestAccountService, testOwner } from "../helpers/account";
 
 jest.mock("../../src/repository/content.repository");
 jest.mock("../../src/repository/user.repository");
@@ -108,11 +108,11 @@ describe("ContentService.generateIdeas", () => {
     researchContext.getIdeaSignals = jest.fn().mockResolvedValue("Live research signals:\nSome trend — 1.2M views");
     // Fresh stream per call — an async generator is single-use.
     mockGenerate.mockImplementation(async () => makeStream(IDEAS));
-    service = new ContentService(repo, userRepo, {} as any, makeTestAccountService(), researchContext);
+    service = new ContentService(repo, userRepo, {} as any, researchContext);
   });
 
   it("returns parsed idea objects and injects research signals into the prompt", async () => {
-    const ideas = await service.generateIdeas("user-1");
+    const ideas = await service.generateIdeas(testOwner("user-1"));
 
     expect(ideas).toHaveLength(2);
     expect(ideas[0]).toMatchObject({ workingTitle: "Working title one", type: "long" });
@@ -124,8 +124,8 @@ describe("ContentService.generateIdeas", () => {
   });
 
   it("degrades cleanly when no research context service is wired", async () => {
-    service = new ContentService(repo, userRepo, {} as any, makeTestAccountService());
-    const ideas = await service.generateIdeas("user-1");
+    service = new ContentService(repo, userRepo, {} as any);
+    const ideas = await service.generateIdeas(testOwner("user-1"));
 
     expect(ideas).toHaveLength(2);
     const [, userPrompt] = mockGenerate.mock.calls[0];
@@ -140,7 +140,7 @@ describe("ContentService.generateIdeas", () => {
     // 503, not a bare Error: the error handler masks unrecognised throws as
     // "Something went wrong", so the creator learned nothing about a failure
     // that a retry usually clears.
-    const err = await service.generateIdeas("user-1").catch((e) => e);
+    const err = await service.generateIdeas(testOwner("user-1")).catch((e) => e);
     expect(err.statusCode).toBe(503);
     expect(err.message).toMatch(/Couldn't generate ideas/);
   });
@@ -148,7 +148,7 @@ describe("ContentService.generateIdeas", () => {
   it("surfaces an empty generation as a retryable 503, not a JSON parse crash", async () => {
     mockGenerate.mockImplementation(async () => makeRawStream(""));
 
-    const err = await service.generateIdeas("user-1").catch((e) => e);
+    const err = await service.generateIdeas(testOwner("user-1")).catch((e) => e);
     expect(err.statusCode).toBe(503);
     expect(err.message).toMatch(/nothing came back/);
   });
@@ -158,31 +158,31 @@ describe("ContentService.generateIdeas", () => {
       makeRawStream('{"concept": "unterminated')
     );
 
-    const err = await service.generateIdeas("user-1").catch((e) => e);
+    const err = await service.generateIdeas(testOwner("user-1")).catch((e) => e);
     expect(err.statusCode).toBe(503);
     expect(err.message).toMatch(/malformed/);
   });
 
   it("increments stats.ideas by batch size only when counting is on", async () => {
-    await service.generateIdeas("user-1");
+    await service.generateIdeas(testOwner("user-1"));
     expect(userRepo.update).toHaveBeenCalledWith("user-1", {
       "stats.ideas": 2,
     });
 
     userRepo.update.mockClear();
-    await service.generateIdeas("user-1", false);
+    await service.generateIdeas(testOwner("user-1"), false);
     expect(userRepo.update).not.toHaveBeenCalled();
   });
 
   it("404s when the user record is missing", async () => {
     userRepo.get = jest.fn().mockResolvedValue(undefined);
-    await expect(service.generateIdeas("user-1")).rejects.toMatchObject({
+    await expect(service.generateIdeas(testOwner("user-1"))).rejects.toMatchObject({
       statusCode: 404,
     });
   });
 
   it("merges a not-yet-persisted override context over the record (instant-first-idea)", async () => {
-    const ideas = await service.generateIdeas("user-1", true, {
+    const ideas = await service.generateIdeas(testOwner("user-1"), true, {
       niche: "Personal finance",
       targetAudience: "young professionals",
       brandName: "Wealth With Sam",
@@ -210,7 +210,7 @@ describe("ContentService.generateIdeas", () => {
   it("generates from the override even when the user record is missing (pre-onboarding)", async () => {
     userRepo.get = jest.fn().mockResolvedValue(undefined);
 
-    const ideas = await service.generateIdeas("user-1", true, {
+    const ideas = await service.generateIdeas(testOwner("user-1"), true, {
       niche: "Personal finance",
     });
 

@@ -67,7 +67,7 @@ import VideoProjectService from "../../../src/service/video-project.service";
 import ResearchContextService from "../../../src/service/research-context.service";
 import { generateContent } from "../../../src/utlils/ai";
 import { formatGeneratedIdea } from "../../../src/utlils/content";
-import { makeTestAccountService } from "../../helpers/account";
+import { makeTestAccountService, testOwner, OTHER_ACCOUNT_ID, TEST_ACCOUNT_ID } from "../../helpers/account";
 
 jest.mock("../../../src/repository/content.repository");
 jest.mock("../../../src/repository/user.repository");
@@ -135,7 +135,7 @@ describe("Regenerate All — the batch is replaced and every project built on it
       id: "idea-new", title: idea.workingTitle, concept: idea.concept, ideaType: idea.type,
       evidence: null, embedding: [0.1], createdBy: userId, batchId: batchId ?? null,
     })) as never);
-    service = new ContentService(repo, userRepo, vpService as never, makeTestAccountService(), researchContext);
+    service = new ContentService(repo, userRepo, vpService as never, researchContext);
   });
 
   it("stales EVERY project backed by an archived idea, not just one per idea", async () => {
@@ -144,7 +144,7 @@ describe("Regenerate All — the batch is replaced and every project built on it
       ideaId === "idea-a" ? [{ id: "proj-1" }, { id: "proj-2" }] : [{ id: "proj-3" }]
     ) as never;
 
-    await service.regenerateAll("user-1");
+    await service.regenerateAll(testOwner("user-1"));
 
     expect(vpService.markStale.mock.calls.map((c) => c[0]).sort()).toEqual([
       "proj-1", "proj-2", "proj-3",
@@ -158,21 +158,21 @@ describe("Regenerate All — the batch is replaced and every project built on it
   it("looks the projects up BEFORE archiving — afterwards the batch is gone", async () => {
     vpService.getProjectsByIdea = jest.fn(async () => { calls.push("lookup"); return [{ id: "p" }]; }) as never;
 
-    await service.regenerateAll("user-1");
+    await service.regenerateAll(testOwner("user-1"));
 
     expect(calls.indexOf("archive")).toBeGreaterThan(calls.lastIndexOf("lookup"));
   });
 
   it("archives the old batch and saves a new one", async () => {
-    const saved = await service.regenerateAll("user-1");
+    const saved = await service.regenerateAll(testOwner("user-1"));
 
-    expect(repo.archiveUserIdeas).toHaveBeenCalledWith("user-1");
+    expect(repo.archiveUserIdeas).toHaveBeenCalledWith(TEST_ACCOUNT_ID);
     expect(saved).toHaveLength(2);
     expect(repo.batchSaveIdeas).toHaveBeenCalled();
   });
 
   it("shares ONE batchId across the new slate, so it reads as a single batch", async () => {
-    await service.regenerateAll("user-1");
+    await service.regenerateAll(testOwner("user-1"));
 
     const batchIds = mockFormat.mock.calls.map((c) => c[2]);
     expect(new Set(batchIds).size).toBe(1);
@@ -182,7 +182,7 @@ describe("Regenerate All — the batch is replaced and every project built on it
   it("503s rather than returning an empty slate — the old batch is already gone", async () => {
     mockFormat.mockRejectedValue(new Error("embedding service down"));
 
-    const err = await service.regenerateAll("user-1").catch((e) => e);
+    const err = await service.regenerateAll(testOwner("user-1")).catch((e) => e);
 
     expect(err.statusCode).toBe(503);
     // Silent data loss is the failure being prevented: archived, nothing back,
@@ -193,7 +193,7 @@ describe("Regenerate All — the batch is replaced and every project built on it
   it("still regenerates when the stale cascade fails — the cascade is bookkeeping, not a gate", async () => {
     vpService.getProjectsByIdea = jest.fn().mockRejectedValue(new Error("index unavailable")) as never;
 
-    const saved = await service.regenerateAll("user-1");
+    const saved = await service.regenerateAll(testOwner("user-1"));
 
     expect(saved).toHaveLength(2);
     expect(repo.archiveUserIdeas).toHaveBeenCalled();
@@ -206,14 +206,14 @@ describe("Regenerate All — the batch is replaced and every project built on it
       .mockRejectedValueOnce(new Error("write conflict"))
       .mockResolvedValue(undefined) as never;
 
-    const saved = await service.regenerateAll("user-1");
+    const saved = await service.regenerateAll(testOwner("user-1"));
 
     expect(vpService.markStale).toHaveBeenCalledTimes(4); // 2 ideas × 2 projects
     expect(saved).toHaveLength(2);
   });
 
   it("refuses an unauthenticated caller BEFORE destroying the batch", async () => {
-    const err = await service.regenerateAll("").catch((e) => e);
+    const err = await service.regenerateAll(testOwner("")).catch((e) => e);
 
     expect(err.statusCode).toBe(401);
     expect(repo.archiveUserIdeas).not.toHaveBeenCalled();
@@ -222,10 +222,10 @@ describe("Regenerate All — the batch is replaced and every project built on it
   // The contract "Generate More is additive" is non-negotiable in api-design.md —
   // the missing archive call there is deliberate and gets "fixed" by mistake.
   it("is the ONLY idea path that archives — plain generation is additive", async () => {
-    await service.generateIdeas("user-1");
+    await service.generateIdeas(testOwner("user-1"));
     expect(repo.archiveUserIdeas).not.toHaveBeenCalled();
 
-    await service.regenerateAll("user-1");
+    await service.regenerateAll(testOwner("user-1"));
     expect(repo.archiveUserIdeas).toHaveBeenCalledTimes(1);
   });
 });
@@ -237,7 +237,7 @@ describe("Regenerate one slot — the slot is replaced in place", () => {
   let vpService: jest.Mocked<VideoProjectService>;
 
   const IDEA = {
-    id: "idea-1", createdBy: "user-1", ideaType: "short",
+    id: "idea-1", createdBy: "user-1", accountId: TEST_ACCOUNT_ID, ideaType: "short",
     batchId: "batch-7", isScriptGenerated: true, videoProjectId: "proj-1",
   };
 
@@ -269,21 +269,21 @@ describe("Regenerate one slot — the slot is replaced in place", () => {
       evidence: null, embedding: [0.1], createdBy: userId, batchId: batchId ?? null,
     })) as never);
     mockGenerate.mockImplementation(async () => makeStream(IDEAS));
-    service = new ContentService(repo, userRepo, vpService as never, makeTestAccountService(), researchContext);
+    service = new ContentService(repo, userRepo, vpService as never, researchContext);
   });
 
   it("404s an unknown idea and 403s someone else's, without generating", async () => {
     repo.getIdea = jest.fn().mockResolvedValue(null);
-    expect((await service.regenerateOne("user-1", "nope").catch((e) => e)).statusCode).toBe(404);
+    expect((await service.regenerateOne(testOwner("user-1"), "nope").catch((e) => e)).statusCode).toBe(404);
 
-    repo.getIdea = jest.fn().mockResolvedValue({ ...IDEA, createdBy: "someone-else" });
-    expect((await service.regenerateOne("user-1", "idea-1").catch((e) => e)).statusCode).toBe(403);
+    repo.getIdea = jest.fn().mockResolvedValue({ ...IDEA, createdBy: "someone-else", accountId: OTHER_ACCOUNT_ID });
+    expect((await service.regenerateOne(testOwner("user-1"), "idea-1").catch((e) => e)).statusCode).toBe(403);
 
     expect(repo.updateIdea).not.toHaveBeenCalled();
   });
 
   it("keeps the slot's format — a Shorts slot regenerates as Shorts", async () => {
-    const result = await service.regenerateOne("user-1", "idea-1");
+    const result = await service.regenerateOne(testOwner("user-1"), "idea-1");
 
     expect(result.ideaType).toBe("short");
     expect(result.title).toBe("Fresh short idea");
@@ -292,20 +292,20 @@ describe("Regenerate one slot — the slot is replaced in place", () => {
   it("falls back to the first idea when the model returns nothing of that format", async () => {
     mockGenerate.mockImplementation(async () => makeStream([IDEAS[0]])); // long only
 
-    const result = await service.regenerateOne("user-1", "idea-1");
+    const result = await service.regenerateOne(testOwner("user-1"), "idea-1");
 
     expect(result.ideaType).toBe("long");
   });
 
   it("writes into the SAME document id — the slot moves, the list does not", async () => {
-    const result = await service.regenerateOne("user-1", "idea-1");
+    const result = await service.regenerateOne(testOwner("user-1"), "idea-1");
 
     expect(repo.updateIdea).toHaveBeenCalledWith("idea-1", expect.any(Object));
     expect(result.id).toBe("idea-1");
   });
 
   it("clears the old idea's script link, so a fresh idea cannot claim a script written for the previous one", async () => {
-    await service.regenerateOne("user-1", "idea-1");
+    await service.regenerateOne(testOwner("user-1"), "idea-1");
 
     expect(repo.updateIdea.mock.calls[0][1]).toMatchObject({
       isScriptGenerated: false,
@@ -315,13 +315,13 @@ describe("Regenerate one slot — the slot is replaced in place", () => {
   });
 
   it("keeps the idea in its existing batch", async () => {
-    await service.regenerateOne("user-1", "idea-1");
+    await service.regenerateOne(testOwner("user-1"), "idea-1");
 
     expect(mockFormat.mock.calls[0][2]).toBe("batch-7");
   });
 
   it("counts exactly one idea toward stats, not a whole batch", async () => {
-    await service.regenerateOne("user-1", "idea-1");
+    await service.regenerateOne(testOwner("user-1"), "idea-1");
 
     const [, update] = userRepo.update.mock.calls.at(-1) as [string, Record<string, unknown>];
     expect(update["stats.ideas"]).toEqual({ __increment: 1 });
@@ -330,13 +330,13 @@ describe("Regenerate one slot — the slot is replaced in place", () => {
   });
 
   it("stales every project on this idea too — one slot changing is still a change", async () => {
-    await service.regenerateOne("user-1", "idea-1");
+    await service.regenerateOne(testOwner("user-1"), "idea-1");
 
     expect(vpService.markStale.mock.calls.map((c) => c[0])).toEqual(["proj-1", "proj-2"]);
   });
 
   it("refuses an unauthenticated caller before reading anything", async () => {
-    const err = await service.regenerateOne("", "idea-1").catch((e) => e);
+    const err = await service.regenerateOne(testOwner(""), "idea-1").catch((e) => e);
 
     expect(err.statusCode).toBe(401);
     expect(repo.getIdea).not.toHaveBeenCalled();

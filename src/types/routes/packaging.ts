@@ -28,6 +28,15 @@ export interface IPackagingShorts {
  */
 export interface IPackaging {
   id: string;
+  /**
+   * The channel this record belongs to (Phase 03 writes it, Phase 06 reads it).
+   *
+   * REQUIRED, and it is the permission field — `createdBy` is authorship only.
+   * Optional here would make `doc.accountId !== owner.accountId` compile against
+   * a document type that admits `undefined`, which is the comparison silently
+   * passing for a record nobody can prove belongs anywhere.
+   */
+  accountId: string;
   createdBy: string;
   videoProjectId: string | null;
   titles: IPackagingTitle[];

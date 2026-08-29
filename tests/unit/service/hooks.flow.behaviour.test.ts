@@ -64,6 +64,7 @@ import PackagingRepository from "../../../src/repository/packaging.repository";
 import { generateStreamingContent } from "../../../src/utlils/ai";
 import { IVideoProject } from "../../../src/types/routes/video-project";
 
+import { makeTestAccountService, TEST_ACCOUNT_ID, testOwner, OTHER_ACCOUNT_ID } from "../../helpers/account";
 const mockGenerate = generateStreamingContent as jest.MockedFunction<typeof generateStreamingContent>;
 
 function makeStream(text: string) {
@@ -76,6 +77,7 @@ function makeProject(overrides: Partial<IVideoProject> = {}): IVideoProject {
   return {
     id: "proj-1",
     createdBy: "user-1",
+    accountId: TEST_ACCOUNT_ID,
     title: "My Video",
     ideaId: "idea-1",
     scriptId: "script-1",
@@ -114,7 +116,6 @@ function applyDottedPatch(project: IVideoProject, patch: Record<string, unknown>
 }
 
 import { makeTestStepRunner } from "../../helpers/step-runner";
-import { makeTestAccountService, TEST_ACCOUNT_ID } from "../../helpers/account";
 
 // The script precondition, the in-flight lock and the failure rollback moved into
 // the generation seam (Phase 01b) — they are no longer inside HooksService. The
@@ -127,6 +128,7 @@ import { makeTestAccountService, TEST_ACCOUNT_ID } from "../../helpers/account";
 // tests pass an explicit project and therefore still exercise it for real.
 const PERMISSIVE_PROJECT = {
   createdBy: "user-1",
+  accountId: TEST_ACCOUNT_ID,
   isDeleted: false,
   currentStep: "script",
   pipeline: {
@@ -172,9 +174,9 @@ describe("HooksService.generate — requires a completed Script step (docs/featu
         ),
       } as any;
       const hooksRepo = { findById: jest.fn(), save: jest.fn() } as unknown as jest.Mocked<HooksRepository>;
-      const service = new HooksService(hooksRepo, vpService, undefined, seamFor(vpService), makeTestAccountService());
+      const service = new HooksService(hooksRepo, vpService, undefined, seamFor(vpService));
 
-      await service.generate("user-1", "proj-1", "a script").catch(() => undefined);
+      await service.generate(testOwner("user-1"), "proj-1", "a script").catch(() => undefined);
 
       expect(mockGenerate).not.toHaveBeenCalled();
       expect(hooksRepo.save).not.toHaveBeenCalled();
@@ -190,12 +192,12 @@ describe("HooksService.generate — requires a completed Script step (docs/featu
     } as any;
     const hooksRepo = {
       findById: jest.fn(),
-      save: jest.fn().mockResolvedValue({ id: "hooks-1", videoProjectId: "proj-1", createdBy: "user-1", hooks: ["h1", "h2", "h3", "h4", "h5"], hookFeedback: {} }),
+      save: jest.fn().mockResolvedValue({ id: "hooks-1", videoProjectId: "proj-1", createdBy: "user-1", accountId: TEST_ACCOUNT_ID, hooks: ["h1", "h2", "h3", "h4", "h5"], hookFeedback: {} }),
     } as unknown as jest.Mocked<HooksRepository>;
     const acquired: string[] = [];
-    const service = new HooksService(hooksRepo, vpService, undefined, seamFor(vpService, acquired), makeTestAccountService());
+    const service = new HooksService(hooksRepo, vpService, undefined, seamFor(vpService, acquired));
 
-    const result = await service.generate("user-1", "proj-1", "a script");
+    const result = await service.generate(testOwner("user-1"), "proj-1", "a script");
 
     expect(result.hooks).toHaveLength(5);
     // startStep is gone: the seam takes the step transactionally via acquireStep,
@@ -229,14 +231,14 @@ describe("Hooks selection completes the Hooks step (real VideoProjectService)", 
     const contentRepo = {} as unknown as jest.Mocked<ContentRepository>;
     const packagingRepo = { get: jest.fn(), clearStale: jest.fn() } as unknown as jest.Mocked<PackagingRepository>;
     const hooksRepoForVp = { findById: jest.fn() } as unknown as jest.Mocked<HooksRepository>;
-    const vpService = new VideoProjectService(vpRepo, contentRepo, packagingRepo, hooksRepoForVp, makeTestAccountService());
+    const vpService = new VideoProjectService(vpRepo, contentRepo, packagingRepo, hooksRepoForVp);
 
     const hooksBatchRepo = {
-      findById: jest.fn().mockResolvedValue({ id: "hooks-1", videoProjectId: "proj-1", createdBy: "user-1", hooks: ["h1", "h2", "h3", "h4", "h5"], hookFeedback: {} }),
+      findById: jest.fn().mockResolvedValue({ id: "hooks-1", videoProjectId: "proj-1", createdBy: "user-1", accountId: TEST_ACCOUNT_ID, hooks: ["h1", "h2", "h3", "h4", "h5"], hookFeedback: {} }),
     } as unknown as jest.Mocked<HooksRepository>;
-    const hooksService = new HooksService(hooksBatchRepo, vpService, undefined, seamFor(vpService), makeTestAccountService());
+    const hooksService = new HooksService(hooksBatchRepo, vpService, undefined, seamFor(vpService));
 
-    await hooksService.select("user-1", "hooks-1", 2);
+    await hooksService.select(testOwner("user-1"), "hooks-1", 2);
 
     expect(state.selectedHookIndex).toBe(2);
     expect(state.hooksId).toBe("hooks-1");
@@ -274,16 +276,16 @@ describe("Hooks regenerate — stale cascade matches the documented table (real 
       markStale: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<PackagingRepository>;
     const hooksRepoForVp = { findById: jest.fn() } as unknown as jest.Mocked<HooksRepository>;
-    const vpService = new VideoProjectService(vpRepo, contentRepo, packagingRepo, hooksRepoForVp, makeTestAccountService());
+    const vpService = new VideoProjectService(vpRepo, contentRepo, packagingRepo, hooksRepoForVp);
 
     mockGenerate.mockResolvedValue(makeStream(HOOKS_JSON));
     const hooksBatchRepo = {
-      findById: jest.fn().mockResolvedValue({ id: "hooks-1", videoProjectId: "proj-1", createdBy: "user-1", hooks: ["a", "b", "c", "d", "e"], hookFeedback: {} }),
+      findById: jest.fn().mockResolvedValue({ id: "hooks-1", videoProjectId: "proj-1", createdBy: "user-1", accountId: TEST_ACCOUNT_ID, hooks: ["a", "b", "c", "d", "e"], hookFeedback: {} }),
       update: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<HooksRepository>;
-    const hooksService = new HooksService(hooksBatchRepo, vpService, undefined, seamFor(vpService), makeTestAccountService());
+    const hooksService = new HooksService(hooksBatchRepo, vpService, undefined, seamFor(vpService));
 
-    await hooksService.regenerate("user-1", "hooks-1", "an updated script");
+    await hooksService.regenerate(testOwner("user-1"), "hooks-1", "an updated script");
 
     // Project-level cascade: title + packaging staled; script and hooks itself untouched.
     expect(state.pipeline.title.status).toBe("stale");
@@ -323,16 +325,16 @@ describe("Hooks regenerate — stale cascade matches the documented table (real 
     const contentRepo = {} as unknown as jest.Mocked<ContentRepository>;
     const packagingRepo = { get: jest.fn(), clearStale: jest.fn(), markStale: jest.fn() } as unknown as jest.Mocked<PackagingRepository>;
     const hooksRepoForVp = { findById: jest.fn() } as unknown as jest.Mocked<HooksRepository>;
-    const vpService = new VideoProjectService(vpRepo, contentRepo, packagingRepo, hooksRepoForVp, makeTestAccountService());
+    const vpService = new VideoProjectService(vpRepo, contentRepo, packagingRepo, hooksRepoForVp);
 
     mockGenerate.mockResolvedValue(makeStream(HOOKS_JSON));
     const hooksBatchRepo = {
-      findById: jest.fn().mockResolvedValue({ id: "hooks-1", videoProjectId: "proj-1", createdBy: "user-1", hooks: ["a", "b", "c", "d", "e"], hookFeedback: {} }),
+      findById: jest.fn().mockResolvedValue({ id: "hooks-1", videoProjectId: "proj-1", createdBy: "user-1", accountId: TEST_ACCOUNT_ID, hooks: ["a", "b", "c", "d", "e"], hookFeedback: {} }),
       update: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<HooksRepository>;
-    const hooksService = new HooksService(hooksBatchRepo, vpService, undefined, seamFor(vpService), makeTestAccountService());
+    const hooksService = new HooksService(hooksBatchRepo, vpService, undefined, seamFor(vpService));
 
-    await hooksService.regenerate("user-1", "hooks-1", "an updated script");
+    await hooksService.regenerate(testOwner("user-1"), "hooks-1", "an updated script");
 
     expect(state.pipeline.title.status).toBe("not_started");
     expect(state.pipeline.packaging.status).toBe("not_started");
@@ -348,11 +350,11 @@ describe("Ownership", () => {
   it("select rejects a caller who is not the batch owner (403), never binding to their project", async () => {
     const vpService = { setSelectedHook: jest.fn() } as any;
     const hooksRepo = {
-      findById: jest.fn().mockResolvedValue({ id: "hooks-1", createdBy: "someone-else", videoProjectId: "proj-1", hooks: ["a", "b", "c", "d", "e"] }),
+      findById: jest.fn().mockResolvedValue({ id: "hooks-1", createdBy: "someone-else", accountId: OTHER_ACCOUNT_ID, videoProjectId: "proj-1", hooks: ["a", "b", "c", "d", "e"] }),
     } as unknown as jest.Mocked<HooksRepository>;
-    const service = new HooksService(hooksRepo, vpService, undefined, seamFor(vpService), makeTestAccountService());
+    const service = new HooksService(hooksRepo, vpService, undefined, seamFor(vpService));
 
-    const err: any = await service.select("user-1", "hooks-1", 0).catch((e: any) => e);
+    const err: any = await service.select(testOwner("user-1"), "hooks-1", 0).catch((e: any) => e);
 
     expect(err.statusCode).toBe(403);
     expect(vpService.setSelectedHook).not.toHaveBeenCalled();
@@ -361,11 +363,11 @@ describe("Ownership", () => {
   it("regenerate rejects a caller who is not the batch owner (403), never calling Gemini", async () => {
     const vpService = {} as any;
     const hooksRepo = {
-      findById: jest.fn().mockResolvedValue({ id: "hooks-1", createdBy: "someone-else", videoProjectId: "proj-1", hooks: ["a", "b", "c", "d", "e"] }),
+      findById: jest.fn().mockResolvedValue({ id: "hooks-1", createdBy: "someone-else", accountId: OTHER_ACCOUNT_ID, videoProjectId: "proj-1", hooks: ["a", "b", "c", "d", "e"] }),
     } as unknown as jest.Mocked<HooksRepository>;
-    const service = new HooksService(hooksRepo, vpService, undefined, seamFor(vpService), makeTestAccountService());
+    const service = new HooksService(hooksRepo, vpService, undefined, seamFor(vpService));
 
-    const err: any = await service.regenerate("user-1", "hooks-1", "script").catch((e: any) => e);
+    const err: any = await service.regenerate(testOwner("user-1"), "hooks-1", "script").catch((e: any) => e);
 
     expect(err.statusCode).toBe(403);
     expect(mockGenerate).not.toHaveBeenCalled();
@@ -373,12 +375,12 @@ describe("Ownership", () => {
 
   it("a nonexistent hooks batch 404s for select, regenerate, and export alike", async () => {
     const hooksRepo = { findById: jest.fn().mockResolvedValue(null) } as unknown as jest.Mocked<HooksRepository>;
-    const service = new HooksService(hooksRepo, {} as any, undefined, seamFor({} as any), makeTestAccountService());
+    const service = new HooksService(hooksRepo, {} as any, undefined, seamFor({} as any));
 
     for (const call of [
-      () => service.select("user-1", "missing", 0),
-      () => service.regenerate("user-1", "missing", "script"),
-      () => service.exportHooks("user-1", "missing"),
+      () => service.select(testOwner("user-1"), "missing", 0),
+      () => service.regenerate(testOwner("user-1"), "missing", "script"),
+      () => service.exportHooks(testOwner("user-1"), "missing"),
     ]) {
       const err: any = await call().catch((e: any) => e);
       expect(err.statusCode).toBe(404);

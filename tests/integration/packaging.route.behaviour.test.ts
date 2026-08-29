@@ -47,7 +47,7 @@ const mockPackagingService = {
   generateShorts: jest.fn(),
   savePackaging: jest.fn(),
   getPackaging: jest.fn(),
-  getPackagingByUser: jest.fn(),
+  getPackagingByAccount: jest.fn(),
   regenerateItem: jest.fn(),
   selectTitle: jest.fn(),
   exportPackaging: jest.fn(),
@@ -62,6 +62,7 @@ import request from "supertest";
 import app from "../../src/app";
 import { Forbidden, NotFound } from "../../src/utlils/errors";
 import { useSharedServer } from "./shared-server";
+import { testOwner, OTHER_ACCOUNT_ID, TEST_ACCOUNT_ID } from "../helpers/account";
 
 // One HTTP server for the whole file. `request(app)` starts and tears down a
 // FRESH ephemeral server per call; across ~113 requests that intermittently
@@ -124,7 +125,8 @@ describe("POST /v1/packaging/generate-title", () => {
       .send({ videoProjectId: "proj-1" });
 
     expect(res.status).toBe(200);
-    expect(mockPackagingService.generateTitle).toHaveBeenCalledWith("user-1", undefined, "proj-1");
+    expect(mockPackagingService.generateTitle).toHaveBeenCalledWith(
+      testOwner("user-1"), undefined, "proj-1");
   });
 });
 
@@ -230,7 +232,7 @@ describe("POST /v1/packaging/save", () => {
 
     expect(mockPackagingService.savePackaging).toHaveBeenCalledTimes(1);
     const [userIdArg, restArg, videoProjectIdArg] = mockPackagingService.savePackaging.mock.calls[0];
-    expect(userIdArg).toBe("user-1");
+    expect(userIdArg).toEqual(testOwner("user-1"));
     expect(videoProjectIdArg).toBe("proj-1");
     expect(restArg).toHaveProperty("titles");
     for (const forbidden of ["isStale", "staleReason", "itemStatuses", "createdBy", "accountId", "script", "hooks"]) {
@@ -244,9 +246,10 @@ describe("POST /v1/packaging/save", () => {
     await request(server())
       .post("/v1/packaging/save")
       .set(...AUTH_HEADER)
-      .send({ description: "d", createdBy: "attacker-uid" });
+      .send({ description: "d", createdBy: "attacker-uid", accountId: OTHER_ACCOUNT_ID });
 
-    expect(mockPackagingService.savePackaging).toHaveBeenCalledWith("user-1", expect.anything(), undefined);
+    expect(mockPackagingService.savePackaging).toHaveBeenCalledWith(
+      testOwner("user-1"), expect.anything(), undefined);
   });
 
   it("returns 404 when videoProjectId is provided but the project does not exist", async () => {
@@ -278,13 +281,14 @@ describe("POST /v1/packaging/save", () => {
 
 describe("GET /v1/packaging/list", () => {
   it("returns 200 with the user's packaging list", async () => {
-    mockPackagingService.getPackagingByUser.mockResolvedValueOnce([{ id: "pkg-1" }]);
+    mockPackagingService.getPackagingByAccount.mockResolvedValueOnce([{ id: "pkg-1" }]);
 
     const res = await request(server()).get("/v1/packaging/list").set(...AUTH_HEADER);
 
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ success: true, data: expect.any(Array) });
-    expect(mockPackagingService.getPackagingByUser).toHaveBeenCalledWith("user-1");
+    expect(mockPackagingService.getPackagingByAccount).toHaveBeenCalledWith(
+      testOwner("user-1"));
   });
 });
 
@@ -294,7 +298,7 @@ describe("GET /v1/packaging/list", () => {
 
 describe("GET /v1/packaging/:packagingId", () => {
   it("returns 200 with the packaging doc", async () => {
-    mockPackagingService.getPackaging.mockResolvedValueOnce({ id: "pkg-1", createdBy: "user-1" });
+    mockPackagingService.getPackaging.mockResolvedValueOnce({ id: "pkg-1", createdBy: "user-1", accountId: TEST_ACCOUNT_ID });
 
     const res = await request(server()).get("/v1/packaging/pkg-1").set(...AUTH_HEADER);
 
@@ -363,7 +367,7 @@ describe("POST /v1/packaging/:packagingId/regenerate/:item", () => {
       .send({ script: "s", videoProjectId: "attacker-chosen-project" });
 
     expect(mockPackagingService.regenerateItem).toHaveBeenCalledWith(
-      "user-1",
+      testOwner("user-1"),
       "pkg-1",
       "title",
       "s",
@@ -495,7 +499,7 @@ describe("Auth", () => {
 
     expect(res.status).not.toBe(200);
     expect(res.body.success).toBe(false);
-    expect(mockPackagingService.getPackagingByUser).not.toHaveBeenCalled();
+    expect(mockPackagingService.getPackagingByAccount).not.toHaveBeenCalled();
   });
 
   it("rejects a request with an invalid token without reaching the service", async () => {
@@ -505,6 +509,6 @@ describe("Auth", () => {
 
     expect(res.status).not.toBe(200);
     expect(res.body.success).toBe(false);
-    expect(mockPackagingService.getPackagingByUser).not.toHaveBeenCalled();
+    expect(mockPackagingService.getPackagingByAccount).not.toHaveBeenCalled();
   });
 });

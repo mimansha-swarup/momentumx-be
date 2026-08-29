@@ -1,4 +1,5 @@
 import { asyncHandler } from "../middleware/async_handler.js";
+import { ownerOf } from "../utlils/content.js";
 import { BadRequest, NotFound } from "../utlils/errors.js";
 import { eventService } from "../service/event.service.js";
 class PackagingController {
@@ -10,7 +11,7 @@ class PackagingController {
             if (!script && !videoProjectId) {
                 throw BadRequest("Provide a script or a videoProjectId with a generated script");
             }
-            const data = await this.service.generateTitle(req.userId, script, videoProjectId);
+            const data = await this.service.generateTitle(ownerOf(req), script, videoProjectId);
             res.sendSuccess({
                 message: "Title generated successfully",
                 data,
@@ -22,7 +23,7 @@ class PackagingController {
             if (!title) {
                 throw BadRequest("Title is required");
             }
-            const data = await this.service.generateDescription(req.userId, script, title, videoProjectId);
+            const data = await this.service.generateDescription(ownerOf(req), script, title, videoProjectId);
             res.sendSuccess({
                 message: "Description generated successfully",
                 data,
@@ -34,7 +35,7 @@ class PackagingController {
             if (!title) {
                 throw BadRequest("Title is required");
             }
-            const data = await this.service.generateThumbnail(req.userId, script, title, videoProjectId);
+            const data = await this.service.generateThumbnail(ownerOf(req), script, title, videoProjectId);
             res.sendSuccess({
                 message: "Thumbnail instructions generated successfully",
                 data,
@@ -46,7 +47,7 @@ class PackagingController {
                 throw BadRequest("Duration is required");
             }
             // script optional — resolved server-side from the project when omitted.
-            const data = await this.service.generateShorts(req.userId, script, duration, videoProjectId);
+            const data = await this.service.generateShorts(ownerOf(req), script, duration, videoProjectId);
             res.sendSuccess({
                 message: "Shorts script generated successfully",
                 data,
@@ -54,7 +55,7 @@ class PackagingController {
         });
         this.save = asyncHandler(async (req, res) => {
             const { videoProjectId, ...rest } = req.body;
-            const data = await this.service.savePackaging(req.userId, rest, videoProjectId);
+            const data = await this.service.savePackaging(ownerOf(req), rest, videoProjectId);
             res.sendSuccess({
                 message: "Packaging saved successfully",
                 data,
@@ -62,7 +63,7 @@ class PackagingController {
         });
         this.getPackaging = asyncHandler(async (req, res) => {
             const { packagingId } = req.params;
-            const data = await this.service.getPackaging(packagingId, req.userId);
+            const data = await this.service.getPackaging(packagingId, ownerOf(req));
             if (!data) {
                 throw NotFound("Packaging not found");
             }
@@ -71,8 +72,8 @@ class PackagingController {
                 data,
             });
         });
-        this.getPackagingByUser = asyncHandler(async (req, res) => {
-            const data = await this.service.getPackagingByUser(req.userId);
+        this.getPackagingByAccount = asyncHandler(async (req, res) => {
+            const data = await this.service.getPackagingByAccount(ownerOf(req));
             res.sendSuccess({
                 message: "Packaging list retrieved successfully",
                 data,
@@ -83,8 +84,8 @@ class PackagingController {
             // script is optional — the service resolves the stored project script
             // server-side; per-item requirements are validated in the service.
             const { script, title, duration } = req.body;
-            const data = await this.service.regenerateItem(req.userId, packagingId, item, script, title, duration);
-            eventService.capture(req.userId, "regenerate" /* EventType.REGENERATE */, { resource: "packaging", packagingId, item });
+            const data = await this.service.regenerateItem(ownerOf(req), packagingId, item, script, title, duration);
+            eventService.capture(ownerOf(req), "regenerate" /* EventType.REGENERATE */, { resource: "packaging", packagingId, item });
             res.sendSuccess({ message: "Packaging item regenerated successfully", data });
         });
         this.selectTitle = asyncHandler(async (req, res) => {
@@ -93,14 +94,14 @@ class PackagingController {
             if (typeof index !== "number") {
                 throw BadRequest("index (number) is required");
             }
-            const data = await this.service.selectTitle(req.userId, packagingId, index);
-            eventService.capture(req.userId, "title_selected" /* EventType.TITLE_SELECTED */, { packagingId, index });
+            const data = await this.service.selectTitle(ownerOf(req), packagingId, index);
+            eventService.capture(ownerOf(req), "title_selected" /* EventType.TITLE_SELECTED */, { packagingId, index });
             res.sendSuccess({ message: "Title selected successfully", data });
         });
         this.exportPackaging = asyncHandler(async (req, res) => {
             const { packagingId } = req.params;
-            const data = await this.service.exportPackaging(req.userId, packagingId);
-            eventService.capture(req.userId, "export" /* EventType.EXPORT */, { resource: "packaging", packagingId });
+            const data = await this.service.exportPackaging(ownerOf(req), packagingId);
+            eventService.capture(ownerOf(req), "export" /* EventType.EXPORT */, { resource: "packaging", packagingId });
             res.sendSuccess({ message: "Packaging exported successfully", data });
         });
         this.service = service;

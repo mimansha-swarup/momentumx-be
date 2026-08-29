@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import VideoProjectService from "../service/video-project.service.js";
 import { ICreateVideoProjectBody, ILinkResourceBody, IUpdateVideoProjectBody } from "../types/routes/video-project.js";
 import { asyncHandler } from "../middleware/async_handler.js";
+import { ownerOf } from "../utlils/content.js";
 import { BadRequest } from "../utlils/errors.js";
 import { parseListLimit, PROJECTS_PAGE } from "../utlils/pagination.js";
 import { eventService } from "../service/event.service.js";
@@ -16,9 +17,9 @@ class VideoProjectController {
       throw BadRequest("Provide exactly one of ideaId or title");
     }
     const data = ideaId
-      ? await this.service.create(req.userId, ideaId)
-      : await this.service.createFromTitle(req.userId, title as string);
-    eventService.capture(req.userId, EventType.PROJECT_CREATED, {
+      ? await this.service.create(ownerOf(req), ideaId)
+      : await this.service.createFromTitle(ownerOf(req), title as string);
+    eventService.capture(ownerOf(req), EventType.PROJECT_CREATED, {
       projectId: (data as { id?: string }).id,
       ideaId,
       title,
@@ -32,7 +33,7 @@ class VideoProjectController {
       limit?: string;
       cursor?: string;
     };
-    const data = await this.service.list(req.userId, {
+    const data = await this.service.list(ownerOf(req), {
       status: status as "in_progress" | "completed" | "stale" | undefined,
       limit: parseListLimit(limit, PROJECTS_PAGE),
       cursor,
@@ -42,20 +43,20 @@ class VideoProjectController {
 
   getById = asyncHandler(async (req: Request, res: Response) => {
     const { projectId } = req.params;
-    const data = await this.service.getReconciledById(projectId, req.userId);
+    const data = await this.service.getReconciledById(projectId, ownerOf(req));
     res.sendSuccess({ data, message: "Video project retrieved successfully" });
   });
 
   update = asyncHandler(async (req: Request, res: Response) => {
     const { projectId } = req.params;
     const { title } = req.body as IUpdateVideoProjectBody;
-    const data = await this.service.update(projectId, req.userId, { title });
+    const data = await this.service.update(projectId, ownerOf(req), { title });
     res.sendSuccess({ data, message: "Video project updated successfully" });
   });
 
   delete = asyncHandler(async (req: Request, res: Response) => {
     const { projectId } = req.params;
-    const data = await this.service.delete(projectId, req.userId);
+    const data = await this.service.delete(projectId, ownerOf(req));
     res.sendSuccess({ data, message: "Video project deleted successfully" });
   });
 
@@ -63,7 +64,7 @@ class VideoProjectController {
   // generate, packaging save) own the in_progress transition server-side.
   completeStep = asyncHandler(async (req: Request, res: Response) => {
     const { projectId, stepName } = req.params;
-    const data = await this.service.completeStep(projectId, stepName, req.userId);
+    const data = await this.service.completeStep(projectId, stepName, ownerOf(req));
     res.sendSuccess({ data, message: "Step completed successfully" });
   });
 
@@ -73,7 +74,7 @@ class VideoProjectController {
     if (!resourceId) {
       throw BadRequest("resourceId is required");
     }
-    const data = await this.service.linkResource(projectId, resourceType, resourceId, req.userId);
+    const data = await this.service.linkResource(projectId, resourceType, resourceId, ownerOf(req));
     res.sendSuccess({ data, message: "Resource linked successfully" });
   });
 }

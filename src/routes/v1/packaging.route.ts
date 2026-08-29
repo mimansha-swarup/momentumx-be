@@ -26,7 +26,7 @@ router.post("/generate-shorts", validate(generateShortsSchema), packagingControl
 
 // CRUD endpoints
 router.post("/save", validate(packagingSaveSchema), packagingController.save);
-router.get("/list", packagingController.getPackagingByUser);
+router.get("/list", packagingController.getPackagingByAccount);
 router.get("/:packagingId", packagingController.getPackaging);
 router.post("/:packagingId/regenerate/:item", validate(regenerateItemSchema), packagingController.regenerateItem);
 router.post("/:packagingId/select-title", validate(selectTitleSchema), packagingController.selectTitle);

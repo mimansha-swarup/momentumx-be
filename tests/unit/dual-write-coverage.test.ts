@@ -48,28 +48,42 @@ describe("phase 03 — accountId is never quietly defaulted to a uid", () => {
 // The phase doc's "What explicitly does NOT change" list. Each of these is a
 // silent tenancy change if it slips in early — nothing breaks in review, and the
 // damage only shows once Phase 04 has already scanned past the affected records.
-describe("phase 03 — no permission check moves to accountId", () => {
+describe("phase 06 — permissions are decided by the account, never the author", () => {
   const serviceDir = path.join(process.cwd(), "src", "service");
 
-  it("every ownership comparison still tests createdBy", () => {
-    // Ownership is `resource.createdBy !== userId` in all four services. Swapping
-    // one to `accountId` reads as forward progress and passes every existing
-    // test, because in this phase each user has exactly one account — so the
-    // check still ADMITS the right person. It starts rejecting only for records
-    // written before the dual-write began, which have no accountId at all.
+  // The inverse of the Phase 03 ratchet this replaces. That one asserted every
+  // ownership comparison still tested `createdBy`, because swapping one early
+  // reads as forward progress and passes every test — each user had exactly one
+  // account, so the check still admitted the right person.
+  //
+  // Phase 06 flipped them all, and the risk reverses with it: a NEW check written
+  // against `createdBy` also passes every test today, and keeps passing right up
+  // until two people share a channel. Then the author can act and the co-member
+  // cannot, on a document they both own. Sharing is Phase 09; this is the only
+  // thing standing between here and there.
+  it("no service decides permission by comparing createdBy", () => {
     const offenders: string[] = [];
 
     for (const file of fs.readdirSync(serviceDir).filter((f) => f.endsWith(".ts"))) {
-      if (file === "account.service.ts") continue; // owns the account itself
       const source = fs.readFileSync(path.join(serviceDir, file), "utf8");
       source.split("\n").forEach((line, i) => {
-        if (/\baccountId\s*[!=]==?\s*\w/.test(line) || /\w\s*[!=]==?\s*\S*\baccountId\b/.test(line)) {
-          offenders.push(`${file}:${i + 1}`);
-        }
+        if (/\bcreatedBy\s*[!=]==?/.test(line)) offenders.push(`${file}:${i + 1}`);
       });
     }
 
     expect(offenders).toEqual([]);
+  });
+
+  // `createdBy` is not banned — it is still authorship, and still written on
+  // every record. It is banned from DECIDING anything.
+  it("still writes createdBy, so authorship is not lost", () => {
+    const sources = fs
+      .readdirSync(serviceDir)
+      .filter((f) => f.endsWith(".ts"))
+      .map((f) => fs.readFileSync(path.join(serviceDir, f), "utf8"))
+      .join("\n");
+
+    expect(/createdBy:\s*\w/.test(sources)).toBe(true);
   });
 });
 
@@ -107,23 +121,41 @@ describe("phase 05 — the account id enters at exactly one place", () => {
   });
 });
 
-describe("phase 03 — nothing READS accountId yet", () => {
-  // "If this phase is working correctly, users notice nothing at all." Reads
-  // switch in Phase 06, and switching one early is a silent tenancy change: the
-  // query would filter on a field that only NEW records carry, so every record
-  // written before this phase would vanish from that list.
-  it("no query filters on accountId", () => {
+describe("phase 06 — every tenancy query filters the account", () => {
+  // Phase 03's version of this asserted the opposite: NO query filtered
+  // accountId, because switching one early would hide every record written
+  // before the dual-write. Phase 06 is the switch, so the invariant inverts.
+  //
+  // A query left on `createdBy` does not fail loudly. It returns the caller's own
+  // records, which looks correct — until a channel has two members, and each sees
+  // only what they personally created.
+  it("no repository query filters on createdBy", () => {
     const dir = path.join(process.cwd(), "src", "repository");
     const offenders: string[] = [];
 
     for (const file of fs.readdirSync(dir).filter((f) => f.endsWith(".ts"))) {
-      // `accounts` is the new collection's OWN repository — it legitimately
-      // queries membership. Every other repository must still filter createdBy.
-      if (file === "account.repository.ts") continue;
       const source = fs.readFileSync(path.join(dir, file), "utf8");
-      if (/\.where\(\s*["']accountId["']/.test(source)) offenders.push(file);
+      source.split("\n").forEach((line, i) => {
+        if (/\.where\(\s*["']createdBy["']/.test(line)) offenders.push(`${file}:${i + 1}`);
+      });
     }
 
     expect(offenders).toEqual([]);
+  });
+
+  it("and the queries that replaced them do filter on accountId", () => {
+    // Guards the lazy way to satisfy the test above — deleting the filter rather
+    // than changing it, which turns a mis-scoped list into an unscoped one.
+    const dir = path.join(process.cwd(), "src", "repository");
+    const filtered = fs
+      .readdirSync(dir)
+      .filter((f) => f.endsWith(".ts"))
+      .filter((f) => /\.where\(\s*["']accountId["']/.test(fs.readFileSync(path.join(dir, f), "utf8")));
+
+    expect(filtered.sort()).toEqual([
+      "content.repository.ts",
+      "packaging.repository.ts",
+      "video-project.repository.ts",
+    ]);
   });
 });

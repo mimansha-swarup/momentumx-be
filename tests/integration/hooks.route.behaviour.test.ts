@@ -56,6 +56,7 @@ jest.mock("../../src/service/hooks.service", () => ({
 import request from "supertest";
 import app from "../../src/app";
 import { useSharedServer } from "./shared-server";
+import { testOwner } from "../helpers/account";
 
 // One HTTP server for the whole file. `request(app)` starts and tears down a
 // FRESH ephemeral server per call; across ~113 requests that intermittently
@@ -99,7 +100,8 @@ describe("POST /v1/hooks/generate", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ success: true, data: expect.any(Object) });
-    expect(mockHooksService.generate).toHaveBeenCalledWith("user-1", "proj-1", "the script");
+    expect(mockHooksService.generate).toHaveBeenCalledWith(
+      testOwner("user-1"), "proj-1", "the script");
   });
 
   it("returns 400 when videoProjectId is missing (this is a create/generate op, so it IS accepted in the body)", async () => {
@@ -122,7 +124,8 @@ describe("POST /v1/hooks/generate", () => {
       .send({ videoProjectId: "proj-1" });
 
     expect(res.status).toBe(200);
-    expect(mockHooksService.generate).toHaveBeenCalledWith("user-1", "proj-1", undefined);
+    expect(mockHooksService.generate).toHaveBeenCalledWith(
+      testOwner("user-1"), "proj-1", undefined);
   });
 
   it("returns 404 when the video project does not exist", async () => {
@@ -187,7 +190,8 @@ describe("POST /v1/hooks/:hooksId/select", () => {
       .set(...AUTH_HEADER)
       .send({ hookIndex: 1, videoProjectId: "attacker-chosen-project" });
 
-    expect(mockHooksService.select).toHaveBeenCalledWith("user-1", "hooks-1", 1);
+    expect(mockHooksService.select).toHaveBeenCalledWith(
+      testOwner("user-1"), "hooks-1", 1);
   });
 
   it("returns 404 for another user's hooks batch (never that user's data)", async () => {
@@ -227,7 +231,8 @@ describe("POST /v1/hooks/:hooksId/regenerate", () => {
       .set(...AUTH_HEADER)
       .send({ script: "updated script", videoProjectId: "attacker-chosen-project" });
 
-    expect(mockHooksService.regenerate).toHaveBeenCalledWith("user-1", "hooks-1", "updated script");
+    expect(mockHooksService.regenerate).toHaveBeenCalledWith(
+      testOwner("user-1"), "hooks-1", "updated script");
   });
 
   it("returns 404 for a nonexistent hooks batch", async () => {

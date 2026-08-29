@@ -27,6 +27,7 @@ import ContentRepository from "../../src/repository/content.repository";
 import HooksRepository from "../../src/repository/hooks.repository";
 import VideoProjectService from "../../src/service/video-project.service";
 import { HttpError, Forbidden } from "../../src/utlils/errors";
+import { testOwner } from "../helpers/account";
 
 jest.mock("../../src/repository/user.repository");
 jest.mock("../../src/repository/content.repository");
@@ -80,7 +81,6 @@ describe("ContextService.assemble — degradation matrix", () => {
       {} as never,
       {} as never,
       {} as never,
-      {} as never,
       {} as never
     ) as jest.Mocked<VideoProjectService>;
     service = new ContextService(userRepo, contentRepo, hooksRepo, vpService);
@@ -93,7 +93,7 @@ describe("ContextService.assemble — degradation matrix", () => {
   });
 
   it("full context: project with script + selected hook + packaging", async () => {
-    const ctx = await service.assemble(USER_ID, { videoProjectId: "proj-1" });
+    const ctx = await service.assemble(testOwner(USER_ID), { videoProjectId: "proj-1" });
 
     expect(ctx.channelContext).toEqual({
       format: "talking_head",
@@ -125,7 +125,7 @@ describe("ContextService.assemble — degradation matrix", () => {
       packagingId: null,
     });
 
-    const ctx = await service.assemble(USER_ID, { videoProjectId: "proj-1" });
+    const ctx = await service.assemble(testOwner(USER_ID), { videoProjectId: "proj-1" });
 
     expect(ctx.sessionContext.script).toBe("Full script text");
     expect(ctx.sessionContext.selectedHook).toBeNull();
@@ -142,7 +142,7 @@ describe("ContextService.assemble — degradation matrix", () => {
       packagingId: null,
     });
 
-    const ctx = await service.assemble(USER_ID, { videoProjectId: "proj-1" });
+    const ctx = await service.assemble(testOwner(USER_ID), { videoProjectId: "proj-1" });
 
     expect(ctx.sessionContext.workingTitle).toBe("Idea title");
     expect(ctx.sessionContext.script).toBeNull();
@@ -151,7 +151,7 @@ describe("ContextService.assemble — degradation matrix", () => {
   });
 
   it("no project: channel context only, empty session", async () => {
-    const ctx = await service.assemble(USER_ID);
+    const ctx = await service.assemble(testOwner(USER_ID));
 
     expect(ctx.channelContext.niche).toBe("AI productivity");
     expect(ctx.sessionContext).toEqual({
@@ -168,7 +168,7 @@ describe("ContextService.assemble — degradation matrix", () => {
   it("missing idea doc degrades workingTitle to the project title", async () => {
     contentRepo.getIdea = jest.fn().mockResolvedValue(undefined);
 
-    const ctx = await service.assemble(USER_ID, { videoProjectId: "proj-1" });
+    const ctx = await service.assemble(testOwner(USER_ID), { videoProjectId: "proj-1" });
 
     expect(ctx.sessionContext.workingTitle).toBe("Working title from project");
   });
@@ -176,7 +176,7 @@ describe("ContextService.assemble — degradation matrix", () => {
   it("missing script doc degrades to null (dangling scriptId)", async () => {
     contentRepo.getScriptById = jest.fn().mockResolvedValue(null);
 
-    const ctx = await service.assemble(USER_ID, { videoProjectId: "proj-1" });
+    const ctx = await service.assemble(testOwner(USER_ID), { videoProjectId: "proj-1" });
 
     expect(ctx.sessionContext.script).toBeNull();
   });
@@ -184,7 +184,7 @@ describe("ContextService.assemble — degradation matrix", () => {
   it("dangling hooksId (batch not found) degrades selectedHook to null", async () => {
     hooksRepo.findById = jest.fn().mockResolvedValue(null);
 
-    const ctx = await service.assemble(USER_ID, { videoProjectId: "proj-1" });
+    const ctx = await service.assemble(testOwner(USER_ID), { videoProjectId: "proj-1" });
 
     expect(ctx.sessionContext.selectedHook).toBeNull();
   });
@@ -193,7 +193,7 @@ describe("ContextService.assemble — degradation matrix", () => {
     // Project selects index 1, but the stored batch has fewer hooks.
     hooksRepo.findById = jest.fn().mockResolvedValue({ id: "hooks-1", hooks: [] });
 
-    const ctx = await service.assemble(USER_ID, { videoProjectId: "proj-1" });
+    const ctx = await service.assemble(testOwner(USER_ID), { videoProjectId: "proj-1" });
 
     expect(ctx.sessionContext.selectedHook).toBeNull();
   });
@@ -201,7 +201,7 @@ describe("ContextService.assemble — degradation matrix", () => {
   it("sparse user doc yields nulls/empties, never throws", async () => {
     userRepo.get = jest.fn().mockResolvedValue({ niche: "finance" });
 
-    const ctx = await service.assemble(USER_ID);
+    const ctx = await service.assemble(testOwner(USER_ID));
 
     expect(ctx.channelContext.niche).toBe("finance");
     expect(ctx.channelContext.brandName).toBeNull();
@@ -221,7 +221,7 @@ describe("ContextService.assemble — degradation matrix", () => {
       ],
     });
 
-    const { channelContext } = await service.assemble(USER_ID);
+    const { channelContext } = await service.assemble(testOwner(USER_ID));
 
     expect(channelContext.competitorUrls).toEqual([
       "https://youtube.com/@a",
@@ -233,7 +233,7 @@ describe("ContextService.assemble — degradation matrix", () => {
   it("non-array competitors field degrades to empty lists", async () => {
     userRepo.get = jest.fn().mockResolvedValue({ ...userDoc, competitors: "oops" });
 
-    const { channelContext } = await service.assemble(USER_ID);
+    const { channelContext } = await service.assemble(testOwner(USER_ID));
 
     expect(channelContext.competitorUrls).toEqual([]);
     expect(channelContext.competitorTitles).toEqual([]);
@@ -241,15 +241,15 @@ describe("ContextService.assemble — degradation matrix", () => {
 
   it("respects a stored faceless format; unknown values default to talking_head", async () => {
     userRepo.get = jest.fn().mockResolvedValue({ ...userDoc, format: "faceless" });
-    expect((await service.assemble(USER_ID)).channelContext.format).toBe("faceless");
+    expect((await service.assemble(testOwner(USER_ID))).channelContext.format).toBe("faceless");
 
     userRepo.get = jest.fn().mockResolvedValue({ ...userDoc, format: "cinematic" });
-    expect((await service.assemble(USER_ID)).channelContext.format).toBe("talking_head");
+    expect((await service.assemble(testOwner(USER_ID))).channelContext.format).toBe("talking_head");
   });
 
   describe("overrides (pre-persist onboarding context)", () => {
     it("merges defined override keys over stored values", async () => {
-      const ctx = await service.assemble(USER_ID, {
+      const ctx = await service.assemble(testOwner(USER_ID), {
         overrides: { niche: "crypto", targetAudience: undefined },
       });
 
@@ -261,7 +261,7 @@ describe("ContextService.assemble — degradation matrix", () => {
     it("works with no user doc at all when overrides are supplied", async () => {
       userRepo.get = jest.fn().mockResolvedValue(undefined);
 
-      const ctx = await service.assemble(USER_ID, {
+      const ctx = await service.assemble(testOwner(USER_ID), {
         overrides: { niche: "crypto", topTitles: ["Pulled title"] },
       });
 
@@ -275,7 +275,7 @@ describe("ContextService.assemble — degradation matrix", () => {
     it("404 when user doc missing and no overrides", async () => {
       userRepo.get = jest.fn().mockResolvedValue(undefined);
 
-      await expect(service.assemble(USER_ID)).rejects.toMatchObject({
+      await expect(service.assemble(testOwner(USER_ID))).rejects.toMatchObject({
         statusCode: 404,
       });
     });
@@ -284,10 +284,10 @@ describe("ContextService.assemble — degradation matrix", () => {
       vpService.getById = jest.fn().mockRejectedValue(Forbidden());
 
       await expect(
-        service.assemble(USER_ID, { videoProjectId: "proj-1" })
+        service.assemble(testOwner(USER_ID), { videoProjectId: "proj-1" })
       ).rejects.toBeInstanceOf(HttpError);
       await expect(
-        service.assemble(USER_ID, { videoProjectId: "proj-1" })
+        service.assemble(testOwner(USER_ID), { videoProjectId: "proj-1" })
       ).rejects.toMatchObject({ statusCode: 403 });
     });
 
@@ -297,7 +297,7 @@ describe("ContextService.assemble — degradation matrix", () => {
         .mockRejectedValue(new Error("Firestore unavailable"));
 
       await expect(
-        service.assemble(USER_ID, { videoProjectId: "proj-1" })
+        service.assemble(testOwner(USER_ID), { videoProjectId: "proj-1" })
       ).rejects.toThrow("Firestore unavailable");
     });
   });

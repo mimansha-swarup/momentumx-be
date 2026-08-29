@@ -25,6 +25,7 @@ jest.mock("../../../src/config/firebase", () => ({
 
 import VideoProjectRepository from "../../../src/repository/video-project.repository";
 import { STEP_LOCK_MS } from "../../../src/constants/pipeline";
+import { testOwner, TEST_ACCOUNT_ID, OTHER_ACCOUNT_ID } from "../../helpers/account";
 
 const step = (over: Record<string, unknown> = {}) => ({
   status: "not_started",
@@ -36,6 +37,7 @@ const step = (over: Record<string, unknown> = {}) => ({
 const project = (over: Record<string, unknown> = {}) => ({
   id: "proj-1",
   createdBy: "user-1",
+  accountId: TEST_ACCOUNT_ID,
   isDeleted: false,
   currentStep: "script",
   pipeline: {
@@ -63,7 +65,7 @@ describe("VideoProjectRepository.acquireStep — refusals", () => {
   it("404s on a missing project without writing", async () => {
     txnGet.mockResolvedValue({ exists: false });
 
-    const err = await repo.acquireStep("proj-1", "hooks", "user-1", GUARD).catch((e) => e);
+    const err = await repo.acquireStep("proj-1", "hooks", testOwner("user-1"), GUARD).catch((e) => e);
 
     expect(err.statusCode).toBe(404);
     expect(txnUpdate).not.toHaveBeenCalled();
@@ -72,7 +74,7 @@ describe("VideoProjectRepository.acquireStep — refusals", () => {
   it("404s on a soft-deleted project — deleted must not read as missing-but-usable", async () => {
     txnGet.mockResolvedValue(exists(project({ isDeleted: true })));
 
-    const err = await repo.acquireStep("proj-1", "hooks", "user-1", GUARD).catch((e) => e);
+    const err = await repo.acquireStep("proj-1", "hooks", testOwner("user-1"), GUARD).catch((e) => e);
 
     expect(err.statusCode).toBe(404);
     expect(txnUpdate).not.toHaveBeenCalled();
@@ -81,7 +83,7 @@ describe("VideoProjectRepository.acquireStep — refusals", () => {
   it("403s for a non-owner — the ownership check is INSIDE the transaction", async () => {
     txnGet.mockResolvedValue(exists(project()));
 
-    const err = await repo.acquireStep("proj-1", "hooks", "intruder", GUARD).catch((e) => e);
+    const err = await repo.acquireStep("proj-1", "hooks", testOwner("intruder", OTHER_ACCOUNT_ID), GUARD).catch((e) => e);
 
     expect(err.statusCode).toBe(403);
     expect(txnUpdate).not.toHaveBeenCalled();
@@ -92,7 +94,7 @@ describe("VideoProjectRepository.acquireStep — refusals", () => {
       exists(project({ pipeline: { ...project().pipeline, script: step({ status: "in_progress" }) } }))
     );
 
-    const err = await repo.acquireStep("proj-1", "hooks", "user-1", GUARD).catch((e) => e);
+    const err = await repo.acquireStep("proj-1", "hooks", testOwner("user-1"), GUARD).catch((e) => e);
 
     expect(err.statusCode).toBe(400);
     expect(err.message).toMatch(/script must be completed/);
@@ -105,7 +107,7 @@ describe("VideoProjectRepository.acquireStep — refusals", () => {
       exists(project({ pipeline: { ...project().pipeline, hooks: step({ status: "in_progress", startedAt }) } }))
     );
 
-    const err = await repo.acquireStep("proj-1", "hooks", "user-1", GUARD).catch((e) => e);
+    const err = await repo.acquireStep("proj-1", "hooks", testOwner("user-1"), GUARD).catch((e) => e);
 
     expect(err.statusCode).toBe(409);
     expect(txnUpdate).not.toHaveBeenCalled();
@@ -117,7 +119,7 @@ describe("VideoProjectRepository.acquireStep — refusals", () => {
       exists(project({ pipeline: { ...project().pipeline, hooks: step({ status: "in_progress", startedAt }) } }))
     );
 
-    await repo.acquireStep("proj-1", "hooks", "user-1", GUARD);
+    await repo.acquireStep("proj-1", "hooks", testOwner("user-1"), GUARD);
 
     expect(txnUpdate).toHaveBeenCalled();
   });
@@ -134,7 +136,7 @@ describe("VideoProjectRepository.acquireStep — what it writes", () => {
   it("marks the step in_progress with a SERVER timestamp, using dotted paths so siblings survive", async () => {
     txnGet.mockResolvedValue(exists(project()));
 
-    await repo.acquireStep("proj-1", "hooks", "user-1", GUARD);
+    await repo.acquireStep("proj-1", "hooks", testOwner("user-1"), GUARD);
 
     expect(txnUpdate.mock.calls[0][1]).toMatchObject({
       "pipeline.hooks.status": "in_progress",
@@ -145,7 +147,7 @@ describe("VideoProjectRepository.acquireStep — what it writes", () => {
   it("advances currentStep forward", async () => {
     txnGet.mockResolvedValue(exists(project({ currentStep: "script" })));
 
-    await repo.acquireStep("proj-1", "hooks", "user-1", GUARD);
+    await repo.acquireStep("proj-1", "hooks", testOwner("user-1"), GUARD);
 
     expect(txnUpdate.mock.calls[0][1].currentStep).toBe("hooks");
   });
@@ -153,7 +155,7 @@ describe("VideoProjectRepository.acquireStep — what it writes", () => {
   it("never moves currentStep backward — regenerating an early step must not rewind the pipeline", async () => {
     txnGet.mockResolvedValue(exists(project({ currentStep: "packaging" })));
 
-    await repo.acquireStep("proj-1", "hooks", "user-1", GUARD);
+    await repo.acquireStep("proj-1", "hooks", testOwner("user-1"), GUARD);
 
     expect(txnUpdate.mock.calls[0][1]).not.toHaveProperty("currentStep");
   });
@@ -161,7 +163,7 @@ describe("VideoProjectRepository.acquireStep — what it writes", () => {
   it("returns the project as it was BEFORE the write, so callers can replay idempotently", async () => {
     txnGet.mockResolvedValue(exists(project({ hooksId: "hooks-9" })));
 
-    const returned = await repo.acquireStep("proj-1", "hooks", "user-1", GUARD);
+    const returned = await repo.acquireStep("proj-1", "hooks", testOwner("user-1"), GUARD);
 
     expect(returned.hooksId).toBe("hooks-9");
     expect(returned.pipeline.hooks.status).toBe("not_started");
@@ -172,7 +174,7 @@ describe("VideoProjectRepository.acquireStep — what it writes", () => {
       exists(project({ pipeline: { ...project().pipeline, hooks: step({ status: "completed" }) } }))
     );
 
-    await repo.acquireStep("proj-1", "hooks", "user-1", GUARD);
+    await repo.acquireStep("proj-1", "hooks", testOwner("user-1"), GUARD);
 
     // ponytail: known gap — no write means no lock either, so two concurrent
     // callers both pass here. Unreachable today (generate short-circuits on an
@@ -185,7 +187,7 @@ describe("VideoProjectRepository.acquireStep — what it writes", () => {
     delete (legacy.pipeline as Record<string, unknown>).title;
     txnGet.mockResolvedValue(exists(legacy));
 
-    const returned = await repo.acquireStep("proj-1", "hooks", "user-1", GUARD);
+    const returned = await repo.acquireStep("proj-1", "hooks", testOwner("user-1"), GUARD);
 
     expect(returned.pipeline.title.status).toBe("not_started");
   });
@@ -244,7 +246,7 @@ describe("VideoProjectRepository — timestamps are serialised on read", () => {
       exists(project({ createdAt: ts("2026-08-01T10:00:00.000Z"), updatedAt: ts("2026-08-02T11:00:00.000Z") }))
     );
 
-    const returned = await repo.acquireStep("proj-1", "hooks", "user-1", GUARD);
+    const returned = await repo.acquireStep("proj-1", "hooks", testOwner("user-1"), GUARD);
 
     expect(returned.createdAt).toBe("2026-08-01T10:00:00.000Z");
     expect(returned.updatedAt).toBe("2026-08-02T11:00:00.000Z");
@@ -259,7 +261,7 @@ describe("VideoProjectRepository — timestamps are serialised on read", () => {
       }))
     );
 
-    const returned = await repo.acquireStep("proj-1", "hooks", "user-1", GUARD);
+    const returned = await repo.acquireStep("proj-1", "hooks", testOwner("user-1"), GUARD);
 
     // Serialising this one would break acquireStep's own lock-expiry arithmetic.
     expect(typeof (returned.pipeline.hooks.startedAt as { toMillis?: unknown })?.toMillis).toBe(
@@ -270,7 +272,7 @@ describe("VideoProjectRepository — timestamps are serialised on read", () => {
   it("leaves a project that has no timestamps alone rather than throwing", async () => {
     txnGet.mockResolvedValue(exists(project()));
 
-    const returned = await repo.acquireStep("proj-1", "hooks", "user-1", GUARD);
+    const returned = await repo.acquireStep("proj-1", "hooks", testOwner("user-1"), GUARD);
 
     expect(returned.createdAt).toBeUndefined();
   });
