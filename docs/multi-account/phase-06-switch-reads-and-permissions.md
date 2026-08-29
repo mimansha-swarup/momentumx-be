@@ -2,12 +2,37 @@
 title: "Phase 06 — Switch Reads and Permissions"
 description: "Queries and permission checks move from createdBy to accountId. The tenancy flip."
 date: 2026-08-19
-last_updated: 2026-08-19
-status: "planned"
+last_updated: 2026-08-29
+status: "code-complete — not deployed"
 tags: ["multi-account", "phase-06", "security", "tenancy"]
 ---
 
 # Phase 06 — Switch Reads and Permissions
+
+## Where this stands (2026-08-29)
+
+Code done, **not deployed**. Suite: 893 tests, 59 suites, green; `tsc` clean; `dist/` current.
+
+| | |
+|---|---|
+| 9 queries filter `accountId` | done, each canary-verified individually |
+| 19 permission checks compare the account | done (the doc said 17 — the count had drifted) |
+| `RecordOwner` threaded controllers → services → repositories | done, `ownerOf(req)` at 7 controllers |
+| `accountIdCache` deleted | done, in this commit as Phase 05 required |
+| `eventService.capture` takes the owner | done — the last `ensureDefaultAccount` on a write path |
+| Cross-account suite over a Firestore fake | done, 20 tests |
+| `.claude/rules/firestore-conventions.md` rewritten | done, same commit |
+| **Wipe the content collections** | **outstanding — do it before this deploys** |
+| **Deployed to Vercel + Render together** | **outstanding** |
+
+**One live bug was caught by the flip itself.** `acquireStep`'s third parameter became the
+account, and `step-runner.ts` was still passing `spec.actor.userId` into it. Both are
+`string`, so it compiled — and the in-transaction ownership check would have refused every
+generation. `acquireStep` now takes the `RecordOwner` object, which is what makes that
+mistake a type error rather than a runtime 403. It is the exact trap `RecordOwner` was
+introduced for, and it still landed once during the rewrite.
+
+---
 
 **Size:** medium in reach, small per file. Two items that were originally here have moved:
 the unvalidated-resource fixes to **Phase 01 item 6** (they need no tenancy work and are
@@ -140,11 +165,15 @@ Also cover the routes that take an **owning id in the body**, which the list abo
 `POST /v1/packaging/generate-*` with a foreign `videoProjectId`, `POST /v1/hooks/generate`,
 `POST /v1/video-projects` with a foreign `ideaId`, and `PATCH /v1/ideas/edit/:ideaId`.
 
-**A caution about the harness:** `tests/integration/video-project.route.test.ts` mocks
-Firestore and the service layer entirely. Built on it, these tests prove the `if` statements
-and nothing about query scoping or repository filters — which is where the real tenancy bugs
-live. Either add the Firestore emulator for this one suite, or say plainly in the test file
-that query scoping is covered only by manual verification.
+**The harness question, resolved.** The route suites mock Firestore with jest.fn chains, so
+a query's filters are never evaluated — a repository filtering the wrong field returns the
+same queued rows either way. Rather than the emulator, `tests/helpers/fake-firestore.ts` is
+an in-memory Firestore that actually applies `where`/`orderBy`/`limit`/`select`, injected
+through the same `jest.mock("../../src/config/firebase")` seam every suite already uses. No
+production code knows it exists, and it runs at unit speed.
+
+What it cannot do is tell you a composite index is missing — it knows nothing about indexes.
+That remains the emulator's job, or a manual check against the deployed Phase 02 indexes.
 
 Set up two accounts, request one's documents while acting as the other, assert 403 or 404
 every time — around two dozen assertions once the body-supplied-id cases are included.

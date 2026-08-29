@@ -113,25 +113,59 @@ for (const idea of ideas) {
 
 ---
 
-## Query Pattern — Always Filter by userId First
+## Query Pattern — Always Filter by accountId First
 
 ```typescript
-// ✅ userId filter always first — security + index efficiency
+// ✅ accountId filter always first — security + index efficiency
 db.collection(COLLECTIONS.IDEAS)
-  .where('createdBy', '==', userId)
+  .where('accountId', '==', accountId)   // from req.accountId, never the body
   .orderBy('createdAt', 'desc')
   .limit(20)
   .get()
 ```
 
-Filtering by `userId` first is required for both security (only return the user's own data) and Firestore composite index efficiency.
+**This section used to say `createdBy`, and said it with security authority.** Phase 06
+moved tenancy from the person to the channel, so a query written from the old rule is
+correctly indexed, correctly shaped and **wrongly scoped** — which is the exact failure
+that phase exists to prevent, reintroduced by the instructions.
+
+- `accountId` is the **permission** field. It decides what a request may read or touch.
+- `createdBy` is **authorship** only. Still written on every record, still useful for
+  "who made this", and never a permission decision.
+
+The distinction is invisible today, because every account has one member — a check on
+either field admits the same person. It stops being invisible in Phase 09, when a channel
+gains a second member and a `createdBy` check starts refusing a co-member on a document
+their own channel owns.
+
+Both are enforced mechanically by `tests/unit/dual-write-coverage.test.ts`: no service may
+compare `createdBy`, and no repository may `.where("createdBy", ...)`.
+
+```typescript
+// ✅ Permission check on an already-loaded document
+if (doc.accountId !== owner.accountId) throw Forbidden();
+
+// ❌ The pre-Phase-06 shape. Passes every test until sharing exists.
+if (doc.createdBy !== userId) throw Forbidden();
+```
+
+The account reaches a service as a `RecordOwner` (`src/utlils/content.ts`) — one object,
+never two loose strings, because `userId` and `accountId` are both `string` and a
+positional parameter accepts whichever the caller happens to hold. Controllers build it
+with `ownerOf(req)`; nothing else may assemble one.
 
 ---
 
 ## Firestore Collections
 
 ```
-users          — user profiles, onboarding data, channel/competitor info
+accounts       — channels: members, roles, owner, display name, tombstone (deletedAt)
+                 (+ a `context/channel` SUBCOLLECTION — the scrape is uncapped and the
+                  account doc is read on every request, so it must not live on it)
+billing        — Phase 08, unused
+invites        — Phase 09, unused
+users          — user profiles, onboarding data, channel/competitor info,
+                 and `lastActiveAccountId` (the pointer accountMiddleware repairs)
 ideas          — generated video ideas with vector embeddings
 scripts        — full video scripts (document ID = own UUID; ideaId + videoProjectId FKs link back.
                  Legacy docs may have ideaId field — handle as-is, do NOT backfill)
