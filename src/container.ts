@@ -74,7 +74,8 @@ export const videoProjectService = new VideoProjectService(
   videoProjectRepository,
   contentRepository,
   packagingRepository,
-  hooksRepository
+  hooksRepository,
+  accountRepository
 );
 
 export const contextService = new ContextService(
@@ -110,13 +111,15 @@ export const hooksService = new HooksService(
   hooksRepository,
   videoProjectService,
   contextService,
-  stepRunner
+  stepRunner,
+  accountRepository
 );
 
 export const packagingService = new PackagingService(
   packagingRepository,
   videoProjectService,
   contextService,
+  accountRepository,
   researchContextService
 );
 

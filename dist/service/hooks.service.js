@@ -2,7 +2,8 @@ import { HOOKS_SYSTEM_PROMPT, GENERATE_HOOKS_PROMPT, } from "../constants/prompt
 import { GENERATION_CONFIG_HOOKS } from "../constants/firebase.js";
 import { collectJson, generateStreamingContent } from "../utlils/ai.js";
 import { fillTemplate } from "../utlils/prompt-blocks.js";
-import { BadRequest, Forbidden, NotFound, ServiceUnavailable } from "../utlils/errors.js";
+import { BadRequest, NotFound, ServiceUnavailable } from "../utlils/errors.js";
+import { forbidCrossAccount } from "./account.service.js";
 // The schema requires exactly 5 non-empty strings, but a schema is a request to
 // the model, not a guarantee from it — a blocked or truncated generation can still
 // resolve to a shape the rest of this file indexes into. Assert before persisting
@@ -23,11 +24,12 @@ class HooksService {
     // silently skips the lock and (from Phase 08) the debit — failing open on
     // exactly the concern the seam exists to guarantee. A missing argument
     // should be a compile error, not a quiet downgrade.
-    steps) {
+    steps, accounts) {
         this.repo = repo;
         this.videoProjectService = videoProjectService;
         this.contextService = contextService;
         this.steps = steps;
+        this.accounts = accounts;
         // Body script (if sent) wins; otherwise resolve the project's stored script
         // server-side (phases 1D). Hooks are script-native — no script anywhere is a 400.
         this.resolveScript = async (owner, videoProjectId, explicitScript) => {
@@ -87,7 +89,7 @@ class HooksService {
                 throw NotFound("Hooks batch not found");
             }
             if (hooksBatch.accountId !== owner.accountId) {
-                throw Forbidden();
+                await forbidCrossAccount(this.accounts, hooksBatch.accountId, owner);
             }
             if (hookIndex < 0 || hookIndex >= hooksBatch.hooks.length) {
                 throw BadRequest(`hookIndex out of range. Must be 0–${hooksBatch.hooks.length - 1}`);
@@ -114,7 +116,7 @@ class HooksService {
                 throw NotFound("Hooks batch not found");
             }
             if (hooksBatch.accountId !== owner.accountId) {
-                throw Forbidden();
+                await forbidCrossAccount(this.accounts, hooksBatch.accountId, owner);
             }
             if (!script && !hooksBatch.videoProjectId) {
                 throw BadRequest("script is required");
@@ -165,7 +167,7 @@ class HooksService {
                 throw NotFound("Hooks batch not found");
             }
             if (hooksBatch.accountId !== owner.accountId) {
-                throw Forbidden();
+                await forbidCrossAccount(this.accounts, hooksBatch.accountId, owner);
             }
             return hooksBatch;
         };
@@ -175,7 +177,7 @@ class HooksService {
                 throw NotFound("Hooks batch not found");
             }
             if (hooksBatch.accountId !== owner.accountId) {
-                throw Forbidden();
+                await forbidCrossAccount(this.accounts, hooksBatch.accountId, owner);
             }
             const today = new Date().toLocaleDateString("en-US", {
                 year: "numeric",

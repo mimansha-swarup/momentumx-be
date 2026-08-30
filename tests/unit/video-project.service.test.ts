@@ -44,7 +44,7 @@ import HooksRepository from "../../src/repository/hooks.repository";
 import { IVideoProject } from "../../src/types/routes/video-project";
 import { IIdea } from "../../src/types/routes/content";
 import { formatGeneratedTitle } from "../../src/utlils/content";
-import { makeTestAccountService, TEST_ACCOUNT_ID, testOwner, OTHER_ACCOUNT_ID } from "../helpers/account";
+import { makeTestAccountService, TEST_ACCOUNT_ID, testOwner, OTHER_ACCOUNT_ID, fakeAccountRepo } from "../helpers/account";
 
 // ---------------------------------------------------------------------------
 // Factories
@@ -143,7 +143,7 @@ describe("VideoProjectService", () => {
     contentRepo = makeMockContentRepo();
     packagingRepo = makeMockPackagingRepo();
     hooksRepo = makeMockHooksRepo();
-    service = new VideoProjectService(repo, contentRepo, packagingRepo, hooksRepo);
+    service = new VideoProjectService(repo, contentRepo, packagingRepo, hooksRepo, fakeAccountRepo());
   });
 
   // --------------------------------------------------------------------------
@@ -198,9 +198,11 @@ describe("VideoProjectService", () => {
     it("throws 403 when idea belongs to a different user", async () => {
       contentRepo.getIdea.mockResolvedValue(makeIdea({ title: "Their Idea", createdBy: "other-user", accountId: OTHER_ACCOUNT_ID }));
 
+      // Not a bare 403 any more: 403 has to say WHICH refusal it is, because the
+      // client branches on it. Not a member of the idea's channel -> eject.
       await expect(service.create(testOwner("user-1"), "idea-1")).rejects.toMatchObject({
-        message: "Forbidden",
         statusCode: 403,
+        code: "account_forbidden",
       });
       expect(repo.create).not.toHaveBeenCalled();
     });
@@ -377,8 +379,8 @@ describe("VideoProjectService", () => {
       repo.findById.mockResolvedValue(makeProject({ createdBy: "other-user", accountId: OTHER_ACCOUNT_ID }));
 
       await expect(service.getById("proj-1", testOwner("user-1"))).rejects.toMatchObject({
-        message: "Forbidden",
         statusCode: 403,
+        code: "account_forbidden",
       });
     });
   });

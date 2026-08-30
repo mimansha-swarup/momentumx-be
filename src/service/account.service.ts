@@ -6,8 +6,15 @@ import { IAccount, IChannelContext } from "../types/routes/account.js";
 import { extractChannelInfo } from "../utlils/regex.js";
 import VideoProjectRepository from "../repository/video-project.repository.js";
 import { computeProfileCompleteness } from "../utlils/profile.js";
-import { AccountForbidden, BadRequest, Gone, RoleForbidden } from "../utlils/errors.js";
+import {
+  AccountForbidden,
+  BadRequest,
+  Gone,
+  RoleForbidden,
+  WrongAccount,
+} from "../utlils/errors.js";
 import { IAccountSummary } from "../types/routes/account.js";
+import { RecordOwner } from "../utlils/content.js";
 
 /**
  * The same rule the frontend's `selectIsOnboarded` uses: a channel URL, OR a
@@ -24,8 +31,15 @@ export const isChannelOnboarded = (context: IChannelContext | null): boolean => 
   return filled(context.userName) || (filled(context.niche) && filled(context.targetAudience));
 };
 
+/** What a channel is called before onboarding has told us anything about it. */
+export const PLACEHOLDER_CHANNEL_NAME = "Untitled channel";
+
 /**
- * `brandName → userTitle → handle(userName) → niche → "Untitled channel"`.
+ * `brandName → handle(userName) → niche → "Untitled channel"`.
+ *
+ * `userTitle` used to sit second in this ladder. It holds the channel's top
+ * VIDEO titles — a `string[]` — so `pick()` never returned anything for it and
+ * the rung was dead. It read as if a channel could be named after a video.
  *
  * `displayName` is required and cannot be left to the channel URL, because a user
  * can finish onboarding today with no URL at all — `PATCH /v1/user/onboarding`
@@ -45,12 +59,72 @@ export const deriveDisplayName = (user: Record<string, unknown>): string => {
   })();
 
   return (
-    pick(user.brandName) ||
-    pick(user.userTitle) ||
-    handle ||
-    pick(user.niche) ||
-    "Untitled channel"
+    pick(user.brandName) || handle || pick(user.niche) || PLACEHOLDER_CHANNEL_NAME
   );
+};
+
+/**
+ * Refuse a document that belongs to a different channel — with the reason.
+ *
+ * **403 cannot mean one thing.** Every ownership check in the services threw a
+ * bare `Forbidden()`, so the client could not tell "you are not in this channel"
+ * from "you are, but you're currently acting in another one". The documented
+ * handler treats an undifferentiated 403 as `account_forbidden` and EJECTS the
+ * user to the channel list — so opening a bookmarked project that lives in your
+ * own other channel logged you out of the channel you were in, when the fix was
+ * one switch away.
+ *
+ * Membership decides which answer, and it needs the resource's account, so this
+ * costs one point read on a path that should be rare. A tombstoned channel is
+ * not a switch target, so it falls through to `account_forbidden`.
+ *
+ * Always throws.
+ */
+export const forbidCrossAccount = async (
+  accounts: AccountRepository,
+  resourceAccountId: string | undefined,
+  owner: RecordOwner
+): Promise<never> => {
+  const account = resourceAccountId ? await accounts.findById(resourceAccountId) : null;
+
+  if (account && !account.deletedAt && account.memberUids?.includes(owner.userId)) {
+    // `detail` is what lets the client offer "Switch to «Cooking»?" by name
+    // instead of showing an id the user has never seen.
+    throw WrongAccount({ accountId: account.id, displayName: account.displayName });
+  }
+
+  throw AccountForbidden();
+};
+
+/**
+ * Give a channel its real name once onboarding knows one.
+ *
+ * Without this the switcher renders "Untitled channel" for every channel a user
+ * has, forever. `deriveDisplayName` runs in exactly one place — `ensureDefaultAccount`,
+ * on the user's FIRST authenticated request — which is before onboarding exists,
+ * and `POST /v1/accounts` hardcodes the placeholder. Since Phase 06b moved the
+ * channel fields off `users/{uid}`, nothing afterwards ever revisited the name.
+ *
+ * Fills in a PLACEHOLDER only. A channel the owner renamed through
+ * `PATCH /v1/accounts/:id` keeps that name: onboarding must not rename a channel
+ * out from under them, and neither must a later brand-name edit. That also means
+ * no flag is needed to tell "derived" from "chosen" — a name that is no longer
+ * the placeholder was set by somebody, and is theirs.
+ */
+export const adoptChannelIdentity = async (
+  accounts: AccountRepository,
+  accountId: string,
+  context: Record<string, unknown>
+): Promise<void> => {
+  const account = await accounts.findById(accountId);
+  if (!account || account.displayName !== PLACEHOLDER_CHANNEL_NAME) return;
+
+  const displayName = deriveDisplayName(context);
+  const handle = deriveHandle(context.userName);
+  // Nothing usable yet — leave the placeholder rather than writing it back.
+  if (displayName === PLACEHOLDER_CHANNEL_NAME && !handle) return;
+
+  await accounts.update(accountId, { displayName, handle });
 };
 
 /** `"@foo"` when the stored channel URL is a handle URL, else null. */
@@ -95,7 +169,7 @@ const EMPTY_CHANNEL_CONTEXT: IChannelContext = {
   userName: "",
   channelId: "",
   channelDescription: "",
-  userTitle: "",
+  userTitle: [],
   niche: "",
   targetAudience: "",
   brandName: "",
@@ -112,7 +186,9 @@ const toChannelContext = (user: Record<string, unknown>): IChannelContext => ({
   userName: (user.userName as string) ?? "",
   channelId: (user.channelId as string) ?? "",
   channelDescription: (user.channelDescription as string) ?? "",
-  userTitle: (user.userTitle as string) ?? "",
+  // Not `?? []` — the legacy user record could hold "" here as easily as an
+  // array, and `??` only replaces null/undefined.
+  userTitle: Array.isArray(user.userTitle) ? (user.userTitle as string[]) : [],
   niche: (user.niche as string) ?? "",
   targetAudience: (user.targetAudience as string) ?? "",
   brandName: (user.brandName as string) ?? "",
@@ -196,7 +272,7 @@ class AccountService {
    */
   createAccount = async (userId: string): Promise<IAccount> => {
     const account = buildOwnedAccount(userId, {
-      displayName: "Untitled channel",
+      displayName: PLACEHOLDER_CHANNEL_NAME,
       handle: null,
     });
     const id = await this.repo.createAdditional(account, EMPTY_CHANNEL_CONTEXT);
@@ -259,7 +335,11 @@ class AccountService {
    */
   resolveActiveAccountId = async (
     userId: string,
-    accounts: IAccountSummary[]
+    // `{ id }` rather than `IAccountSummary[]` so `accountMiddleware` can pass
+    // raw account documents. Both callers MUST use this one resolver: while the
+    // middleware had its own rule, `GET /v1/accounts` reported one active
+    // channel and every data route acted in another.
+    accounts: { id: string }[]
   ): Promise<string | null> => {
     const user = (await this.userRepo.get(userId)) as Record<string, unknown> | null;
     const pointer = user?.lastActiveAccountId;

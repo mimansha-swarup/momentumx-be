@@ -53,6 +53,11 @@ const accountRepo = {
   getContext: jest.fn(),
   // Parameters declared so `mock.calls[n][1]` is the patch, not `never`.
   writeContext: jest.fn(async (_accountId: string, _patch: Record<string, unknown>) => undefined),
+  // Reached by `adoptChannelIdentity`, which names the channel from whatever
+  // onboarding just wrote. Null here means "no account document", so the naming
+  // step no-ops and these tests stay about the context write.
+  findById: jest.fn(async (_accountId: string) => null as Record<string, unknown> | null),
+  update: jest.fn(async (_accountId: string, _patch: Record<string, unknown>) => undefined),
 };
 const channelRepo = () => accountRepo as never;
 

@@ -39,6 +39,19 @@ import { FieldPath } from "firebase-admin/firestore";
 import VideoProjectRepository from "../../../src/repository/video-project.repository";
 import { TEST_ACCOUNT_ID } from "../../helpers/account";
 
+/**
+ * A cursor snapshot as Firestore actually returns one — with `data()`.
+ *
+ * The stubs here used to be `{ exists: true, id }`, which is what let the
+ * cursor read stay unscoped: a snapshot with no fields cannot be checked
+ * against an account, so no test could notice it wasn't being.
+ */
+const cursorSnapshot = (id: string, accountId: string = TEST_ACCOUNT_ID) => ({
+  exists: true,
+  id,
+  data: () => ({ accountId }),
+});
+
 describe("VideoProjectRepository.list — query scoping and pagination", () => {
   let repo: VideoProjectRepository;
 
@@ -63,7 +76,7 @@ describe("VideoProjectRepository.list — query scoping and pagination", () => {
     const page1Order = [...chain.orderBy.mock.calls];
     chain.orderBy.mockClear();
 
-    docGet.mockResolvedValueOnce({ exists: true, id: "last-doc" });
+    docGet.mockResolvedValueOnce(cursorSnapshot("last-doc"));
     await repo.list(TEST_ACCOUNT_ID, { limit: 20, cursor: "last-doc" });
     const page2Order = [...chain.orderBy.mock.calls];
 
@@ -83,8 +96,30 @@ describe("VideoProjectRepository.list — query scoping and pagination", () => {
     });
   });
 
+  // The cursor is a client string that reached `.doc()` and was then checked
+  // only for existence. `?cursor=<a project id from another channel>` answered
+  // 200 while a random id answered 400 — an existence oracle over every project
+  // in the database, for any authenticated caller.
+  it("refuses a cursor belonging to another channel, exactly as it refuses a missing one", async () => {
+    docGet.mockResolvedValueOnce(cursorSnapshot("someone-elses-project", "acc-not-mine"));
+
+    await expect(
+      repo.list(TEST_ACCOUNT_ID, { limit: 20, cursor: "someone-elses-project" })
+    ).rejects.toMatchObject({ message: "Invalid cursor", statusCode: 400 });
+  });
+
+  // `.doc("a/b")` addresses a COLLECTION and throws a plain Error, which the
+  // handler renders as a 500. A malformed cursor is a client mistake — 400.
+  it("refuses a cursor containing a path separator without reading anything", async () => {
+    await expect(
+      repo.list(TEST_ACCOUNT_ID, { limit: 20, cursor: "projects/other/context/channel" })
+    ).rejects.toMatchObject({ message: "Invalid cursor", statusCode: 400 });
+
+    expect(docGet).not.toHaveBeenCalled();
+  });
+
   it("advances strictly past the cursor doc, so 'load more' neither repeats nor skips records", async () => {
-    const cursorSnap = { exists: true, id: "last-seen" };
+    const cursorSnap = cursorSnapshot("last-seen");
     docGet.mockResolvedValueOnce(cursorSnap);
     getMock.mockResolvedValue({ docs: [] });
 

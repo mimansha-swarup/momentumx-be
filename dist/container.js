@@ -58,7 +58,7 @@ export const videoProjectRepository = new VideoProjectRepository();
 // left is the lazy first-mint and the tombstone repair, both used only by
 // `accountMiddleware`.
 export const accountService = new AccountService(accountRepository, userRepository, videoProjectRepository);
-export const videoProjectService = new VideoProjectService(videoProjectRepository, contentRepository, packagingRepository, hooksRepository);
+export const videoProjectService = new VideoProjectService(videoProjectRepository, contentRepository, packagingRepository, hooksRepository, accountRepository);
 export const contextService = new ContextService(accountRepository, contentRepository, hooksRepository, videoProjectService);
 export const researchContextService = new ResearchContextService(researchRepository);
 // `researchContext` is optional on ContentService, and the two route files that
@@ -73,8 +73,8 @@ export const contentService = new ContentService(contentRepository, userReposito
 // makes a model call — it is stateless, and Phase 08 attaches billing here rather
 // than at twelve call sites.
 export const stepRunner = new StepRunner(videoProjectRepository);
-export const hooksService = new HooksService(hooksRepository, videoProjectService, contextService, stepRunner);
-export const packagingService = new PackagingService(packagingRepository, videoProjectService, contextService, researchContextService);
+export const hooksService = new HooksService(hooksRepository, videoProjectService, contextService, stepRunner, accountRepository);
+export const packagingService = new PackagingService(packagingRepository, videoProjectService, contextService, accountRepository, researchContextService);
 export const researchService = new ResearchService(researchRepository, accountRepository);
 // ponytail: UserService still builds its own ExtractService/ExtractRepository
 // internally (`user.service.ts:27`) rather than taking them as parameters, so

@@ -7,6 +7,7 @@ import { ONBOARDING_PREFILL_SYSTEM_PROMPT, ONBOARDING_PREFILL_PROMPT, } from "..
 import { GENERATION_CONFIG_PREFILL } from "../constants/firebase.js";
 import { computeProfileCompleteness } from "../utlils/profile.js";
 import { NotFound } from "../utlils/errors.js";
+import { adoptChannelIdentity } from "./account.service.js";
 class UserService {
     constructor(repo, accounts) {
         this.accounts = accounts;
@@ -24,6 +25,9 @@ class UserService {
             // first one's niche — one record, two channels' answers — and it is why a
             // channel created by POST /v1/accounts could never report itself onboarded.
             await this.accounts.writeContext(owner.accountId, data);
+            // The channel is named here or nowhere: `deriveDisplayName` otherwise runs
+            // only on the user's first request, before any of this exists.
+            await adoptChannelIdentity(this.accounts, owner.accountId, data);
             return data;
         };
         // Onboarding prefill (3.2): resolve a channel URL and infer onboarding fields
@@ -91,6 +95,7 @@ class UserService {
         this.updateProfile = async (owner, data) => {
             const record = await formatUserData(data, this.extractService);
             await this.accounts.writeContext(owner.accountId, record);
+            await adoptChannelIdentity(this.accounts, owner.accountId, record);
             return record;
         };
         // Refresh context (3.7): re-run channel/website enrichment from the STORED
@@ -112,6 +117,9 @@ class UserService {
             };
             const refreshed = await formatUserData(input, this.extractService);
             await this.accounts.writeContext(owner.accountId, refreshed);
+            // Enrichment resolves the channel URL, so this is where a channel onboarded
+            // fast (before enrichment) finally gets its "@handle".
+            await adoptChannelIdentity(this.accounts, owner.accountId, refreshed);
             return { ...refreshed, completeness: computeProfileCompleteness(refreshed) };
         };
         this.repo = repo;

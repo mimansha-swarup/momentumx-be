@@ -12,6 +12,7 @@ import {
 import { GENERATION_CONFIG_PREFILL } from "../constants/firebase.js";
 import { computeProfileCompleteness } from "../utlils/profile.js";
 import { NotFound } from "../utlils/errors.js";
+import { adoptChannelIdentity } from "./account.service.js";
 
 interface IPrefillSuggestions {
   niche: string;
@@ -45,6 +46,9 @@ class UserService {
     // first one's niche — one record, two channels' answers — and it is why a
     // channel created by POST /v1/accounts could never report itself onboarded.
     await this.accounts.writeContext(owner.accountId, data as unknown as Record<string, unknown>);
+    // The channel is named here or nowhere: `deriveDisplayName` otherwise runs
+    // only on the user's first request, before any of this exists.
+    await adoptChannelIdentity(this.accounts, owner.accountId, data as unknown as Record<string, unknown>);
     return data;
   };
 
@@ -131,6 +135,7 @@ class UserService {
   updateProfile = async (owner: RecordOwner, data: IOnboardingPayload) => {
     const record = await formatUserData(data, this.extractService);
     await this.accounts.writeContext(owner.accountId, record as unknown as Record<string, unknown>);
+    await adoptChannelIdentity(this.accounts, owner.accountId, record as unknown as Record<string, unknown>);
     return record;
   };
 
@@ -154,6 +159,9 @@ class UserService {
 
     const refreshed = await formatUserData(input, this.extractService);
     await this.accounts.writeContext(owner.accountId, refreshed as unknown as Record<string, unknown>);
+    // Enrichment resolves the channel URL, so this is where a channel onboarded
+    // fast (before enrichment) finally gets its "@handle".
+    await adoptChannelIdentity(this.accounts, owner.accountId, refreshed as unknown as Record<string, unknown>);
     return { ...refreshed, completeness: computeProfileCompleteness(refreshed) };
   };
 }

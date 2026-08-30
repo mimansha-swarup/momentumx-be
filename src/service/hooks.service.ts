@@ -12,6 +12,8 @@ import ContextService from "./context.service.js";
 import { IHooksBatch } from "../types/routes/hooks.js";
 import { RecordOwner } from "../utlils/content.js";
 import { BadRequest, Conflict, Forbidden, NotFound, ServiceUnavailable } from "../utlils/errors.js";
+import { forbidCrossAccount } from "./account.service.js";
+import AccountRepository from "../repository/account.repository.js";
 
 // The schema requires exactly 5 non-empty strings, but a schema is a request to
 // the model, not a guarantee from it — a blocked or truncated generation can still
@@ -40,7 +42,8 @@ class HooksService {
     // silently skips the lock and (from Phase 08) the debit — failing open on
     // exactly the concern the seam exists to guarantee. A missing argument
     // should be a compile error, not a quiet downgrade.
-    private steps: StepRunner
+    private steps: StepRunner,
+    private accounts: AccountRepository
   ) {}
 
   // Body script (if sent) wins; otherwise resolve the project's stored script
@@ -127,7 +130,7 @@ class HooksService {
       throw NotFound("Hooks batch not found");
     }
     if (hooksBatch.accountId !== owner.accountId) {
-      throw Forbidden();
+      await forbidCrossAccount(this.accounts, hooksBatch.accountId, owner);
     }
     if (hookIndex < 0 || hookIndex >= hooksBatch.hooks.length) {
       throw BadRequest(`hookIndex out of range. Must be 0–${hooksBatch.hooks.length - 1}`);
@@ -160,7 +163,7 @@ class HooksService {
       throw NotFound("Hooks batch not found");
     }
     if (hooksBatch.accountId !== owner.accountId) {
-      throw Forbidden();
+      await forbidCrossAccount(this.accounts, hooksBatch.accountId, owner);
     }
     if (!script && !hooksBatch.videoProjectId) {
       throw BadRequest("script is required");
@@ -223,7 +226,7 @@ class HooksService {
       throw NotFound("Hooks batch not found");
     }
     if (hooksBatch.accountId !== owner.accountId) {
-      throw Forbidden();
+      await forbidCrossAccount(this.accounts, hooksBatch.accountId, owner);
     }
     return hooksBatch;
   };
@@ -237,7 +240,7 @@ class HooksService {
       throw NotFound("Hooks batch not found");
     }
     if (hooksBatch.accountId !== owner.accountId) {
-      throw Forbidden();
+      await forbidCrossAccount(this.accounts, hooksBatch.accountId, owner);
     }
 
     const today = new Date().toLocaleDateString("en-US", {

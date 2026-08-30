@@ -65,7 +65,7 @@ import ContentRepository from "../../../src/repository/content.repository";
 import HooksRepository from "../../../src/repository/hooks.repository";
 import { generateStreamingContent } from "../../../src/utlils/ai";
 import { IVideoProject } from "../../../src/types/routes/video-project";
-import { makeTestAccountService, testOwner, TEST_ACCOUNT_ID, OTHER_ACCOUNT_ID } from "../../helpers/account";
+import { makeTestAccountService, testOwner, TEST_ACCOUNT_ID, OTHER_ACCOUNT_ID, fakeAccountRepo } from "../../helpers/account";
 
 const mockGenerate = generateStreamingContent as jest.MockedFunction<typeof generateStreamingContent>;
 
@@ -177,8 +177,8 @@ function makeWiredServices(initialProject: IVideoProject) {
     }),
   } as unknown as jest.Mocked<PackagingRepository>;
 
-  const vpService = new VideoProjectService(vpRepo, contentRepo, packagingRepo, hooksRepoForVp);
-  const packagingService = new PackagingService(packagingRepo, vpService, makeContextService());
+  const vpService = new VideoProjectService(vpRepo, contentRepo, packagingRepo, hooksRepoForVp, fakeAccountRepo());
+  const packagingService = new PackagingService(packagingRepo, vpService, makeContextService(), fakeAccountRepo());
 
   return { vpRepo, packagingRepo, vpService, packagingService, getState: () => state };
 }
@@ -292,8 +292,8 @@ describe("Door flow — a save with no videoProjectId creates exactly one projec
     const { formatGeneratedTitle } = jest.requireMock("../../../src/utlils/content") as { formatGeneratedTitle: jest.Mock };
     formatGeneratedTitle.mockResolvedValue({ title: "My Title", createdBy: "user-1", accountId: TEST_ACCOUNT_ID });
 
-    const vpService = new VideoProjectService(vpRepo, contentRepo, packagingRepoForSave as any, {} as any);
-    const service = new PackagingService(packagingRepoForSave as any, vpService, makeContextService());
+    const vpService = new VideoProjectService(vpRepo, contentRepo, packagingRepoForSave as any, {} as any, fakeAccountRepo());
+    const service = new PackagingService(packagingRepoForSave as any, vpService, makeContextService(), fakeAccountRepo());
 
     await service.savePackaging(testOwner("user-1"), { titles: [{ title: "My Title", characterCount: 8 }] });
 
@@ -313,8 +313,8 @@ describe("Door flow — a save with no videoProjectId creates exactly one projec
     } as unknown as PackagingRepository;
 
     const contentRepo = { getIdea: jest.fn(), updateIdea: jest.fn(), batchSaveIdeas: jest.fn(), getScriptById: jest.fn() } as unknown as ContentRepository;
-    const vpService = new VideoProjectService(vpRepo, contentRepo, packagingRepoForSave as any, {} as any);
-    const service = new PackagingService(packagingRepoForSave as any, vpService, makeContextService());
+    const vpService = new VideoProjectService(vpRepo, contentRepo, packagingRepoForSave as any, {} as any, fakeAccountRepo());
+    const service = new PackagingService(packagingRepoForSave as any, vpService, makeContextService(), fakeAccountRepo());
     const createSpy = vpRepo.create as jest.Mock;
 
     // Client adopts the id from the first save and passes it explicitly this time.
@@ -378,7 +378,7 @@ describe("Stale lifecycle — a plain save never clears stale; only regenerate d
       clearStale: jest.fn(),
     } as unknown as PackagingRepository;
 
-    const saveService = new PackagingService(packagingRepoForSave as any, vpService, makeContextService());
+    const saveService = new PackagingService(packagingRepoForSave as any, vpService, makeContextService(), fakeAccountRepo());
     await saveService.savePackaging(testOwner("user-1"), { description: "Edited text" }, "proj-1");
 
     const savedPatch = (packagingRepoForSave.update as jest.Mock).mock.calls[0][1];

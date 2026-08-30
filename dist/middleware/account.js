@@ -1,5 +1,6 @@
 import { accountRepository, accountService, videoProjectRepository, } from "../container.js";
 import { AccountForbidden, Gone, NotFound } from "../utlils/errors.js";
+import { isDocumentId } from "../utlils/firestore-id.js";
 /**
  * Phase 05 — which channel is this request acting in, and is the caller allowed?
  *
@@ -22,10 +23,16 @@ export const ACCOUNT_HEADER = "x-account-id";
  * shipping read-only would 400 every generation and every save the moment this
  * deploys.
  *
- * The rule it is protecting against — "the user believes they are in channel B
- * while every write lands in channel A" — cannot happen yet either: in this phase
- * every user has exactly one account, so the fallback resolves to the same
- * channel the header would have named. The risk appears with the switcher.
+ * The rule it is protecting against is "the user believes they are in channel B
+ * while every write lands in channel A". This comment used to dismiss that as
+ * impossible because "every user has exactly one account" — which stopped being
+ * true the moment Phase 06a shipped `POST /v1/accounts`, and the fallback was
+ * ignoring `lastActiveAccountId` at the time, so it was live.
+ *
+ * `resolveWithoutHeader` now honours the pointer, so a header-less write lands
+ * in the channel the user actually activated. That makes the fallback safe
+ * rather than merely convenient — but it is still a guess, which is why the flip
+ * below is a Phase 07 item and not a permanent answer.
  *
  * FLIP THIS TO `false` IN PHASE 07, in the commit that makes the frontend send
  * the header. The read-only tests below are written for both settings.
@@ -106,12 +113,32 @@ const enterAccount = async (req, account, { clearPointerOnTombstone = false } = 
  * Returns the DOCUMENT, not the id: the membership query already read it, and
  * re-reading it by id cost a second round trip on every header-less request —
  * which, until Phase 07 ships the header, is every request.
+ *
+ * The stored `lastActiveAccountId` decides WHICH membership, and it is resolved
+ * through the same `resolveActiveAccountId` that `GET /v1/accounts` reports as
+ * `activeAccountId`. This used to take `live[0]` — an `array-contains` query
+ * with no `orderBy` — and ignore the pointer entirely, which meant
+ * `POST /v1/accounts/:id/activate` returned 204 and changed nothing for any data
+ * route. The switcher showed channel B while onboarding wrote B's niche,
+ * audience and website over channel A's.
+ *
+ * A pointer at a tombstoned, deleted or departed channel is simply absent from
+ * `live`, so it falls through to the first membership instead of 410-ing or
+ * 403-ing. That is deliberate: with no header this is a GUESS, and a bad guess
+ * must not lock a user out of channels they can still use. An explicitly
+ * requested id still gets the 410, above.
  */
 const resolveWithoutHeader = async (userId) => {
     const memberships = await accountRepository.findByMember(userId);
     const live = memberships.filter((account) => !account.deletedAt);
-    if (live.length > 0)
+    // One channel: the pointer can only name it or something stale, so there is
+    // nothing to disambiguate and no reason to pay for the user-record read.
+    if (live.length === 1)
         return live[0];
+    if (live.length > 1) {
+        const active = await accountService.resolveActiveAccountId(userId, live);
+        return live.find((account) => account.id === active) ?? live[0];
+    }
     const minted = await accountService.ensureDefaultAccount(userId);
     return accountRepository.findById(minted);
 };
@@ -119,6 +146,17 @@ export const accountMiddleware = (req, res, next) => {
     void (async () => {
         const headerValue = req.header(ACCOUNT_HEADER);
         const requested = typeof headerValue === "string" ? headerValue.trim() : "";
+        // Before the value reaches `.doc()`, which would otherwise read a
+        // subcollection document or throw a 500 — see `isDocumentId`. A malformed
+        // header is a broken client, not a permission decision, so it is a 400 and
+        // not the 403 an unknown-but-well-formed id gets.
+        if (requested && !isDocumentId(requested)) {
+            res.sendError({
+                message: "X-Account-Id is not a valid channel id",
+                statusCode: 400,
+            });
+            return;
+        }
         if (fallbackRejectsWrite(req.method, Boolean(requested))) {
             res.sendError({
                 message: "X-Account-Id is required for this request",

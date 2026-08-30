@@ -2,6 +2,7 @@ import { FieldPath } from "firebase-admin/firestore";
 import { db, firebase } from "../config/firebase.js";
 import { STEP_ORDER } from "../constants/pipeline.js";
 import { BadRequest, Conflict, Forbidden, NotFound } from "../utlils/errors.js";
+import { isDocumentId } from "../utlils/firestore-id.js";
 class VideoProjectRepository {
     constructor() {
         // Back-compat: projects created before Title became a pipeline step lack
@@ -64,6 +65,15 @@ class VideoProjectRepository {
                     throw NotFound("Video project not found");
                 // Phase 06: the account, not the author. Inside the transaction, because a
                 // check performed outside it guarantees nothing about the write.
+                //
+                // Deliberately a BARE `Forbidden()`, unlike the 18 service-layer checks
+                // that now answer `wrong_account` or `account_forbidden`. This is a
+                // backstop, not the client's answer: every caller reaches a step lock
+                // through a service that has already loaded and ownership-checked the
+                // project (`videoProjectService.getById`, before `steps.run`), so a
+                // cross-channel caller is refused there with the discriminator. Resolving
+                // membership here would mean a second read inside a transaction to
+                // produce a message nobody receives.
                 if (project.accountId !== owner.accountId)
                     throw Forbidden();
                 for (const required of guard.requires) {
@@ -148,8 +158,16 @@ class VideoProjectRepository {
                 .orderBy("updatedAt", "desc")
                 .orderBy(FieldPath.documentId(), "desc");
             if (cursor) {
-                const cursorDoc = await this.db.collection(this.collection).doc(cursor).get();
-                if (!cursorDoc.exists) {
+                // The one read in this file that is not account-scoped, and it was a
+                // cross-account existence oracle: `?cursor=<any project id>` answered 200
+                // while a random id answered 400, so any authenticated caller could
+                // confirm ids belonging to channels they have never been a member of.
+                // `isDocumentId` first, because a cursor is a client string reaching
+                // `.doc()` exactly like `X-Account-Id` was.
+                const cursorDoc = isDocumentId(cursor)
+                    ? await this.db.collection(this.collection).doc(cursor).get()
+                    : null;
+                if (!cursorDoc?.exists || cursorDoc.data()?.accountId !== accountId) {
                     const err = new Error("Invalid cursor");
                     err.statusCode = 400;
                     throw err;

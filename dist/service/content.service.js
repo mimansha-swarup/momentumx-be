@@ -6,7 +6,8 @@ import { SCRIPT_FORMAT_STYLE, fillTemplate, resolveVideoFormat } from "../utlils
 import { assertOwner, logDroppedFormats, formatCreatorsData, formatGeneratedScript, formatGeneratedIdea, getClusteredTitles, } from "../utlils/content.js";
 import { GENERATION_CONFIG_SCRIPTS, GENERATION_CONFIG_IDEAS, } from "../constants/firebase.js";
 import { firebase } from "../config/firebase.js";
-import { BadRequest, Conflict, Forbidden, NotFound, ServiceUnavailable } from "../utlils/errors.js";
+import { BadRequest, Conflict, NotFound, ServiceUnavailable } from "../utlils/errors.js";
+import { forbidCrossAccount } from "./account.service.js";
 const openSseStream = (res) => {
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -143,7 +144,7 @@ class ContentService {
             if (!idea)
                 throw NotFound("Idea not found");
             if (idea.accountId !== owner.accountId)
-                throw Forbidden();
+                await forbidCrossAccount(this.accounts, idea.accountId, owner);
             // Whitelist: only `title` is client-editable. Never let the client touch
             // server-owned fields (archived, videoProjectId, embedding, isScriptGenerated, createdBy, batchId).
             const updates = {};
@@ -161,7 +162,7 @@ class ContentService {
             if (!script)
                 throw NotFound("Script not found");
             if (script.accountId !== owner.accountId)
-                throw Forbidden();
+                await forbidCrossAccount(this.accounts, script.accountId, owner);
             // Whitelist: only `script` and `title` are client-editable.
             const updates = {};
             if (typeof resBody.script === "string")
@@ -307,7 +308,7 @@ class ContentService {
             if (!doc)
                 return null;
             if (doc.accountId !== owner.accountId)
-                throw Forbidden();
+                await forbidCrossAccount(this.accounts, doc.accountId, owner);
             return doc;
         };
         // An idea's content changed underneath its projects — stale every project
@@ -367,7 +368,7 @@ class ContentService {
                 throw NotFound("Idea not found");
             }
             if (idea.accountId !== owner.accountId) {
-                throw Forbidden();
+                await forbidCrossAccount(this.accounts, idea.accountId, owner);
             }
             // Suppress the batch-length stats increment — regenerating a single slot
             // keeps only ideas[0], so a full +batch.length here would 10x-inflate stats.ideas.
@@ -402,7 +403,7 @@ class ContentService {
                 throw NotFound("Script not found");
             }
             if (script.accountId !== owner.accountId) {
-                throw Forbidden();
+                await forbidCrossAccount(this.accounts, script.accountId, owner);
             }
             return { title: script.title, text: script.script };
         };
@@ -413,7 +414,7 @@ class ContentService {
                 throw NotFound("Script not found");
             }
             if (scriptDoc.accountId !== owner.accountId) {
-                throw Forbidden();
+                await forbidCrossAccount(this.accounts, scriptDoc.accountId, owner);
             }
             const userRecord = (await this.accounts.getContext(owner.accountId));
             const userPrompt = this.buildScriptUserPrompt(userRecord, scriptDoc.title);

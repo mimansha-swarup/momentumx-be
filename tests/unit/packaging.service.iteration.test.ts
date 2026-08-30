@@ -24,7 +24,7 @@ jest.mock("../../src/config/firebase", () => ({
 import PackagingService from "../../src/service/packaging.service";
 import PackagingRepository from "../../src/repository/packaging.repository";
 import { generateStreamingContent } from "../../src/utlils/ai";
-import { makeTestAccountService, TEST_ACCOUNT_ID, testOwner, OTHER_ACCOUNT_ID } from "../helpers/account";
+import { makeTestAccountService, TEST_ACCOUNT_ID, testOwner, OTHER_ACCOUNT_ID, fakeAccountRepo } from "../helpers/account";
 
 jest.mock("../../src/repository/packaging.repository");
 jest.mock("../../src/utlils/ai", () => ({
@@ -88,7 +88,7 @@ describe("PackagingService — regenerateItem", () => {
 
   beforeEach(() => {
     mockRepo = new MockPackagingRepo() as jest.Mocked<PackagingRepository>;
-    service = new PackagingService(mockRepo, makeVp(), makeContextService());
+    service = new PackagingService(mockRepo, makeVp(), makeContextService(), fakeAccountRepo());
     // Real generator shape for titles: { titles: [{ title, characterCount }] }
     mockGenerate.mockResolvedValue(makeStream('{"titles":[{"title":"New A","characterCount":40},{"title":"New B","characterCount":42},{"title":"New C","characterCount":44}]}'));
   });
@@ -242,7 +242,7 @@ describe("PackagingService — regenerateItem project sync (DA6 stale clear)", (
       startStep: jest.fn().mockResolvedValue(undefined),
       completeStep: jest.fn().mockResolvedValue(undefined),
     };
-    service = new PackagingService(mockRepo, mockVp as any, makeContextService());
+    service = new PackagingService(mockRepo, mockVp as any, makeContextService(), fakeAccountRepo());
     mockGenerate.mockResolvedValue(makeStream('{"titles":[{"title":"New A","characterCount":40}]}'));
     mockRepo.update = jest.fn().mockResolvedValue(undefined);
   });
@@ -400,7 +400,7 @@ describe("PackagingService — savePackaging with videoProjectId", () => {
   beforeEach(() => {
     mockRepo = new MockPackagingRepo() as jest.Mocked<PackagingRepository>;
     mockVp = makeVp();
-    service = new PackagingService(mockRepo, mockVp, makeContextService());
+    service = new PackagingService(mockRepo, mockVp, makeContextService(), fakeAccountRepo());
     // Phase 05a: creates go to doc(videoProjectId), so the id IS the project id.
     mockRepo.saveWithId = jest.fn(async (id: string, _data: Record<string, unknown>) => ({ id }));
     // savePackaging upserts by project: no existing doc -> create path.
@@ -592,7 +592,7 @@ describe("PackagingService — selectTitle (title continuity §7.3)", () => {
   beforeEach(() => {
     mockRepo = new MockPackagingRepo() as jest.Mocked<PackagingRepository>;
     mockVp = makeVp();
-    service = new PackagingService(mockRepo, mockVp, makeContextService());
+    service = new PackagingService(mockRepo, mockVp, makeContextService(), fakeAccountRepo());
     mockRepo.get = jest.fn().mockResolvedValue({
       id: "pkg-1",
       createdBy: "user-1",
@@ -657,7 +657,7 @@ describe("PackagingService — generation persists + drives the right step", () 
     mockGenerate.mockResolvedValue(makeStream(JSON.stringify({ titles: fakeTitles })));
     const ctx = makeContextService({ selectedHook: "my hook opener" });
     const vp = makeVp();
-    service = new PackagingService(mockRepo, vp, ctx);
+    service = new PackagingService(mockRepo, vp, ctx, fakeAccountRepo());
     mockRepo.upsertGeneratedItem = jest.fn().mockResolvedValue({ packagingId: "proj-1", created: false, statuses: { ...allNotStarted, title: "completed" } });
 
     const result = await service.generateTitle(testOwner("user-1"), "script text", "proj-1");
@@ -682,7 +682,7 @@ describe("PackagingService — generation persists + drives the right step", () 
   it("links the doc only when the upsert reports it was created", async () => {
     mockGenerate.mockResolvedValue(makeStream(JSON.stringify({ titles: [{ title: "T", characterCount: 1 }] })));
     const vp = makeVp();
-    service = new PackagingService(mockRepo, vp, makeContextService({ selectedHook: "h" }));
+    service = new PackagingService(mockRepo, vp, makeContextService({ selectedHook: "h" }), fakeAccountRepo());
     mockRepo.upsertGeneratedItem = jest.fn().mockResolvedValue({ packagingId: "proj-1", created: true, statuses: { ...allNotStarted, title: "completed" } });
 
     await service.generateTitle(testOwner("user-1"), "script text", "proj-1");
@@ -693,7 +693,7 @@ describe("PackagingService — generation persists + drives the right step", () 
   it("completes the PACKAGING step once its three items exist", async () => {
     mockGenerate.mockResolvedValue(makeStream(shortsJson));
     const vp = makeVp();
-    service = new PackagingService(mockRepo, vp, makeContextService());
+    service = new PackagingService(mockRepo, vp, makeContextService(), fakeAccountRepo());
     mockRepo.upsertGeneratedItem = jest.fn().mockResolvedValue({ packagingId: "proj-1", created: false, statuses: { title: "completed", description: "completed", thumbnail: "completed", shorts: "completed" } });
 
     await service.generateShorts(testOwner("user-1"), "script text", 60, "proj-1");
@@ -705,7 +705,7 @@ describe("PackagingService — generation persists + drives the right step", () 
   it("does NOT complete packaging while an item is missing", async () => {
     mockGenerate.mockResolvedValue(makeStream(shortsJson));
     const vp = makeVp();
-    service = new PackagingService(mockRepo, vp, makeContextService());
+    service = new PackagingService(mockRepo, vp, makeContextService(), fakeAccountRepo());
     mockRepo.upsertGeneratedItem = jest.fn().mockResolvedValue({ packagingId: "proj-1", created: false, statuses: { title: "completed", description: "not_started", thumbnail: "completed", shorts: "completed" } });
 
     await service.generateShorts(testOwner("user-1"), "script text", 60, "proj-1");
@@ -718,7 +718,7 @@ describe("PackagingService — generation persists + drives the right step", () 
     const fakeTitles = [{ title: "Title B", characterCount: 50 }];
     mockGenerate.mockResolvedValue(makeStream(JSON.stringify({ titles: fakeTitles })));
     const ctx = makeContextService();
-    service = new PackagingService(mockRepo, makeVp(), ctx);
+    service = new PackagingService(mockRepo, makeVp(), ctx, fakeAccountRepo());
     mockRepo.upsertGeneratedItem = jest.fn();
 
     const result = await service.generateTitle(testOwner("user-1"), "script text");
@@ -735,7 +735,7 @@ describe("PackagingService — exportPackaging", () => {
 
   beforeEach(() => {
     mockRepo = new MockPackagingRepo() as jest.Mocked<PackagingRepository>;
-    service = new PackagingService(mockRepo, makeVp(), makeContextService());
+    service = new PackagingService(mockRepo, makeVp(), makeContextService(), fakeAccountRepo());
   });
 
   it("throws 404 if not found", async () => {

@@ -120,16 +120,18 @@ const wire = () => {
   const packagingRepo = new PackagingRepository();
   const hooksRepo = new HooksRepository();
   const userRepo = new UserRepository();
-  const projects = new VideoProjectService(contentRepo && projectRepo, contentRepo, packagingRepo, hooksRepo);
+  const projects = new VideoProjectService(contentRepo && projectRepo, contentRepo, packagingRepo, hooksRepo, fakeAccountRepo());
   const context = new ContextService(fakeAccountRepo(), contentRepo, hooksRepo, projects);
   return {
     projects,
     context,
     content: new ContentService(contentRepo, userRepo, projects, fakeAccountRepo()),
-    packaging: new PackagingService(packagingRepo, projects, context),
+    packaging: new PackagingService(packagingRepo, projects, context, fakeAccountRepo()),
     hooks: new HooksService(hooksRepo, projects, context, {
       run: async (_s: unknown, g: () => unknown) => g(),
-    } as never),
+    } as never,
+    fakeAccountRepo()
+  ),
   };
 };
 
@@ -206,7 +208,8 @@ describe("reaching another channel's document by id is refused", () => {
       new VideoProjectRepository(),
       new ContentRepository(),
       new PackagingRepository(),
-      new HooksRepository()
+      new HooksRepository(),
+      fakeAccountRepo()
     );
 
   it("a project", async () => {
@@ -238,7 +241,8 @@ describe("reaching another channel's document by id is refused", () => {
       new HooksRepository(),
       vpService(),
       undefined,
-      { run: async (_s: unknown, g: () => unknown) => g() } as never
+      { run: async (_s: unknown, g: () => unknown) => g() } as never,
+      fakeAccountRepo()
     );
 
     await expect(hooks.getById(inA, "hooks-b")).rejects.toMatchObject({ statusCode: 403 });
@@ -271,7 +275,8 @@ describe("a co-member of the channel is allowed, even on documents they did not 
       new VideoProjectRepository(),
       new ContentRepository(),
       new PackagingRepository(),
-      new HooksRepository()
+      new HooksRepository(),
+      fakeAccountRepo()
     );
 
   it("reads a project authored by someone else in the same channel", async () => {
@@ -309,7 +314,8 @@ describe("the account is what decides, not the author", () => {
       new VideoProjectRepository(),
       new ContentRepository(),
       new PackagingRepository(),
-      new HooksRepository()
+      new HooksRepository(),
+      fakeAccountRepo()
     );
 
     await expect(service.getById("proj-b", inA)).rejects.toMatchObject({ statusCode: 403 });

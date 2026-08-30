@@ -19,6 +19,8 @@ import ResearchContextService from "./research-context.service.js";
 import { collectJson, generateStreamingContent } from "../utlils/ai.js";
 import { firebase } from "../config/firebase.js";
 import { BadRequest, Forbidden, NotFound } from "../utlils/errors.js";
+import { forbidCrossAccount } from "./account.service.js";
+import AccountRepository from "../repository/account.repository.js";
 import { IPackagingItemStatuses } from "../types/routes/video-project.js";
 import { PackagingItemName } from "../types/routes/packaging.js";
 import { RecordOwner } from "../utlils/content.js";
@@ -46,6 +48,7 @@ class PackagingService {
     repo: PackagingRepository,
     private videoProjectService: VideoProjectService,
     private contextService: ContextService,
+    private accounts: AccountRepository,
     private researchContext?: ResearchContextService
   ) {
     this.repo = repo;
@@ -456,7 +459,8 @@ class PackagingService {
   getPackaging = async (packagingId: string, owner: RecordOwner) => {
     const result = await this.repo.get(packagingId);
     if (!result) return null;
-    if (result.accountId !== owner.accountId) throw Forbidden();
+    if (result.accountId !== owner.accountId)
+      await forbidCrossAccount(this.accounts, result.accountId, owner);
     return result;
   };
 
@@ -474,7 +478,7 @@ class PackagingService {
       throw NotFound("Packaging not found");
     }
     if (pkg.accountId !== owner.accountId) {
-      throw Forbidden();
+      await forbidCrossAccount(this.accounts, pkg.accountId, owner);
     }
     if (!Array.isArray(pkg.titles) || pkg.titles.length === 0) {
       throw BadRequest("No titles have been generated for this packaging");
@@ -521,7 +525,7 @@ class PackagingService {
       throw NotFound("Packaging not found");
     }
     if (pkg.accountId !== owner.accountId) {
-      throw Forbidden();
+      await forbidCrossAccount(this.accounts, pkg.accountId, owner);
     }
     // Resolve the selected hook (and stored script) from the STORED project on
     // this packaging doc — never from a client-supplied id (that would re-open
@@ -692,7 +696,7 @@ class PackagingService {
       throw NotFound("Packaging not found");
     }
     if (pkg.accountId !== owner.accountId) {
-      throw Forbidden();
+      await forbidCrossAccount(this.accounts, pkg.accountId, owner);
     }
 
     const today = new Date().toLocaleDateString("en-US", {

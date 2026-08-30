@@ -24,8 +24,11 @@ jest.mock("../../../src/config/firebase", () => ({
 }));
 
 import AccountService, {
+  adoptChannelIdentity,
+  forbidCrossAccount,
   deriveDisplayName,
   deriveHandle,
+  PLACEHOLDER_CHANNEL_NAME,
 } from "../../../src/service/account.service";
 import AccountRepository from "../../../src/repository/account.repository";
 import UserRepository from "../../../src/repository/user.repository";
@@ -122,7 +125,9 @@ describe("ensureDefaultAccount — minting", () => {
       userName: "https://youtube.com/@adatv",
       channelId: "UC123",
       channelDescription: "a channel about things",
-      userTitle: "Ada TV",
+      // The channel's top VIDEO titles, not its name — this fixture used to say
+      // "Ada TV", which is what a `userTitle: string` declaration invites.
+      userTitle: ["How Ada builds", "Ada explains RAG"],
       niche: "AI tools",
       targetAudience: "founders",
       brandName: "Ada",
@@ -142,6 +147,19 @@ describe("ensureDefaultAccount — minting", () => {
     // whole object at once is deliberate: a field added to IChannelContext later
     // and left unmapped fails here instead of shipping as a silent "".
     expect(context).toEqual(user);
+  });
+
+  // A legacy user record can hold `""` here, and the empty string is exactly
+  // what `formatCreatorsData` cannot map over — it threw a TypeError that
+  // surfaced as a 500 on the first "Generate ideas" click. `?? []` would not
+  // have caught it, because `""` is neither null nor undefined.
+  it("coerces a non-array userTitle to an empty list, not through to the context", async () => {
+    const { service, repo } = make({ niche: "AI tools", userTitle: "" });
+
+    await service.ensureDefaultAccount("uid-123");
+
+    const [, context] = repo.createWithContext.mock.calls[0];
+    expect(context.userTitle).toEqual([]);
   });
 
   it("defaults missing channel fields rather than dropping the keys", async () => {
@@ -288,10 +306,145 @@ describe("ensureDefaultAccount — never mints twice", () => {
   });
 });
 
+/**
+ * 403 cannot mean one thing.
+ *
+ * Every ownership check in the services threw a bare `Forbidden()`. The
+ * documented client handler reads a code-less 403 as `account_forbidden` and
+ * ejects the user to the channel list — so opening a bookmarked project that
+ * lives in your OWN other channel logged you out of the channel you were in,
+ * when the fix was a single switch away.
+ */
+describe("forbidCrossAccount — which 403 is this", () => {
+  const owner = testOwner("uid-me");
+
+  it("offers the switch when the caller is a member of the resource's channel", async () => {
+    const accounts = {
+      findById: jest.fn(async () => ({
+        id: "acc-other",
+        displayName: "Cooking",
+        memberUids: ["uid-me"],
+        deletedAt: null,
+      })),
+    };
+
+    const err = await forbidCrossAccount(accounts as never, "acc-other", owner).catch((e) => e);
+
+    expect(err).toMatchObject({
+      statusCode: 403,
+      code: "wrong_account",
+      // The name is the point — a client cannot render "Switch to «Cooking»?"
+      // from an id the user has never seen.
+      detail: { accountId: "acc-other", displayName: "Cooking" },
+    });
+  });
+
+  it("ejects when the caller is not a member at all", async () => {
+    const accounts = {
+      findById: jest.fn(async () => ({
+        id: "acc-theirs",
+        displayName: "Someone else",
+        memberUids: ["uid-stranger"],
+        deletedAt: null,
+      })),
+    };
+
+    const err = await forbidCrossAccount(accounts as never, "acc-theirs", owner).catch((e) => e);
+
+    expect(err).toMatchObject({ statusCode: 403, code: "account_forbidden" });
+    // Never name a channel the caller has no business knowing exists.
+    expect(err.detail).toBeUndefined();
+  });
+
+  it("does not offer a tombstoned channel as a switch target", async () => {
+    const accounts = {
+      findById: jest.fn(async () => ({
+        id: "acc-dead",
+        displayName: "Deleted",
+        memberUids: ["uid-me"],
+        deletedAt: "2026-08-01",
+      })),
+    };
+
+    const err = await forbidCrossAccount(accounts as never, "acc-dead", owner).catch((e) => e);
+
+    expect(err).toMatchObject({ code: "account_forbidden" });
+  });
+
+  it("ejects when the resource carries no account at all", async () => {
+    const accounts = { findById: jest.fn() };
+
+    const err = await forbidCrossAccount(accounts as never, undefined, owner).catch((e) => e);
+
+    expect(err).toMatchObject({ code: "account_forbidden" });
+    expect(accounts.findById).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The switcher rendered "Untitled channel" for every channel, forever.
+ *
+ * `deriveDisplayName` runs in exactly one place — `ensureDefaultAccount`, on the
+ * user's FIRST authenticated request, before onboarding exists — and
+ * `POST /v1/accounts` hardcodes the placeholder. Once Phase 06b moved the channel
+ * fields off `users/{uid}`, nothing revisited the name, so the whole derive
+ * ladder was unreachable in production.
+ */
+describe("adoptChannelIdentity — a channel gets its name from onboarding", () => {
+  const repoWith = (displayName: string) => ({
+    findById: jest.fn(async () => ({ id: "acc-1", displayName })),
+    update: jest.fn(async () => undefined),
+  });
+
+  it("names a placeholder channel from the brand and channel URL", async () => {
+    const repo = repoWith(PLACEHOLDER_CHANNEL_NAME);
+
+    await adoptChannelIdentity(repo as never, "acc-1", {
+      brandName: "Acme Tech",
+      userName: "https://youtube.com/@acmetech",
+    });
+
+    expect(repo.update).toHaveBeenCalledWith("acc-1", {
+      displayName: "Acme Tech",
+      handle: "@acmetech",
+    });
+  });
+
+  it("leaves a channel the owner renamed alone", async () => {
+    // PATCH /v1/accounts/:id is the owner's choice. Onboarding must not rename a
+    // channel out from under them, and neither must a later brand-name edit —
+    // which is also why no "was this derived?" flag is needed.
+    const repo = repoWith("My Cooking Channel");
+
+    await adoptChannelIdentity(repo as never, "acc-1", { brandName: "Acme Tech" });
+
+    expect(repo.update).not.toHaveBeenCalled();
+  });
+
+  it("leaves the placeholder rather than writing it back when nothing is usable", async () => {
+    const repo = repoWith(PLACEHOLDER_CHANNEL_NAME);
+
+    await adoptChannelIdentity(repo as never, "acc-1", { targetAudience: "founders" });
+
+    expect(repo.update).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when the account is gone", async () => {
+    const repo = { findById: jest.fn(async () => null), update: jest.fn() };
+
+    await adoptChannelIdentity(repo as never, "acc-1", { brandName: "Acme" });
+
+    expect(repo.update).not.toHaveBeenCalled();
+  });
+});
+
 describe("displayName — the switcher always has something to render", () => {
   it.each([
-    [{ brandName: "Brand", userTitle: "Title", niche: "AI" }, "Brand"],
-    [{ userTitle: "Title", niche: "AI" }, "Title"],
+    [{ brandName: "Brand", niche: "AI" }, "Brand"],
+    // `userTitle` is the channel's top VIDEO titles, a string[]. It used to sit
+    // second in this ladder, where it could never match — and where it read as
+    // if a channel could be named after one of its videos.
+    [{ userTitle: ["A video title"], niche: "AI" }, "AI"],
     [{ userName: "https://youtube.com/@adatv", niche: "AI" }, "@adatv"],
     [{ niche: "AI tools" }, "AI tools"],
     [{}, "Untitled channel"],

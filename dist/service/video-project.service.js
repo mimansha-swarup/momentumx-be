@@ -1,6 +1,7 @@
 import { firebase } from "../config/firebase.js";
 import { STEP_ORDER, STEP_LOCK_MS, downstreamOf } from "../constants/pipeline.js";
-import { BadRequest, Forbidden, NotFound } from "../utlils/errors.js";
+import { BadRequest, NotFound } from "../utlils/errors.js";
+import { forbidCrossAccount } from "./account.service.js";
 import { assertOwner, formatGeneratedTitle } from "../utlils/content.js";
 const VALID_MUTABLE_STEPS = ["script", "hooks", "title", "packaging"];
 // STEP_ORDER, downstreamOf (was the hand-written STALE_CASCADE map) and
@@ -18,18 +19,19 @@ const computeOverallStatus = (pipeline) => {
             : "in_progress";
 };
 class VideoProjectService {
-    constructor(repo, contentRepo, packagingRepo, hooksRepo) {
+    constructor(repo, contentRepo, packagingRepo, hooksRepo, accounts) {
         this.repo = repo;
         this.contentRepo = contentRepo;
         this.packagingRepo = packagingRepo;
         this.hooksRepo = hooksRepo;
+        this.accounts = accounts;
         this.create = async (owner, ideaId) => {
             const idea = await this.contentRepo.getIdea(ideaId);
             if (!idea) {
                 throw NotFound("Idea not found");
             }
             if (idea.accountId !== owner.accountId) {
-                throw Forbidden();
+                await forbidCrossAccount(this.accounts, idea.accountId, owner);
             }
             const now = firebase.firestore.FieldValue.serverTimestamp();
             const projectData = {
@@ -103,7 +105,7 @@ class VideoProjectService {
                 throw NotFound();
             }
             if (project.accountId !== owner.accountId) {
-                throw Forbidden();
+                await forbidCrossAccount(this.accounts, project.accountId, owner);
             }
             return project;
         };
@@ -186,7 +188,7 @@ class VideoProjectService {
                 throw NotFound();
             }
             if (project.accountId !== owner.accountId) {
-                throw Forbidden();
+                await forbidCrossAccount(this.accounts, project.accountId, owner);
             }
             if (project.isDeleted) {
                 return project;
@@ -340,7 +342,7 @@ class VideoProjectService {
                 throw NotFound(`${resourceType} not found`);
             }
             if (resource.accountId !== owner.accountId) {
-                throw Forbidden();
+                await forbidCrossAccount(this.accounts, resource.accountId, owner);
             }
             const fieldMap = {
                 script: "scriptId",

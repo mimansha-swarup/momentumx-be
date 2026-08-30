@@ -32,6 +32,7 @@ import { IGetIdeaQueryArgs } from "../types/repository/content.js";
 import { IGeneratedIdea, IIdeaContextOverride } from "../types/routes/content.js";
 import { firebase } from "../config/firebase.js";
 import { BadRequest, Conflict, Forbidden, NotFound, ServiceUnavailable } from "../utlils/errors.js";
+import { forbidCrossAccount } from "./account.service.js";
 
 const openSseStream = (res: Response): void => {
   res.setHeader("Content-Type", "text/event-stream");
@@ -207,7 +208,8 @@ class ContentService {
     const { userId } = owner;
     const idea = await this.repo.getIdea(titleId);
     if (!idea) throw NotFound("Idea not found");
-    if (idea.accountId !== owner.accountId) throw Forbidden();
+    if (idea.accountId !== owner.accountId)
+      await forbidCrossAccount(this.accounts, idea.accountId, owner);
     // Whitelist: only `title` is client-editable. Never let the client touch
     // server-owned fields (archived, videoProjectId, embedding, isScriptGenerated, createdBy, batchId).
     const updates: Record<string, string> = {};
@@ -223,7 +225,8 @@ class ContentService {
     const { userId } = owner;
     const script = await this.repo.getScriptById(scriptId);
     if (!script) throw NotFound("Script not found");
-    if (script.accountId !== owner.accountId) throw Forbidden();
+    if (script.accountId !== owner.accountId)
+      await forbidCrossAccount(this.accounts, script.accountId, owner);
     // Whitelist: only `script` and `title` are client-editable.
     const updates: Record<string, string> = {};
     if (typeof resBody.script === "string") updates.script = resBody.script;
@@ -390,7 +393,8 @@ class ContentService {
     const { userId } = owner;
     const doc = await this.repo.getScriptById(scriptId);
     if (!doc) return null;
-    if (doc.accountId !== owner.accountId) throw Forbidden();
+    if (doc.accountId !== owner.accountId)
+      await forbidCrossAccount(this.accounts, doc.accountId, owner);
     return doc;
   };
 
@@ -460,7 +464,7 @@ class ContentService {
       throw NotFound("Idea not found");
     }
     if (idea.accountId !== owner.accountId) {
-      throw Forbidden();
+      await forbidCrossAccount(this.accounts, idea.accountId, owner);
     }
 
     // Suppress the batch-length stats increment — regenerating a single slot
@@ -507,7 +511,7 @@ class ContentService {
       throw NotFound("Script not found");
     }
     if (script.accountId !== owner.accountId) {
-      throw Forbidden();
+      await forbidCrossAccount(this.accounts, script.accountId, owner);
     }
     return { title: script.title, text: script.script };
   };
@@ -519,7 +523,7 @@ class ContentService {
       throw NotFound("Script not found");
     }
     if (scriptDoc.accountId !== owner.accountId) {
-      throw Forbidden();
+      await forbidCrossAccount(this.accounts, scriptDoc.accountId, owner);
     }
 
     const userRecord = (await this.accounts.getContext(owner.accountId)) as

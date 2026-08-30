@@ -80,7 +80,12 @@ export interface IChannelContext {
   userName: string;
   channelId: string;
   channelDescription: string;
-  userTitle: string;
+  /**
+   * The channel's top-performing VIDEO titles, not its name — `formatUserData`
+   * writes `channel.titles` here. Declared `string` until now, which is what let
+   * the two writers below store `""` and crash `formatCreatorsData`.
+   */
+  userTitle: string[];
 
   niche: string;
   targetAudience: string;

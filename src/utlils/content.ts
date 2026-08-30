@@ -167,7 +167,14 @@ export function formatCreatorsData(
   let result = "";
 
   for (const creator of list) {
-    const { url, titles = [] } = creator;
+    const { url } = creator;
+    // `userTitle` holds the channel's top video titles — a string[], written by
+    // `formatUserData` below. Coerced rather than destructured with a default,
+    // because a default only fires for `undefined`: channel contexts created
+    // before this was typed carry `""`, and `"".map` threw a TypeError that
+    // surfaced as a 500 on the first "Generate ideas" click of every new
+    // channel. A channel onboarded without a URL never gets titles at all.
+    const titles: string[] = Array.isArray(creator.titles) ? creator.titles : [];
 
     result += `\n\n High-performing titles from the channel: ${url}\n`;
     result += titles.map((title, i) => `   ${i + 1}. ${title}`).join("\n");

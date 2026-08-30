@@ -17,6 +17,7 @@ const findById = jest.fn();
 const findByMember = jest.fn();
 const ensureDefaultAccount = jest.fn();
 const clearActiveAccount = jest.fn().mockResolvedValue(undefined);
+const resolveActiveAccountId = jest.fn();
 const findByIdUnchecked = jest.fn();
 
 jest.mock("../../src/container", () => ({
@@ -27,6 +28,7 @@ jest.mock("../../src/container", () => ({
   accountService: {
     ensureDefaultAccount: (...a: unknown[]) => ensureDefaultAccount(...a),
     clearActiveAccount: (...a: unknown[]) => clearActiveAccount(...a),
+    resolveActiveAccountId: (...a: unknown[]) => resolveActiveAccountId(...a),
   },
   videoProjectRepository: {
     findByIdUnchecked: (...a: unknown[]) => findByIdUnchecked(...a),
@@ -160,6 +162,45 @@ describe("a member gets context", () => {
   });
 });
 
+// `.doc(value)` splits on "/" and treats the result as a PATH. Both of these
+// reached Firestore before the value was ever checked.
+describe("a header that is not a document id never reaches .doc()", () => {
+  it("refuses a header addressing a subcollection document", async () => {
+    // This one RESOLVED: it read `accounts/<victim>/context/channel` — another
+    // channel's niche, competitors and website scrape. Nothing was returned,
+    // but only because that document has no memberUids for the check to pass.
+    const res = await request(makeApp(accountMiddleware))
+      .get("/probe")
+      .set("X-Account-Id", `${OTHER}/context/channel`);
+
+    expect(res.status).toBe(400);
+    expect(findById).not.toHaveBeenCalled();
+  });
+
+  it("refuses a header addressing a collection, which used to be a 500", async () => {
+    // An odd segment count makes `.doc()` throw a bare Error — no statusCode,
+    // so the handler rendered "Something went wrong" on every protected route.
+    const res = await request(makeApp(accountMiddleware))
+      .get("/probe")
+      .set("X-Account-Id", "a/b");
+
+    expect(res.status).toBe(400);
+    expect(findById).not.toHaveBeenCalled();
+  });
+
+  it("a well-formed but unknown id is still 403, not 400", async () => {
+    // The distinction is the point: 400 says the client is broken, 403 says the
+    // caller may not enter. Collapsing them would tell a prober which ids exist.
+    findById.mockResolvedValue(null);
+
+    const res = await request(makeApp(accountMiddleware))
+      .get("/probe")
+      .set("X-Account-Id", OTHER);
+
+    expect(res.status).toBe(403);
+  });
+});
+
 describe("no header — the fallback that keeps already-loaded tabs working", () => {
   it("resolves an existing membership without minting anything", async () => {
     const res = await request(makeApp(accountMiddleware)).get("/probe");
@@ -179,6 +220,76 @@ describe("no header — the fallback that keeps already-loaded tabs working", ()
 
     expect(res.status).toBe(200);
     expect(ensureDefaultAccount).toHaveBeenCalledWith("uid-me");
+  });
+
+  // The whole point of the pointer. Every test above this one seeds exactly ONE
+  // membership, which is why the fallback could ignore `lastActiveAccountId`
+  // entirely and stay green: with one channel, any rule picks the same channel.
+  describe("with more than one live membership, the active pointer decides", () => {
+    beforeEach(() => {
+      // OTHER sorts second by document id, so `live[0]` is OWNED — i.e. these
+      // tests fail if the pointer is ignored, rather than passing by luck.
+      findByMember.mockResolvedValue([account(OWNED), account(OTHER)]);
+    });
+
+    it("acts in the channel the user activated, not the first one found", async () => {
+      resolveActiveAccountId.mockResolvedValue(OTHER);
+
+      const res = await request(makeApp(accountMiddleware)).get("/probe");
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.accountId).toBe(OTHER);
+    });
+
+    it("writes land in the activated channel too, not just reads", async () => {
+      // This is the data-destroying case: onboarding a newly created channel
+      // wrote its niche and audience over the first channel's.
+      resolveActiveAccountId.mockResolvedValue(OTHER);
+
+      const res = await request(makeApp(accountMiddleware)).post("/probe");
+
+      expect(res.body.data.accountId).toBe(OTHER);
+    });
+
+    it("uses the same resolver GET /v1/accounts reports activeAccountId from", async () => {
+      resolveActiveAccountId.mockResolvedValue(OTHER);
+
+      await request(makeApp(accountMiddleware)).get("/probe");
+
+      // Passed the live memberships, so a pointer at a tombstoned or departed
+      // channel can never be selected here.
+      expect(resolveActiveAccountId).toHaveBeenCalledWith("uid-me", [
+        expect.objectContaining({ id: OWNED }),
+        expect.objectContaining({ id: OTHER }),
+      ]);
+    });
+
+    it("falls back to a membership when the pointer names a channel they cannot enter", async () => {
+      // A stale pointer is a bad GUESS, not an explicit request — it must not
+      // lock the user out of channels that still work.
+      resolveActiveAccountId.mockResolvedValue("acc-deleted-or-departed");
+
+      const res = await request(makeApp(accountMiddleware)).get("/probe");
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.accountId).toBe(OWNED);
+    });
+
+    it("never mints while any live membership exists", async () => {
+      resolveActiveAccountId.mockResolvedValue(null);
+
+      await request(makeApp(accountMiddleware)).get("/probe");
+
+      expect(ensureDefaultAccount).not.toHaveBeenCalled();
+    });
+  });
+
+  it("does not read the user record to disambiguate a single channel", async () => {
+    // The pointer read is skipped when there is nothing to choose between, so
+    // single-channel users keep paying one document read per request.
+    await request(makeApp(accountMiddleware)).get("/probe");
+
+    expect(resolveActiveAccountId).not.toHaveBeenCalled();
   });
 
   it("does not adopt a tombstoned channel as the fallback", async () => {

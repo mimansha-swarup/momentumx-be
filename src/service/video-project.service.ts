@@ -15,6 +15,8 @@ import { IPackaging } from "../types/routes/packaging.js";
 import { RecordOwner } from "../utlils/content.js";
 import { STEP_ORDER, STEP_LOCK_MS, downstreamOf } from "../constants/pipeline.js";
 import { BadRequest, Forbidden, NotFound } from "../utlils/errors.js";
+import { forbidCrossAccount } from "./account.service.js";
+import AccountRepository from "../repository/account.repository.js";
 import { assertOwner, formatGeneratedTitle } from "../utlils/content.js";
 
 const VALID_MUTABLE_STEPS = ["script", "hooks", "title", "packaging"];
@@ -40,7 +42,8 @@ class VideoProjectService {
     private repo: VideoProjectRepository,
     private contentRepo: ContentRepository,
     private packagingRepo: PackagingRepository,
-    private hooksRepo: HooksRepository
+    private hooksRepo: HooksRepository,
+    private accounts: AccountRepository
   ) {}
 
   create = async (owner: RecordOwner, ideaId: string): Promise<IVideoProject> => {
@@ -49,7 +52,7 @@ class VideoProjectService {
       throw NotFound("Idea not found");
     }
     if (idea.accountId !== owner.accountId) {
-      throw Forbidden();
+      await forbidCrossAccount(this.accounts, idea.accountId, owner);
     }
 
     const now = firebase.firestore.FieldValue.serverTimestamp();
@@ -135,7 +138,7 @@ class VideoProjectService {
       throw NotFound();
     }
     if (project.accountId !== owner.accountId) {
-      throw Forbidden();
+      await forbidCrossAccount(this.accounts, project.accountId, owner);
     }
     return project;
   };
@@ -232,7 +235,7 @@ class VideoProjectService {
       throw NotFound();
     }
     if (project.accountId !== owner.accountId) {
-      throw Forbidden();
+      await forbidCrossAccount(this.accounts, project.accountId, owner);
     }
     if (project.isDeleted) {
       return project;
@@ -422,7 +425,7 @@ class VideoProjectService {
       throw NotFound(`${resourceType} not found`);
     }
     if (resource.accountId !== owner.accountId) {
-      throw Forbidden();
+      await forbidCrossAccount(this.accounts, resource.accountId, owner);
     }
 
     const fieldMap: Record<string, string> = {

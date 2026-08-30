@@ -86,6 +86,11 @@ const accountRepo = {
   getContext: jest.fn(),
   // Parameters declared so `mock.calls[n][1]` is the patch, not `never`.
   writeContext: jest.fn(async (_accountId: string, _patch: Record<string, unknown>) => undefined),
+  // Reached by `adoptChannelIdentity`, which names the channel from whatever
+  // onboarding just wrote. Null here means "no account document", so the naming
+  // step no-ops and these tests stay about the context write.
+  findById: jest.fn(async (_accountId: string) => null as Record<string, unknown> | null),
+  update: jest.fn(async (_accountId: string, _patch: Record<string, unknown>) => undefined),
 };
 const channelRepo = () => accountRepo as never;
 
@@ -125,6 +130,29 @@ describe("Onboarding — the required minimum (channel URL OR niche+targetAudien
     expect(accountRepo.writeContext).toHaveBeenCalledWith(
       TEST_ACCOUNT_ID, parsed);
     expect(result).toBe(parsed);
+  });
+
+  // The switcher renders `account.displayName`, and onboarding is the only
+  // moment the server learns what a channel is called: `deriveDisplayName` runs
+  // once, inside `ensureDefaultAccount`, before any of this exists. Without this
+  // wiring every channel stays "Untitled channel" permanently — and with two
+  // channels the switcher shows two identical, indistinguishable rows.
+  it("names the channel from what onboarding just supplied", async () => {
+    accountRepo.findById.mockResolvedValue({
+      id: TEST_ACCOUNT_ID,
+      displayName: "Untitled channel",
+    } as never);
+    const parsed = onboardingSchema.parse({
+      userName: "https://youtube.com/@me",
+      brandName: "MomentumX",
+    });
+
+    await service.createOnboardingData(testOwner("user-1"), parsed as never);
+
+    expect(accountRepo.update).toHaveBeenCalledWith(TEST_ACCOUNT_ID, {
+      displayName: "MomentumX",
+      handle: "@me",
+    });
   });
 
   it("neither path satisfied — the schema itself rejects before any service call would happen", () => {
