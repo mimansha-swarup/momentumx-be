@@ -156,3 +156,46 @@ describe("validation coverage — every body-reading route mounts a schema", () 
     expect(pointless).toEqual([]);
   });
 });
+
+/**
+ * A schema that is MOUNTED but not STRICT is the bug this suite exists for.
+ *
+ * The check above asks whether `validate(` appears next to a route. It cannot
+ * ask whether the schema does anything — and the defect it was written after
+ * was not a missing schema. `POST /v1/packaging/save` spread its raw body onto
+ * the stored document (`const { videoProjectId, ...rest } = req.body`, still
+ * there in `packaging.controller.ts`), which let a client write `isStale` and
+ * `itemStatuses` directly and defeat the stale cascade.
+ *
+ * What actually stops that today is `validate` reassigning `req.body =
+ * result.data` and zod dropping unknown keys. Switch one schema to
+ * `.passthrough()` and the original hole reopens with `validate(` still sitting
+ * on the route and this suite still green.
+ */
+describe("validation coverage — a mounted schema also has to strip", () => {
+  const VALIDATION_DIR = path.join(process.cwd(), "src", "validation");
+
+  it("no request schema opts out of stripping unknown keys", () => {
+    const offenders: string[] = [];
+
+    for (const file of fs.readdirSync(VALIDATION_DIR).filter((f) => f.endsWith(".ts"))) {
+      const source = stripComments(fs.readFileSync(path.join(VALIDATION_DIR, file), "utf8"));
+      for (const match of source.matchAll(/\.(passthrough|loose|catchall|nonstrict)\s*\(/g)) {
+        offenders.push(`${file}:${source.slice(0, match.index).split("\n").length} .${match[1]}()`);
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  // The strip is a property of the middleware, not of each schema. If this ever
+  // stops reassigning, every controller goes back to reading the raw body and
+  // no schema change is involved.
+  it("validate replaces req.body with the parsed result", () => {
+    const source = stripComments(
+      fs.readFileSync(path.join(process.cwd(), "src", "middleware", "validate.ts"), "utf8")
+    );
+
+    expect(source).toMatch(/req\.body\s*=\s*result\.data/);
+  });
+});

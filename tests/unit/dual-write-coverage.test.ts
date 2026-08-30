@@ -65,10 +65,24 @@ describe("phase 06 — permissions are decided by the account, never the author"
     const offenders: string[] = [];
 
     for (const file of fs.readdirSync(serviceDir).filter((f) => f.endsWith(".ts"))) {
-      const source = fs.readFileSync(path.join(serviceDir, file), "utf8");
-      source.split("\n").forEach((line, i) => {
-        if (/\bcreatedBy\s*[!=]==?/.test(line)) offenders.push(`${file}:${i + 1}`);
-      });
+      const source = stripComments(fs.readFileSync(path.join(serviceDir, file), "utf8"));
+      // BOTH operand orders, and across newlines.
+      //
+      // This was `/\bcreatedBy\s*[!=]==?/` applied line by line, so it saw
+      // `doc.createdBy !== uid` and missed `uid !== doc.createdBy` — the same
+      // check, written the other way round, which is how roughly half of all
+      // developers write it. A comparison split over two lines was invisible
+      // either way. The invariant is "createdBy decides nothing", so the scan
+      // has to be about the comparison, not about which side the field sits on.
+      for (const pattern of [
+        /\bcreatedBy\s*[!=]==?/g,
+        /[!=]==?\s*[\w.[\]"'?]*\bcreatedBy\b/g,
+      ]) {
+        for (const match of source.matchAll(pattern)) {
+          const line = source.slice(0, match.index).split("\n").length;
+          offenders.push(`${file}:${line}`);
+        }
+      }
     }
 
     expect(offenders).toEqual([]);
@@ -102,18 +116,34 @@ describe("phase 05 — the account id enters at exactly one place", () => {
     // middleware checks membership unconditionally before anything trusts it.
     // A controller or route reading it directly would bypass that check — which
     // is the single way a user reads another's channel by editing their browser.
-    const roots = ["src/routes", "src/middleware", "src/controller"];
-    const ENTRY_POINT = "src/middleware/account.ts";
+    // ALL of `src`, not three folders.
+    //
+    // The old roots were routes + middleware + controller, which left out the
+    // one file that actually assembles the account: `ownerOf` in
+    // `src/utlils/content.ts` is the only sanctioned constructor of a
+    // `RecordOwner`, and every controller calls it. Rewriting it to read
+    // `req.headers["x-account-id"]` would have handed every service in the app a
+    // forgeable account id — AFTER the membership check — and this test, the one
+    // written to prevent exactly that, could not see the file. `src/service` and
+    // `src/repository` were unscanned for the same reason.
+    const EXEMPT: Record<string, string> = {
+      // The middleware IS the check. It is the one place allowed to read it.
+      "src/middleware/account.ts": "resolves and membership-checks the header",
+      // Names the header in the CORS allowlist, which is a declaration, not a
+      // read — and dropping it there silently pins every user to one channel.
+      // `tests/unit/app.cors.behaviour.test.ts` asserts it stays.
+      "src/app.ts": "declares the header in CORS allowedHeaders",
+    };
     const offenders: string[] = [];
 
-    for (const root of roots) {
+    {
       const walk = (dir: string) => {
         for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
           const full = path.join(dir, entry.name);
           if (entry.isDirectory()) walk(full);
           else if (entry.name.endsWith(".ts")) {
             const rel = path.relative(process.cwd(), full);
-            if (rel === ENTRY_POINT) continue;
+            if (EXEMPT[rel]) continue;
             // Comments stripped first. This scans for CODE that reads an
             // account id from the request; a comment explaining why a route is
             // exempt from the account middleware necessarily names the header,
@@ -125,7 +155,7 @@ describe("phase 05 — the account id enters at exactly one place", () => {
           }
         }
       };
-      walk(path.join(process.cwd(), root));
+      walk(path.join(process.cwd(), "src"));
     }
 
     expect(offenders).toEqual([]);
@@ -145,10 +175,15 @@ describe("phase 06 — every tenancy query filters the account", () => {
     const offenders: string[] = [];
 
     for (const file of fs.readdirSync(dir).filter((f) => f.endsWith(".ts"))) {
-      const source = fs.readFileSync(path.join(dir, file), "utf8");
-      source.split("\n").forEach((line, i) => {
-        if (/\.where\(\s*["']createdBy["']/.test(line)) offenders.push(`${file}:${i + 1}`);
-      });
+      // Not line by line, and backticks count. `\s*` cannot cross a newline once
+      // the source is split into lines, and `content.repository.ts` ALREADY
+      // formats a filter as `.where(\n  "isScriptGenerated",\n ...)` — so the
+      // defeating shape was not hypothetical, it was the house style two
+      // functions above the query this is guarding.
+      const source = stripComments(fs.readFileSync(path.join(dir, file), "utf8"));
+      for (const match of source.matchAll(/\.where\(\s*["'`]createdBy["'`]/g)) {
+        offenders.push(`${file}:${source.slice(0, match.index).split("\n").length}`);
+      }
     }
 
     expect(offenders).toEqual([]);

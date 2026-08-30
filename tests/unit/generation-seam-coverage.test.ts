@@ -150,3 +150,64 @@ describe("generation seam — no model call escapes the runner", () => {
     expect(hooks.every((s) => s.insideSeam)).toBe(true);
   });
 });
+
+/**
+ * The scan above only looks at `src/service`, and only for the two WRAPPER
+ * names. The wrappers themselves live in `src/utlils/ai.ts` and reach the SDK
+ * through `genAIModel(...).generateContentStream(...)` — a different directory
+ * and a different method name, so the ratchet could not see the place
+ * generation actually happens.
+ *
+ * Two ways past it, both invisible to everything above: add a third generation
+ * helper beside the existing two, or call the SDK straight from a service.
+ * Either is an uncharged, un-refunded, un-rate-limited generation once Phase 08
+ * attaches billing to the seam.
+ *
+ * So the SDK itself gets a single door.
+ */
+describe("the model SDK is reachable from exactly one file", () => {
+  const SDK_DOOR = "src/utlils/ai.ts";
+  // `content.ts` imports the EMBEDDING model, which is not a generation and is
+  // not metered — it is a vector call for KMeans clustering.
+  const EMBEDDING_DOOR = "src/utlils/content.ts";
+
+  const walk = (dir: string): string[] =>
+    fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) return walk(full);
+      return entry.name.endsWith(".ts") ? [path.relative(process.cwd(), full)] : [];
+    });
+
+  const sources = walk(path.join(process.cwd(), "src")).map((rel) => ({
+    rel,
+    source: stripComments(fs.readFileSync(path.join(process.cwd(), rel), "utf8")),
+  }));
+
+  it("only the seam and the embedding helper import the model factory", () => {
+    const importers = sources
+      .filter(({ source }) => /from\s+["'][^"']*config\/ai/.test(source))
+      .map(({ rel }) => rel)
+      .sort();
+
+    expect(importers).toEqual([EMBEDDING_DOOR, SDK_DOOR].sort());
+  });
+
+  it("nothing outside the seam calls the SDK's streaming method directly", () => {
+    const offenders = sources
+      .filter(({ rel, source }) => rel !== SDK_DOOR && /\.generateContentStream\s*\(/.test(source))
+      .map(({ rel }) => rel);
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("the seam exports exactly the two generation helpers the ratchet scans for", () => {
+    // A third helper added here would be wrapped by nothing and counted by
+    // nothing — MODEL_CALL above only knows these two names.
+    const seam = sources.find(({ rel }) => rel === SDK_DOOR)!.source;
+    const exported = [...seam.matchAll(/export const (\w+)\s*=\s*(?:async\s*)?[(<]/g)].map(
+      (m) => m[1]
+    );
+
+    expect(exported.sort()).toEqual(["collectJson", "generateContent", "generateStreamingContent"]);
+  });
+});

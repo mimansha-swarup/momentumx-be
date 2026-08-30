@@ -100,6 +100,39 @@ describe("auth + account coverage — every /v1 router mounts both middlewares",
     expect(routeFiles.length).toBeGreaterThan(0);
   });
 
+  /**
+   * The glob is `*.route.ts`, so everything below is invisible to a file named
+   * anything else — and `src/routes/v1/index.ts` is exactly such a file, and it
+   * already registers a route (`/health`, deliberately unauthenticated). Adding
+   * a second one there, or creating `src/routes/v1/admin.ts`, would ship a route
+   * with no auth and no account context that this suite never looks at.
+   *
+   * So: every `.ts` under the routes directory either follows the naming
+   * convention and gets the full check above, or is named here with its reason.
+   */
+  it("every file under src/routes is either checked above or named here", () => {
+    const UNCHECKED: Record<string, string> = {
+      "index.ts": "mounts the sub-routers; its only own route is /health",
+    };
+
+    const unchecked = fs
+      .readdirSync(ROUTES_DIR)
+      .filter((f) => f.endsWith(".ts") && !f.endsWith(".route.ts"));
+
+    expect(unchecked.filter((f) => !UNCHECKED[f])).toEqual([]);
+  });
+
+  // And the reason index.ts is allowed to skip auth has to stay true. `/health`
+  // is a liveness probe — Render's free instance spins down after ~15 minutes
+  // idle and the frontend pings it. Anything else registered here is a route
+  // shipping without auth.
+  it("index.ts registers nothing but /health of its own", () => {
+    const source = stripComments(fs.readFileSync(path.join(ROUTES_DIR, "index.ts"), "utf8"));
+    const own = [...source.matchAll(/router\.(get|post|patch|put|delete)\(\s*["'`]([^"'`]+)/g)];
+
+    expect(own.map((m) => `${m[1].toUpperCase()} ${m[2]}`)).toEqual(["GET /health"]);
+  });
+
   routeFiles.forEach((file) => {
     describe(file, () => {
       const source = stripComments(
