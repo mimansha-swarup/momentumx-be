@@ -43,7 +43,12 @@ const matches = (data: Doc, f: Filter): boolean => {
     case "==":
       return actual === f.value;
     case "!=":
-      return actual !== f.value;
+      // Real Firestore EXCLUDES documents where the field is absent: `!=` is
+      // "has this field, and it differs". `undefined !== false` is true in JS,
+      // so the naive version returned every legacy document that predates the
+      // field — the opposite answer on exactly the documents a migration cares
+      // about.
+      return actual !== undefined && actual !== f.value;
     case "array-contains":
       return Array.isArray(actual) && actual.includes(f.value);
     case "in":
@@ -80,6 +85,13 @@ export class FakeFirestore {
 
   collection(name: string) {
     return new FakeQuery(this, name);
+  }
+
+  private autoId = 0;
+
+  nextAutoId(): string {
+    this.autoId += 1;
+    return `auto-${this.autoId}`;
   }
 
   batch() {
@@ -130,11 +142,30 @@ class FakeDocRef {
     return this.owner.col(this.collectionPath);
   }
 
+  /**
+   * `set()` — and a dotted key here is a LITERAL FIELD NAME, not a path.
+   *
+   * Only `update()` treats `"a.b"` as `a → b`; `set()` writes a top-level field
+   * called `"a.b"`. This routed through `applyPatch` and so gave `set()` update
+   * semantics — hiding the exact trap `src/repository/user.repository.ts` spends
+   * twelve comment lines on, and blessing any future `set(dotted, {merge:true})`
+   * call site that production would silently write wrong.
+   *
+   * `merge` deep-merges nested maps, which is what Firestore does; the previous
+   * shallow `base[k] = v` dropped sibling keys inside `itemStatuses` and
+   * `pipeline` while the test asserting the new map still passed.
+   */
   setSync(data: Doc, opts?: { merge?: boolean }) {
-    const prior = opts?.merge ? (this.store.get(this.id) ?? {}) : {};
-    // Dotted keys in an update patch address nested fields, exactly as Firestore
-    // treats them — a plain spread would create a literal "a.b" key instead.
-    this.store.set(this.id, applyPatch({ ...prior }, data));
+    if (!opts?.merge) {
+      const fresh: Doc = {};
+      for (const [k, v] of Object.entries(data)) {
+        const resolved = resolveValue(undefined, v);
+        if (resolved !== DELETE_KEY) fresh[k] = resolved;
+      }
+      this.store.set(this.id, fresh);
+      return;
+    }
+    this.store.set(this.id, deepMerge({ ...(this.store.get(this.id) ?? {}) }, data));
   }
 
   updateSync(data: Doc) {
@@ -168,10 +199,63 @@ class FakeDocRef {
   }
 }
 
+/** A `FieldValue` stand-in. Tagged so a write can resolve it against what is stored. */
+type Sentinel = { __fv: "increment"; by: number } | { __fv: "delete" };
+
+const isSentinel = (v: unknown): v is Sentinel =>
+  typeof v === "object" && v !== null && "__fv" in (v as Record<string, unknown>);
+
+const isPlainObject = (v: unknown): v is Doc =>
+  typeof v === "object" && v !== null && !Array.isArray(v) && !(v instanceof Date);
+
+/**
+ * Resolve one field's incoming value against what is already there.
+ *
+ * `FieldValue.increment(n)` used to be modelled as the number `n`, which turns
+ * an increment into a SET: call it twice with 10 and the fake reads 10 while
+ * production reads 20. Every counter assertion was checking the wrong
+ * arithmetic. `FieldValue.delete()` was `undefined`, which leaves the key in
+ * place — so `"field" in doc` stayed true and `select()` projections diverged.
+ */
+const resolveValue = (existing: unknown, incoming: unknown): unknown => {
+  if (isSentinel(incoming)) {
+    if (incoming.__fv === "increment") {
+      return (typeof existing === "number" ? existing : 0) + incoming.by;
+    }
+    return DELETE_KEY;
+  }
+  return incoming;
+};
+
+const DELETE_KEY = Symbol("fake-firestore.delete");
+
+/** Firestore merges nested MAPS recursively; it does not replace them. */
+const deepMerge = (base: Doc, patch: Doc): Doc => {
+  for (const [k, v] of Object.entries(patch)) {
+    const resolved = resolveValue(base[k], v);
+    if (resolved === DELETE_KEY) {
+      delete base[k];
+    } else if (isPlainObject(resolved) && isPlainObject(base[k])) {
+      base[k] = deepMerge({ ...(base[k] as Doc) }, resolved);
+    } else {
+      base[k] = resolved;
+    }
+  }
+  return base;
+};
+
+/**
+ * `update()` semantics: a dotted key addresses a NESTED FIELD.
+ *
+ * This is the half that was right. The half that was not is that `setSync` also
+ * routed through here — see `FakeDocRef.setSync`.
+ */
 const applyPatch = (base: Doc, patch: Doc): Doc => {
   for (const [k, v] of Object.entries(patch)) {
     if (!k.includes(".")) {
-      base[k] = v;
+      const resolved = resolveValue(base[k], v);
+      if (resolved === DELETE_KEY) delete base[k];
+      else base[k] = resolved;
       continue;
     }
     const parts = k.split(".");
@@ -180,7 +264,10 @@ const applyPatch = (base: Doc, patch: Doc): Doc => {
       cur[part] = { ...((cur[part] as Doc) ?? {}) };
       cur = cur[part] as Doc;
     }
-    cur[parts[parts.length - 1]] = v;
+    const leaf = parts[parts.length - 1];
+    const resolved = resolveValue(cur[leaf], v);
+    if (resolved === DELETE_KEY) delete cur[leaf];
+    else cur[leaf] = resolved;
   }
   return base;
 };
@@ -220,7 +307,10 @@ class FakeQuery {
   }
 
   doc(id?: string) {
-    const key = id ?? `auto-${this.store.size + 1}`;
+    // Was `auto-${store.size + 1}`, so two unsaved refs got the SAME id and ids
+    // were reused after a delete — a later write silently overwrote an earlier
+    // document. Monotonic per fake, like a real auto-id.
+    const key = id ?? this.owner.nextAutoId();
     return new FakeDocRef(this.owner, this.name, key, `${this.name}/${key}`);
   }
 
@@ -282,6 +372,16 @@ class FakeQuery {
       );
     }
 
+    // Real Firestore DROPS documents that lack the ordering field — they are
+    // absent from the index it sorts on, so they are absent from the result.
+    // Including them (`ms(undefined) === 0`, sorted to the front) meant a
+    // repository that stopped writing `updatedAt` still listed its documents
+    // here while production showed the user an empty dashboard.
+    for (const o of this.orders) {
+      if (o.field === "__name__") continue;
+      rows = rows.filter(({ d }) => at(d, o.field) !== undefined);
+    }
+
     for (const o of [...this.orders].reverse()) {
       rows.sort((a, b) => {
         const av = o.field === "__name__" ? a.id : at(a.d, o.field);
@@ -295,12 +395,24 @@ class FakeQuery {
     }
 
     if (this.after?.length) {
+      // `startAfter` takes EITHER a DocumentSnapshot or raw ordered values, and
+      // the repositories pass a snapshot. A snapshot can never `===` a field
+      // value, so the lookup below always missed and the fake returned the
+      // UNSLICED list — pagination was effectively unmodelled, and a broken
+      // cursor read as a working one.
       const [cursor] = this.after;
-      const key = this.orders[0]?.field ?? "__name__";
-      const idx = rows.findIndex(({ id, d }) =>
-        key === "__name__" ? id === cursor : at(d, key) === cursor
-      );
-      if (idx >= 0) rows = rows.slice(idx + 1);
+      const asSnapshot = cursor as { id?: string; data?: () => Doc } | undefined;
+      const idx =
+        asSnapshot && typeof asSnapshot.data === "function" && asSnapshot.id !== undefined
+          ? rows.findIndex(({ id }) => id === asSnapshot.id)
+          : rows.findIndex(({ id, d }) => {
+              const key = this.orders[0]?.field ?? "__name__";
+              return key === "__name__" ? id === cursor : at(d, key) === cursor;
+            });
+
+      // A cursor that names no row is a caller error, not "start from the top".
+      if (idx < 0) throw new Error("fake-firestore: startAfter cursor is not in the result set");
+      rows = rows.slice(idx + 1);
     }
 
     if (this.cap !== undefined) rows = rows.slice(0, this.cap);
@@ -331,8 +443,10 @@ export const mockFirebase = () => {
       firestore: {
         FieldValue: {
           serverTimestamp: () => Date.now(),
-          increment: (n: number) => n,
-          delete: () => undefined,
+          // Tagged, then resolved against what is stored at write time — see
+          // `resolveValue`. Returning the raw number made every increment a set.
+          increment: (n: number) => ({ __fv: "increment", by: n }),
+          delete: () => ({ __fv: "delete" }),
         },
         // Repositories reach for this off `firebase.firestore` as well as the
         // named import; the query treats the sentinel as the document id.
