@@ -78,7 +78,7 @@ export const videoProjectService = new VideoProjectService(
 );
 
 export const contextService = new ContextService(
-  userRepository,
+  accountRepository,
   contentRepository,
   hooksRepository,
   videoProjectService
@@ -97,6 +97,7 @@ export const contentService = new ContentService(
   contentRepository,
   userRepository,
   videoProjectService,
+  accountRepository,
   researchContextService
 );
 
@@ -119,13 +120,13 @@ export const packagingService = new PackagingService(
   researchContextService
 );
 
-export const researchService = new ResearchService(researchRepository, userRepository);
+export const researchService = new ResearchService(researchRepository, accountRepository);
 
 // ponytail: UserService still builds its own ExtractService/ExtractRepository
 // internally (`user.service.ts:27`) rather than taking them as parameters, so
 // that one dependency is not visible here. Left as-is — injecting it changes the
 // constructor and its two test suites, which is a separate change from this one.
-export const userService = new UserService(userRepository);
+export const userService = new UserService(userRepository, accountRepository);
 
 // --- Controllers -----------------------------------------------------------
 

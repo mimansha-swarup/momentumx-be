@@ -37,6 +37,7 @@ jest.mock("../../src/utlils/ai", () => ({
   collectJson: jest.fn(),
 }));
 
+import { fakeAccountRepo } from "../helpers/account";
 import { FakeFirestore } from "../helpers/fake-firestore";
 import ContentRepository from "../../src/repository/content.repository";
 import VideoProjectRepository from "../../src/repository/video-project.repository";
@@ -120,11 +121,11 @@ const wire = () => {
   const hooksRepo = new HooksRepository();
   const userRepo = new UserRepository();
   const projects = new VideoProjectService(contentRepo && projectRepo, contentRepo, packagingRepo, hooksRepo);
-  const context = new ContextService(userRepo, contentRepo, hooksRepo, projects);
+  const context = new ContextService(fakeAccountRepo(), contentRepo, hooksRepo, projects);
   return {
     projects,
     context,
-    content: new ContentService(contentRepo, userRepo, projects),
+    content: new ContentService(contentRepo, userRepo, projects, fakeAccountRepo()),
     packaging: new PackagingService(packagingRepo, projects, context),
     hooks: new HooksService(hooksRepo, projects, context, {
       run: async (_s: unknown, g: () => unknown) => g(),

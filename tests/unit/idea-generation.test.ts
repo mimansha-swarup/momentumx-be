@@ -52,7 +52,7 @@ import ResearchContextService from "../../src/service/research-context.service";
 import { generateContent } from "../../src/utlils/ai";
 import { formatCreatorsData } from "../../src/utlils/content";
 import { IDEA_USER_PROMPT } from "../../src/constants/prompt";
-import { makeTestAccountService, testOwner } from "../helpers/account";
+import { makeTestAccountService, testOwner, fakeAccountRepo } from "../helpers/account";
 
 jest.mock("../../src/repository/content.repository");
 jest.mock("../../src/repository/user.repository");
@@ -86,6 +86,19 @@ function makeStream(payload: unknown) {
   } as never;
 }
 
+/**
+ * The channel, from the ACCOUNT (Phase 06b). These suites used to stub
+ * `userRepo.get` for this — the same record that holds identity — which is
+ * exactly the conflation the phase removed: one record cannot answer for two
+ * channels.
+ */
+const accountRepo = {
+  getContext: jest.fn(),
+  // Parameters declared so `mock.calls[n][1]` is the patch, not `never`.
+  writeContext: jest.fn(async (_accountId: string, _patch: Record<string, unknown>) => undefined),
+};
+const channelRepo = () => accountRepo as never;
+
 describe("ContentService.generateIdeas", () => {
   let service: ContentService;
   let repo: jest.Mocked<ContentRepository>;
@@ -96,7 +109,7 @@ describe("ContentService.generateIdeas", () => {
     repo = new MockContentRepo() as jest.Mocked<ContentRepository>;
     userRepo = new MockUserRepo() as jest.Mocked<UserRepository>;
     researchContext = new MockResearchContext({} as never) as jest.Mocked<ResearchContextService>;
-    userRepo.get = jest.fn().mockResolvedValue({
+    accountRepo.getContext.mockResolvedValue({
       niche: "AI tools",
       brandName: "MomentumX",
       targetAudience: "creators",
@@ -108,7 +121,7 @@ describe("ContentService.generateIdeas", () => {
     researchContext.getIdeaSignals = jest.fn().mockResolvedValue("Live research signals:\nSome trend — 1.2M views");
     // Fresh stream per call — an async generator is single-use.
     mockGenerate.mockImplementation(async () => makeStream(IDEAS));
-    service = new ContentService(repo, userRepo, {} as any, researchContext);
+    service = new ContentService(repo, userRepo, {} as any, channelRepo(), researchContext);
   });
 
   it("returns parsed idea objects and injects research signals into the prompt", async () => {
@@ -124,7 +137,7 @@ describe("ContentService.generateIdeas", () => {
   });
 
   it("degrades cleanly when no research context service is wired", async () => {
-    service = new ContentService(repo, userRepo, {} as any);
+    service = new ContentService(repo, userRepo, {} as any, channelRepo());
     const ideas = await service.generateIdeas(testOwner("user-1"));
 
     expect(ideas).toHaveLength(2);
@@ -175,7 +188,7 @@ describe("ContentService.generateIdeas", () => {
   });
 
   it("404s when the user record is missing", async () => {
-    userRepo.get = jest.fn().mockResolvedValue(undefined);
+    accountRepo.getContext.mockResolvedValue(undefined);
     await expect(service.generateIdeas(testOwner("user-1"))).rejects.toMatchObject({
       statusCode: 404,
     });
@@ -208,7 +221,7 @@ describe("ContentService.generateIdeas", () => {
   });
 
   it("generates from the override even when the user record is missing (pre-onboarding)", async () => {
-    userRepo.get = jest.fn().mockResolvedValue(undefined);
+    accountRepo.getContext.mockResolvedValue(undefined);
 
     const ideas = await service.generateIdeas(testOwner("user-1"), true, {
       niche: "Personal finance",

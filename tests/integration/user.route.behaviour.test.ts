@@ -65,6 +65,7 @@ jest.mock("../../src/service/user.service", () => ({
 import request from "supertest";
 import app from "../../src/app";
 import { useSharedServer } from "./shared-server";
+import { testOwner } from "../helpers/account";
 
 // One HTTP server for the whole file. `request(app)` starts and tears down a
 // FRESH ephemeral server per call; across ~113 requests that intermittently
@@ -158,7 +159,8 @@ describe("PATCH /v1/user/onboarding", () => {
       .send({ niche: "fitness", targetAudience: "beginners" });
 
     expect(res.status).toBe(200);
-    expect(mockUserService.createOnboardingData).toHaveBeenCalledWith("user-1", expect.any(Object));
+    expect(mockUserService.createOnboardingData).toHaveBeenCalledWith(
+      testOwner("user-1"), expect.any(Object));
   });
 
   it("returns 400 when neither a channel URL nor (niche + targetAudience) is provided", async () => {
@@ -180,7 +182,8 @@ describe("PATCH /v1/user/onboarding", () => {
       .set(...AUTH_HEADER)
       .send({ userName: VALID_CHANNEL_URL, userId: "someone-elses-uid" });
 
-    expect(mockUserService.createOnboardingData).toHaveBeenCalledWith("user-1", expect.any(Object));
+    expect(mockUserService.createOnboardingData).toHaveBeenCalledWith(
+      testOwner("user-1"), expect.any(Object));
   });
 });
 
@@ -196,7 +199,8 @@ describe("POST /v1/user/refresh-context", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ success: true, data: expect.any(Object) });
-    expect(mockUserService.refreshContext).toHaveBeenCalledWith("user-1");
+    expect(mockUserService.refreshContext).toHaveBeenCalledWith(
+      testOwner("user-1"));
   });
 
   it("propagates a service failure as an error response, not an unhandled rejection", async () => {
@@ -221,7 +225,8 @@ describe("GET /v1/user/profile", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ success: true, data: { niche: "fitness" } });
-    expect(mockUserService.getProfile).toHaveBeenCalledWith("user-1");
+    expect(mockUserService.getProfile).toHaveBeenCalledWith(
+      testOwner("user-1"));
   });
 
   it("returns an empty object, not null/undefined, when the user has no document yet", async () => {
@@ -249,7 +254,8 @@ describe("PATCH /v1/user/profile", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ success: true, data: { payload: expect.any(Object) } });
-    expect(mockUserService.updateProfile).toHaveBeenCalledWith("user-1", expect.objectContaining({ brandName: "New Brand" }));
+    expect(mockUserService.updateProfile).toHaveBeenCalledWith(
+      testOwner("user-1"), expect.objectContaining({ brandName: "New Brand" }));
   });
 
   it("returns 400 for a malformed website URL", async () => {

@@ -36,11 +36,25 @@ jest.mock("../../src/utlils/content", () => ({
 jest.mock("../../src/repository/user.repository");
 jest.mock("../../src/repository/extract.repository");
 
+import { testOwner, fakeAccountRepo, TEST_ACCOUNT_ID } from "../helpers/account";
 import UserService from "../../src/service/user.service";
 import UserRepository from "../../src/repository/user.repository";
 import { formatUserData } from "../../src/utlils/content";
 
 const mockFormat = formatUserData as jest.Mock;
+
+/**
+ * The channel, from the ACCOUNT (Phase 06b). These suites used to stub
+ * `userRepo.get` for this — the same record that holds identity — which is
+ * exactly the conflation the phase removed: one record cannot answer for two
+ * channels.
+ */
+const accountRepo = {
+  getContext: jest.fn(),
+  // Parameters declared so `mock.calls[n][1]` is the patch, not `never`.
+  writeContext: jest.fn(async (_accountId: string, _patch: Record<string, unknown>) => undefined),
+};
+const channelRepo = () => accountRepo as never;
 
 describe("UserService.refreshContext", () => {
   let service: UserService;
@@ -49,11 +63,11 @@ describe("UserService.refreshContext", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     repo = new UserRepository() as jest.Mocked<UserRepository>;
-    service = new UserService(repo as never);
+    service = new UserService(repo as never, channelRepo());
   });
 
   it("re-runs enrichment from stored inputs, mapping competitors back to URLs", async () => {
-    repo.get = jest.fn().mockResolvedValue({
+    accountRepo.getContext.mockResolvedValue({
       userName: "https://youtube.com/@me",
       website: "https://site.io",
       niche: "AI tools",
@@ -75,7 +89,7 @@ describe("UserService.refreshContext", () => {
       channelDescription: "desc",
     });
 
-    const result = await service.refreshContext("user-1");
+    const result = await service.refreshContext(testOwner("user-1"));
 
     // Stored competitor objects are re-flattened to URL strings for formatUserData.
     const input = mockFormat.mock.calls[0][0];
@@ -83,27 +97,27 @@ describe("UserService.refreshContext", () => {
       "https://youtube.com/@a",
       "https://youtube.com/@b",
     ]);
-    expect(repo.update).toHaveBeenCalledTimes(1);
+    expect(accountRepo.writeContext).toHaveBeenCalledTimes(1);
     // The refreshed record is returned with a computed completeness score.
     expect(result.completeness.score).toBeGreaterThan(0);
   });
 
   it("404s when the user record is missing", async () => {
-    repo.get = jest.fn().mockResolvedValue(undefined);
-    await expect(service.refreshContext("user-1")).rejects.toMatchObject({
+    accountRepo.getContext.mockResolvedValue(undefined);
+    await expect(service.refreshContext(testOwner("user-1"))).rejects.toMatchObject({
       statusCode: 404,
     });
   });
 
   it("tolerates competitors stored as raw URL strings (fresh, pre-enrichment)", async () => {
-    repo.get = jest.fn().mockResolvedValue({
+    accountRepo.getContext.mockResolvedValue({
       userName: "https://youtube.com/@me",
       competitors: ["https://youtube.com/@a", "https://youtube.com/@b"],
     });
     repo.update = jest.fn().mockResolvedValue(undefined);
     mockFormat.mockResolvedValue({ userName: "https://youtube.com/@me" });
 
-    await service.refreshContext("user-1");
+    await service.refreshContext(testOwner("user-1"));
 
     const input = mockFormat.mock.calls[0][0];
     expect(input.competitors).toEqual([
@@ -125,13 +139,13 @@ describe("UserService.updateProfile", () => {
     jest.clearAllMocks();
     repo = new UserRepository() as jest.Mocked<UserRepository>;
     repo.update = jest.fn().mockResolvedValue(undefined);
-    service = new UserService(repo as never);
+    service = new UserService(repo as never, channelRepo());
   });
 
   it("enriches the submitted form before storing it, rather than persisting raw input", async () => {
     mockFormat.mockResolvedValue({ niche: "AI tools", websiteContent: "scraped" });
 
-    const result = await service.updateProfile("user-1", {
+    const result = await service.updateProfile(testOwner("user-1"), {
       niche: "AI tools",
       website: "https://site.io",
     } as never);
@@ -140,7 +154,8 @@ describe("UserService.updateProfile", () => {
       { niche: "AI tools", website: "https://site.io" },
       expect.anything()
     );
-    expect(repo.update).toHaveBeenCalledWith("user-1", {
+    expect(accountRepo.writeContext).toHaveBeenCalledWith(
+      TEST_ACCOUNT_ID, {
       niche: "AI tools",
       websiteContent: "scraped",
     });
@@ -150,9 +165,9 @@ describe("UserService.updateProfile", () => {
   it("writes to the authenticated uid it was given", async () => {
     mockFormat.mockResolvedValue({ niche: "n" });
 
-    await service.updateProfile("user-1", { niche: "n" } as never);
+    await service.updateProfile(testOwner("user-1"), { niche: "n" } as never);
 
-    expect(repo.update.mock.calls[0][0]).toBe("user-1");
+    expect(accountRepo.writeContext.mock.calls[0][0]).toBe(TEST_ACCOUNT_ID);
   });
 
   it("does not attach a completeness score — unlike refreshContext and getProfile", async () => {
@@ -160,7 +175,7 @@ describe("UserService.updateProfile", () => {
     // has to do it on purpose. The FE reads completeness from GET /profile.
     mockFormat.mockResolvedValue({ niche: "n" });
 
-    const result = await service.updateProfile("user-1", { niche: "n" } as never);
+    const result = await service.updateProfile(testOwner("user-1"), { niche: "n" } as never);
 
     expect(result).not.toHaveProperty("completeness");
   });
@@ -168,10 +183,10 @@ describe("UserService.updateProfile", () => {
   it("propagates an enrichment failure instead of storing a half-written profile", async () => {
     mockFormat.mockRejectedValue(new Error("scrape timed out"));
 
-    await expect(service.updateProfile("user-1", { website: "x" } as never)).rejects.toThrow(
+    await expect(service.updateProfile(testOwner("user-1"), { website: "x" } as never)).rejects.toThrow(
       "scrape timed out"
     );
-    expect(repo.update).not.toHaveBeenCalled();
+    expect(accountRepo.writeContext).not.toHaveBeenCalled();
   });
 });
 
@@ -182,17 +197,18 @@ describe("UserService.createOnboardingData (fast save)", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     repo = new UserRepository() as jest.Mocked<UserRepository>;
-    service = new UserService(repo as never);
+    service = new UserService(repo as never, channelRepo());
   });
 
   it("persists the raw minimum immediately WITHOUT inline enrichment", async () => {
     repo.add = jest.fn().mockResolvedValue(undefined);
     const data = { userName: "https://youtube.com/@me" } as never;
 
-    const result = await service.createOnboardingData("user-1", data);
+    const result = await service.createOnboardingData(testOwner("user-1"), data);
 
     // Fast path: saves the provided fields, never calls the (slow) enrichment.
-    expect(repo.add).toHaveBeenCalledWith("user-1", data);
+    expect(accountRepo.writeContext).toHaveBeenCalledWith(
+      TEST_ACCOUNT_ID, data);
     expect(mockFormat).not.toHaveBeenCalled();
     expect(result).toBe(data);
   });
@@ -209,16 +225,18 @@ describe("UserService.getProfile", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     repo = new UserRepository() as jest.Mocked<UserRepository>;
-    service = new UserService(repo as never);
+    // Identity half. getProfile merges this with the channel half below.
+    repo.get = jest.fn().mockResolvedValue({});
+    service = new UserService(repo as never, channelRepo());
   });
 
   it("always returns the uid, even when the stored doc has no uid field", async () => {
-    repo.get = jest.fn().mockResolvedValue({
+    accountRepo.getContext.mockResolvedValue({
       niche: "AI automation",
       targetAudience: "solo founders",
     });
 
-    const result = await service.getProfile("user-1");
+    const result = await service.getProfile(testOwner("user-1"));
 
     expect(result.uid).toBe("user-1");
     // ...and the fields the user actually onboarded with survive.
@@ -229,17 +247,17 @@ describe("UserService.getProfile", () => {
   });
 
   it("returns the uid even when no document exists yet", async () => {
-    repo.get = jest.fn().mockResolvedValue(null);
+    accountRepo.getContext.mockResolvedValue(null);
 
-    const result = await service.getProfile("user-1");
+    const result = await service.getProfile(testOwner("user-1"));
 
     expect(result.uid).toBe("user-1");
   });
 
   it("never lets a stored uid override the authenticated one", async () => {
-    repo.get = jest.fn().mockResolvedValue({ uid: "stale-or-wrong", niche: "x" });
+    accountRepo.getContext.mockResolvedValue({ uid: "stale-or-wrong", niche: "x" });
 
-    const result = await service.getProfile("user-1");
+    const result = await service.getProfile(testOwner("user-1"));
 
     expect(result.uid).toBe("user-1");
   });

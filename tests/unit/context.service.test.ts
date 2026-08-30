@@ -27,7 +27,7 @@ import ContentRepository from "../../src/repository/content.repository";
 import HooksRepository from "../../src/repository/hooks.repository";
 import VideoProjectService from "../../src/service/video-project.service";
 import { HttpError, Forbidden } from "../../src/utlils/errors";
-import { testOwner } from "../helpers/account";
+import { testOwner, fakeAccountRepo } from "../helpers/account";
 
 jest.mock("../../src/repository/user.repository");
 jest.mock("../../src/repository/content.repository");
@@ -66,6 +66,19 @@ const fullProject = {
   packagingId: "pkg-1",
 };
 
+/**
+ * The channel, from the ACCOUNT (Phase 06b). These suites used to stub
+ * `userRepo.get` for this — the same record that holds identity — which is
+ * exactly the conflation the phase removed: one record cannot answer for two
+ * channels.
+ */
+const accountRepo = {
+  getContext: jest.fn(),
+  // Parameters declared so `mock.calls[n][1]` is the patch, not `never`.
+  writeContext: jest.fn(async (_accountId: string, _patch: Record<string, unknown>) => undefined),
+};
+const channelRepo = () => accountRepo as never;
+
 describe("ContextService.assemble — degradation matrix", () => {
   let service: ContextService;
   let userRepo: jest.Mocked<UserRepository>;
@@ -83,9 +96,9 @@ describe("ContextService.assemble — degradation matrix", () => {
       {} as never,
       {} as never
     ) as jest.Mocked<VideoProjectService>;
-    service = new ContextService(userRepo, contentRepo, hooksRepo, vpService);
+    service = new ContextService(channelRepo(), contentRepo, hooksRepo, vpService);
 
-    userRepo.get = jest.fn().mockResolvedValue(userDoc);
+    accountRepo.getContext.mockResolvedValue(userDoc);
     vpService.getById = jest.fn().mockResolvedValue(fullProject);
     contentRepo.getIdea = jest.fn().mockResolvedValue({ id: "idea-1", title: "Idea title" });
     contentRepo.getScriptById = jest.fn().mockResolvedValue({ id: "script-1", script: "Full script text" });
@@ -199,7 +212,7 @@ describe("ContextService.assemble — degradation matrix", () => {
   });
 
   it("sparse user doc yields nulls/empties, never throws", async () => {
-    userRepo.get = jest.fn().mockResolvedValue({ niche: "finance" });
+    accountRepo.getContext.mockResolvedValue({ niche: "finance" });
 
     const ctx = await service.assemble(testOwner(USER_ID));
 
@@ -212,7 +225,7 @@ describe("ContextService.assemble — degradation matrix", () => {
   });
 
   it("competitor mapping tolerates malformed entries (missing url/titles)", async () => {
-    userRepo.get = jest.fn().mockResolvedValue({
+    accountRepo.getContext.mockResolvedValue({
       ...userDoc,
       competitors: [
         { url: "https://youtube.com/@a", titles: ["A1", "A2"] },
@@ -231,7 +244,7 @@ describe("ContextService.assemble — degradation matrix", () => {
   });
 
   it("non-array competitors field degrades to empty lists", async () => {
-    userRepo.get = jest.fn().mockResolvedValue({ ...userDoc, competitors: "oops" });
+    accountRepo.getContext.mockResolvedValue({ ...userDoc, competitors: "oops" });
 
     const { channelContext } = await service.assemble(testOwner(USER_ID));
 
@@ -240,10 +253,10 @@ describe("ContextService.assemble — degradation matrix", () => {
   });
 
   it("respects a stored faceless format; unknown values default to talking_head", async () => {
-    userRepo.get = jest.fn().mockResolvedValue({ ...userDoc, format: "faceless" });
+    accountRepo.getContext.mockResolvedValue({ ...userDoc, format: "faceless" });
     expect((await service.assemble(testOwner(USER_ID))).channelContext.format).toBe("faceless");
 
-    userRepo.get = jest.fn().mockResolvedValue({ ...userDoc, format: "cinematic" });
+    accountRepo.getContext.mockResolvedValue({ ...userDoc, format: "cinematic" });
     expect((await service.assemble(testOwner(USER_ID))).channelContext.format).toBe("talking_head");
   });
 
@@ -259,7 +272,7 @@ describe("ContextService.assemble — degradation matrix", () => {
     });
 
     it("works with no user doc at all when overrides are supplied", async () => {
-      userRepo.get = jest.fn().mockResolvedValue(undefined);
+      accountRepo.getContext.mockResolvedValue(undefined);
 
       const ctx = await service.assemble(testOwner(USER_ID), {
         overrides: { niche: "crypto", topTitles: ["Pulled title"] },
@@ -273,7 +286,7 @@ describe("ContextService.assemble — degradation matrix", () => {
 
   describe("failure modes that must still throw", () => {
     it("404 when user doc missing and no overrides", async () => {
-      userRepo.get = jest.fn().mockResolvedValue(undefined);
+      accountRepo.getContext.mockResolvedValue(undefined);
 
       await expect(service.assemble(testOwner(USER_ID))).rejects.toMatchObject({
         statusCode: 404,

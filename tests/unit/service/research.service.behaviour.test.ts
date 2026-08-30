@@ -6,6 +6,7 @@
 // Contract from docs/features/research/api.md and the /v1/research section of
 // .claude/rules/api-design.md.
 
+import { fakeAccountRepo, testOwner } from "../../helpers/account";
 import ResearchService from "../../../src/service/research.service";
 import ResearchRepository from "../../../src/repository/research.repository";
 import UserRepository from "../../../src/repository/user.repository";
@@ -22,18 +23,34 @@ const makeService = (
     ...repoOverrides,
   } as unknown as jest.Mocked<ResearchRepository>;
 
-  const userRepo = {
-    get: jest.fn().mockResolvedValue(user),
-  } as unknown as jest.Mocked<UserRepository>;
+  // The channel this research is for. Named `user` by the factory's callers
+  // because that is where it used to live; it is the ACCOUNT's context now, and
+  // that is the whole point — trending for the finance channel must not be
+  // seeded with the cooking channel's niche.
+  const accounts = {
+    getContext: jest.fn().mockResolvedValue(user),
+  } as never;
 
-  return { service: new ResearchService(repo, userRepo), repo, userRepo };
+  return { service: new ResearchService(repo, accounts), repo, accounts };
 };
+
+/**
+ * The channel, from the ACCOUNT (Phase 06b). These suites used to stub
+ * `userRepo.get` for this — the same record that holds identity — which is
+ * exactly the conflation the phase removed: one record cannot answer for two
+ * channels.
+ */
+const accountRepo = {
+  getContext: jest.fn(),
+  writeContext: jest.fn(async () => undefined),
+};
+const channelRepo = () => accountRepo as never;
 
 describe("getTrending — research is scoped to the creator's own niche", () => {
   it("searches the user's niche", async () => {
     const { service, repo } = makeService({ niche: "AI tools" });
 
-    await service.getTrending("user-1");
+    await service.getTrending(testOwner("user-1"));
 
     expect(repo.getTrendingVideos).toHaveBeenCalledWith("AI tools");
   });
@@ -44,7 +61,7 @@ describe("getTrending — research is scoped to the creator's own niche", () => 
     // theirs, which is filed as an open FE/UX defect, not fixed here.
     const { service, repo } = makeService({ niche: "" });
 
-    await service.getTrending("user-1");
+    await service.getTrending(testOwner("user-1"));
 
     expect(repo.getTrendingVideos).toHaveBeenCalledWith(DEFAULT_NICHE);
   });
@@ -52,7 +69,7 @@ describe("getTrending — research is scoped to the creator's own niche", () => 
   it("falls back when the user record is missing entirely", async () => {
     const { service, repo } = makeService(null);
 
-    await service.getTrending("user-1");
+    await service.getTrending(testOwner("user-1"));
 
     expect(repo.getTrendingVideos).toHaveBeenCalledWith(DEFAULT_NICHE);
   });
@@ -70,7 +87,7 @@ describe("getCompetitorInsights — one slow competitor must not lose the others
       { getChannelTopVideos: jest.fn().mockResolvedValue(["Video A"]) }
     );
 
-    const result = await service.getCompetitorInsights("user-1");
+    const result = await service.getCompetitorInsights(testOwner("user-1"));
 
     expect(result).toEqual([
       { channelTitle: "youtube.com/@one", titles: ["Video A"] },
@@ -89,7 +106,7 @@ describe("getCompetitorInsights — one slow competitor must not lose the others
       }
     );
 
-    const result = await service.getCompetitorInsights("user-1");
+    const result = await service.getCompetitorInsights(testOwner("user-1"));
 
     // Promise.allSettled, not Promise.all: one quota error must not blank the
     // whole competitors panel.
@@ -104,7 +121,7 @@ describe("getCompetitorInsights — one slow competitor must not lose the others
       competitors: [{ url: "youtube.com/@unresolved" }, ...COMPETITORS],
     });
 
-    const result = await service.getCompetitorInsights("user-1");
+    const result = await service.getCompetitorInsights(testOwner("user-1"));
 
     expect(repo.getChannelTopVideos).toHaveBeenCalledTimes(2);
     expect(result).toHaveLength(2);
@@ -114,14 +131,14 @@ describe("getCompetitorInsights — one slow competitor must not lose the others
   it("returns an empty list when no competitors are set", async () => {
     const { service, repo } = makeService({ competitors: [] });
 
-    expect(await service.getCompetitorInsights("user-1")).toEqual([]);
+    expect(await service.getCompetitorInsights(testOwner("user-1"))).toEqual([]);
     expect(repo.getChannelTopVideos).not.toHaveBeenCalled();
   });
 
   it("returns an empty list when the user record has no competitors field at all", async () => {
     const { service } = makeService({});
 
-    expect(await service.getCompetitorInsights("user-1")).toEqual([]);
+    expect(await service.getCompetitorInsights(testOwner("user-1"))).toEqual([]);
   });
 });
 

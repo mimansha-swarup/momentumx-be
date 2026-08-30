@@ -24,27 +24,35 @@ const EMPTY_SESSION = {
  *   quality failure.
  */
 class ContextService {
-    constructor(userRepo, contentRepo, hooksRepo, videoProjectService) {
-        this.userRepo = userRepo;
+    constructor(accounts, contentRepo, hooksRepo, videoProjectService) {
+        this.accounts = accounts;
         this.contentRepo = contentRepo;
         this.hooksRepo = hooksRepo;
         this.videoProjectService = videoProjectService;
         this.assemble = async (owner, options = {}) => {
             const [channelContext, sessionContext] = await Promise.all([
-                // Channel context is still read from the USER record — Phase 06b is what
-                // moves it onto the account. The session half is account-scoped already,
-                // because the project it loads is.
-                this.buildChannelContext(owner.userId, options.overrides),
+                this.buildChannelContext(owner.accountId, options.overrides),
                 this.buildSessionContext(owner, options.videoProjectId),
             ]);
             return { channelContext, sessionContext };
         };
-        this.buildChannelContext = async (userId, overrides) => {
-            const userRecord = await this.userRepo.get(userId);
-            if (!userRecord && !overrides) {
-                throw NotFound("User not found");
+        /**
+         * Phase 06b. Reads the ACTIVE CHANNEL, not the user.
+         *
+         * This one method feeds hooks, title and packaging, so it is where the failure
+         * this phase exists to prevent was widest: with the channel read from
+         * `users/{uid}`, switching to the finance channel and generating produced
+         * prompts built from the cooking channel's niche, competitors and website text.
+         * The documents saved were tagged correctly — Phases 03–06 saw to that — and
+         * the CONTENT was wrong. No error, no failing test; it reads as "the AI got
+         * worse", which nobody traces to a deploy.
+         */
+        this.buildChannelContext = async (accountId, overrides) => {
+            const stored = await this.accounts.getContext(accountId);
+            if (!stored && !overrides) {
+                throw NotFound("Channel not found");
             }
-            const record = userRecord ?? {};
+            const record = (stored ?? {});
             const competitors = Array.isArray(record.competitors)
                 ? record.competitors
                 : [];

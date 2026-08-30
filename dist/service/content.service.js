@@ -23,8 +23,9 @@ function formatCompetitorUrls(competitors) {
         .join(", ");
 }
 class ContentService {
-    constructor(repo, userRepo, videoProjectService, researchContext) {
+    constructor(repo, userRepo, videoProjectService, accounts, researchContext) {
         this.videoProjectService = videoProjectService;
+        this.accounts = accounts;
         this.researchContext = researchContext;
         // Builds the script user prompt from the creator's profile + a title.
         // Shared by generateScripts (SSE) and regenerateScript so the placeholder
@@ -77,13 +78,18 @@ class ContentService {
         this.generateIdeas = async (owner, countTowardStats = true, override) => {
             const { userId } = owner;
             assertOwner(owner.userId);
-            const [similarTitles, userRecord] = await Promise.all([
+            // Phase 06b: the CHANNEL's niche, audience, competitors and website text —
+            // the whole reason a prompt is any good. Read from the user record, ideas
+            // generated in the finance channel came out about cooking, saved against the
+            // right accountId, with nothing failing.
+            const [similarTitles, channel] = await Promise.all([
                 getClusteredTitles(owner.accountId, this.repo),
-                this.userRepo.get(userId),
+                this.accounts.getContext(owner.accountId),
             ]);
-            if (!userRecord && !override) {
-                throw NotFound("User not found");
+            if (!channel && !override) {
+                throw NotFound("Channel not found");
             }
+            const userRecord = channel;
             // Instant-first-idea (3.3): an optional, not-yet-persisted context (from the
             // onboarding prefill, possibly user-edited) is merged over the stored record
             // so a user can see their first ideas before onboarding is saved. Absent →
@@ -213,7 +219,7 @@ class ContentService {
                     throw Conflict("Script generation already in progress for this project");
                 }
                 const [userRecord, idea] = await Promise.all([
-                    this.userRepo.get(userId),
+                    this.accounts.getContext(owner.accountId),
                     this.repo.getIdea(project.ideaId),
                 ]);
                 if (!idea) {
@@ -409,7 +415,7 @@ class ContentService {
             if (scriptDoc.accountId !== owner.accountId) {
                 throw Forbidden();
             }
-            const userRecord = await this.userRepo.get(userId);
+            const userRecord = (await this.accounts.getContext(owner.accountId));
             const userPrompt = this.buildScriptUserPrompt(userRecord, scriptDoc.title);
             const systemPrompt = SCRIPT_SYSTEM_PROMPT.replace("{videoFormatStyle}", SCRIPT_FORMAT_STYLE[resolveVideoFormat(userRecord?.format)]);
             const result = await generateStreamingContent(systemPrompt, userPrompt, GENERATION_CONFIG_SCRIPTS);

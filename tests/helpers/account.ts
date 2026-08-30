@@ -83,3 +83,28 @@ export const testOwner = (userId: string, accountId = TEST_ACCOUNT_ID): RecordOw
   userId,
   accountId,
 });
+
+
+/**
+ * An `AccountRepository` that answers with ONE channel context.
+ *
+ * Phase 06b moved the channel — niche, audience, competitors, website text —
+ * from `users/{uid}` onto `accounts/{id}/context/channel`, so the suites that
+ * used to stub `userRepo.get` stub this instead. Defaults to a populated channel
+ * because most of them are asserting on a prompt built from it; pass `null` for
+ * the "channel not found" path.
+ */
+export const fakeAccountRepo = (
+  context: Record<string, unknown> | null = {
+    niche: "cooking",
+    targetAudience: "home cooks",
+    brandName: "Test Kitchen",
+    format: "talking_head",
+  }
+) =>
+  ({
+    getContext: jest.fn(async () => context),
+    writeContext: jest.fn(async () => undefined),
+    findById: jest.fn(async () => null),
+    findByMember: jest.fn(async () => []),
+  }) as never;

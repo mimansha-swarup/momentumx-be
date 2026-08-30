@@ -3,7 +3,7 @@
 // Every route file pulls its controller from `src/container.ts`, but no test did
 // — and every integration test replaces the service class at the module boundary
 // with a factory that ignores its constructor arguments entirely. So the real
-// `new ContentService(repo, userRepo, videoProjectService, researchContextService)`
+// `new ContentService(repo, userRepo, videoProjectService, fakeAccountRepo(), researchContextService)`
 // line was never executed under test.
 //
 // TypeScript catches a swap between two REQUIRED params of different classes. It
@@ -44,6 +44,7 @@ jest.mock("../../src/config/ai", () => ({
   embeddingModel: { embedContent: jest.fn() },
 }));
 
+import { fakeAccountRepo } from "../helpers/account";
 import * as container from "../../src/container";
 import ContentService from "../../src/service/content.service";
 import HooksService from "../../src/service/hooks.service";

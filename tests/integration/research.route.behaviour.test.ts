@@ -53,6 +53,7 @@ jest.mock("../../src/service/research.service", () => ({
 import request from "supertest";
 import app from "../../src/app";
 import { useSharedServer } from "./shared-server";
+import { testOwner } from "../helpers/account";
 
 const server = useSharedServer(app);
 
@@ -93,7 +94,8 @@ describe("GET /v1/research/trending and /competitors", () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ success: true, data: [{ videoId: "a" }] });
-    expect(mockResearchService.getTrending).toHaveBeenCalledWith("user-1");
+    expect(mockResearchService.getTrending).toHaveBeenCalledWith(
+      testOwner("user-1"));
   });
 
   it("cannot be pointed at another user by query string", async () => {
@@ -103,7 +105,8 @@ describe("GET /v1/research/trending and /competitors", () => {
       .get("/v1/research/competitors?userId=someone-else")
       .set(...AUTH_HEADER);
 
-    expect(mockResearchService.getCompetitorInsights).toHaveBeenCalledWith("user-1");
+    expect(mockResearchService.getCompetitorInsights).toHaveBeenCalledWith(
+      testOwner("user-1"));
   });
 
   // Research is an enhancer, never a gate — but that contract lives inside

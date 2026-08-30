@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import UserService from "../service/user.service.js";
 import { asyncHandler } from "../middleware/async_handler.js";
+import { ownerOf } from "../utlils/content.js";
 
 class UserController {
   private service: UserService;
@@ -16,8 +17,7 @@ class UserController {
     // Fast save — persists the provided fields only. Enrichment (channel titles,
     // website content, competitors) runs separately via refresh-context, which the
     // FE fires in the background, so there is no website-parsed status to report here.
-    const payload = await this.service.createOnboardingData(
-      req.userId,
+    const payload = await this.service.createOnboardingData(ownerOf(req),
       req.body
     );
     res.sendSuccess({
@@ -38,7 +38,7 @@ class UserController {
 
   // Re-pull channel/website enrichment from the stored inputs (no body).
   refreshContext = asyncHandler(async (req: Request, res: Response) => {
-    const payload = await this.service.refreshContext(req.userId);
+    const payload = await this.service.refreshContext(ownerOf(req));
     res.sendSuccess({
       message: "Context refreshed successfully",
       data: { ...payload },
@@ -46,7 +46,7 @@ class UserController {
   });
 
   getProfile = asyncHandler(async (req: Request, res: Response) => {
-    const payload = await this.service.getProfile(req.userId);
+    const payload = await this.service.getProfile(ownerOf(req));
 
     res.sendSuccess({
       message: "Fetched onboarding data successfully",
@@ -55,7 +55,7 @@ class UserController {
   });
 
   updateProfile = asyncHandler(async (req: Request, res: Response) => {
-    const payload = await this.service.updateProfile(req.userId, req.body);
+    const payload = await this.service.updateProfile(ownerOf(req), req.body);
 
     res.sendSuccess({
       message: "Profile updated successfully",

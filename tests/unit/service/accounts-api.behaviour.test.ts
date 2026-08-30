@@ -300,3 +300,66 @@ describe("GET, PATCH and activate on a single channel", () => {
     await expect(make().activateAccount(uid, ACC_B)).rejects.toMatchObject({ statusCode: 403 });
   });
 });
+
+describe("Phase 06b — onboarding a channel makes THAT channel onboarded", () => {
+  // The gap this closes. `POST /v1/accounts` creates an empty channel, so
+  // `isOnboarded` starts false — correct. But while onboarding wrote the USER
+  // record, nothing ever wrote the channel's context, so it stayed false forever
+  // and the switcher would route the user back to onboarding every time they
+  // picked it. Sourcing the flag from the user record instead is not a fix: then
+  // every channel reports the first one's answers, and a channel created seconds
+  // ago claims to be set up.
+  const userService = () =>
+    new (require("../../../src/service/user.service").default)(
+      new UserRepository(),
+      new AccountRepository()
+    );
+
+  it("a newly created channel becomes onboarded once IT is onboarded", async () => {
+    const service = make();
+    const created = await service.createAccount(uid);
+
+    const before = (await service.listAccounts(uid)).find((r) => r.id === created.id)!;
+    expect(before.isOnboarded).toBe(false);
+
+    await userService().createOnboardingData(
+      { userId: uid, accountId: created.id },
+      { niche: "index funds", targetAudience: "new investors" } as never
+    );
+
+    const after = (await service.listAccounts(uid)).find((r) => r.id === created.id)!;
+    expect(after.isOnboarded).toBe(true);
+  });
+
+  it("and onboarding it does NOT touch the other channel", async () => {
+    // The failure in the other direction, and the sharper one: one shared record
+    // meant setting up the finance channel overwrote the cooking channel's niche,
+    // so generation for A silently started producing B's content.
+    const service = make();
+
+    await userService().createOnboardingData(
+      { userId: uid, accountId: ACC_B },
+      { niche: "index funds", targetAudience: "new investors" } as never
+    );
+
+    const contextA = await new AccountRepository().getContext(ACC_A);
+    expect(contextA!.niche).toBe("cooking");
+
+    const rows = await service.listAccounts(uid);
+    expect(Object.fromEntries(rows.map((r) => [r.id, r.isOnboarded]))).toEqual({
+      [ACC_A]: true,
+      [ACC_B]: true,
+    });
+  });
+
+  it("keeps the user record free of channel fields", async () => {
+    await userService().createOnboardingData(
+      { userId: uid, accountId: ACC_B },
+      { niche: "index funds", targetAudience: "new investors" } as never
+    );
+
+    const user = db.all("users").find((u) => u.id === uid)!;
+    expect(user.niche).toBeUndefined();
+    expect(user.targetAudience).toBeUndefined();
+  });
+});

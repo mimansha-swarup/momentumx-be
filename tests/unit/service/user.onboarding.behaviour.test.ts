@@ -56,6 +56,7 @@ jest.mock("../../../src/utlils/ai", () => ({
 
 jest.mock("../../../src/repository/user.repository");
 
+import { testOwner, fakeAccountRepo, TEST_ACCOUNT_ID } from "../../helpers/account";
 import UserService from "../../../src/service/user.service";
 import UserRepository from "../../../src/repository/user.repository";
 import { onboardingSchema } from "../../../src/validation/user.validation";
@@ -76,6 +77,18 @@ afterAll(() => {
   global.fetch = originalFetch;
 });
 
+/**
+ * The channel, from the ACCOUNT (Phase 06b). Onboarding, profile edits and
+ * refresh-context all write here now — `users/{uid}` holds identity, and one
+ * record cannot answer for two channels.
+ */
+const accountRepo = {
+  getContext: jest.fn(),
+  // Parameters declared so `mock.calls[n][1]` is the patch, not `never`.
+  writeContext: jest.fn(async (_accountId: string, _patch: Record<string, unknown>) => undefined),
+};
+const channelRepo = () => accountRepo as never;
+
 describe("Onboarding — the required minimum (channel URL OR niche+targetAudience)", () => {
   // Service-layer complement to the exhaustive schema tests in
   // tests/unit/user.validation.test.ts: prove the two documented entry paths
@@ -88,7 +101,7 @@ describe("Onboarding — the required minimum (channel URL OR niche+targetAudien
   beforeEach(() => {
     jest.clearAllMocks();
     repo = new UserRepository() as jest.Mocked<UserRepository>;
-    service = new UserService(repo as never);
+    service = new UserService(repo as never, channelRepo());
     repo.add = jest.fn().mockResolvedValue(undefined);
   });
 
@@ -96,9 +109,10 @@ describe("Onboarding — the required minimum (channel URL OR niche+targetAudien
     const body = { userName: "https://youtube.com/@me" };
     const parsed = onboardingSchema.parse(body);
 
-    const result = await service.createOnboardingData("user-1", parsed as never);
+    const result = await service.createOnboardingData(testOwner("user-1"), parsed as never);
 
-    expect(repo.add).toHaveBeenCalledWith("user-1", parsed);
+    expect(accountRepo.writeContext).toHaveBeenCalledWith(
+      TEST_ACCOUNT_ID, parsed);
     expect(result).toBe(parsed);
   });
 
@@ -106,9 +120,10 @@ describe("Onboarding — the required minimum (channel URL OR niche+targetAudien
     const body = { niche: "AI tools", targetAudience: "founders" };
     const parsed = onboardingSchema.parse(body);
 
-    const result = await service.createOnboardingData("user-1", parsed as never);
+    const result = await service.createOnboardingData(testOwner("user-1"), parsed as never);
 
-    expect(repo.add).toHaveBeenCalledWith("user-1", parsed);
+    expect(accountRepo.writeContext).toHaveBeenCalledWith(
+      TEST_ACCOUNT_ID, parsed);
     expect(result).toBe(parsed);
   });
 
@@ -116,7 +131,7 @@ describe("Onboarding — the required minimum (channel URL OR niche+targetAudien
     // The route wires `validate(onboardingSchema)` before the controller, so a
     // payload failing this parse never reaches createOnboardingData at all.
     expect(() => onboardingSchema.parse({ brandName: "Acme" })).toThrow();
-    expect(repo.add).not.toHaveBeenCalled();
+    expect(accountRepo.writeContext).not.toHaveBeenCalled();
   });
 });
 
@@ -129,7 +144,7 @@ describe("Onboarding prefill — persists NOTHING (suggestions only)", () => {
     repo = new UserRepository() as jest.Mocked<UserRepository>;
     repo.add = jest.fn();
     repo.update = jest.fn();
-    service = new UserService(repo as never);
+    service = new UserService(repo as never, channelRepo());
   });
 
   it("never touches the user repository, on a resolvable channel", async () => {
@@ -137,8 +152,8 @@ describe("Onboarding prefill — persists NOTHING (suggestions only)", () => {
 
     await service.prefillFromChannel("https://youtube.com/@x");
 
-    expect(repo.add).not.toHaveBeenCalled();
-    expect(repo.update).not.toHaveBeenCalled();
+    expect(accountRepo.writeContext).not.toHaveBeenCalled();
+    expect(accountRepo.writeContext).not.toHaveBeenCalled();
   });
 
   it("never touches the user repository, even when channel resolution fails entirely", async () => {
@@ -146,8 +161,8 @@ describe("Onboarding prefill — persists NOTHING (suggestions only)", () => {
 
     await service.prefillFromChannel("https://youtube.com/@x");
 
-    expect(repo.add).not.toHaveBeenCalled();
-    expect(repo.update).not.toHaveBeenCalled();
+    expect(accountRepo.writeContext).not.toHaveBeenCalled();
+    expect(accountRepo.writeContext).not.toHaveBeenCalled();
   });
 });
 
@@ -158,12 +173,12 @@ describe("Refresh-context — a source failure never blanks stored enrichment (r
   beforeEach(() => {
     jest.clearAllMocks();
     repo = new UserRepository() as jest.Mocked<UserRepository>;
-    service = new UserService(repo as never);
+    service = new UserService(repo as never, channelRepo());
     repo.update = jest.fn().mockResolvedValue(undefined);
   });
 
   it("when YouTube/website lookups are all down, the update payload OMITS the enriched fields entirely rather than writing them empty — so Firestore's merge leaves the previously-good values untouched", async () => {
-    repo.get = jest.fn().mockResolvedValue({
+    accountRepo.getContext.mockResolvedValue({
       userName: "https://youtube.com/@me",
       website: "https://example.com",
       niche: "AI tools",
@@ -177,9 +192,9 @@ describe("Refresh-context — a source failure never blanks stored enrichment (r
       competitors: [{ url: "https://youtube.com/@rival", id: "chan-rival", titles: ["Rival hit"] }],
     });
 
-    await service.refreshContext("user-1");
+    await service.refreshContext(testOwner("user-1"));
 
-    const written = (repo.update as jest.Mock).mock.calls[0][1] as Record<string, unknown>;
+    const written = accountRepo.writeContext.mock.calls[0][1] as Record<string, unknown>;
 
     // The user's own submitted fields always round-trip.
     expect(written.niche).toBe("AI tools");
@@ -200,13 +215,13 @@ describe("Refresh-context — a source failure never blanks stored enrichment (r
   });
 
   it("still returns a completeness score computed from what DID survive, not a crash", async () => {
-    repo.get = jest.fn().mockResolvedValue({
+    accountRepo.getContext.mockResolvedValue({
       userName: "https://youtube.com/@me",
       niche: "AI tools",
       targetAudience: "founders",
     });
 
-    const result = await service.refreshContext("user-1");
+    const result = await service.refreshContext(testOwner("user-1"));
 
     expect(result.completeness.score).toBeGreaterThan(0);
   });

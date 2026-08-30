@@ -59,7 +59,7 @@ export const videoProjectRepository = new VideoProjectRepository();
 // `accountMiddleware`.
 export const accountService = new AccountService(accountRepository, userRepository, videoProjectRepository);
 export const videoProjectService = new VideoProjectService(videoProjectRepository, contentRepository, packagingRepository, hooksRepository);
-export const contextService = new ContextService(userRepository, contentRepository, hooksRepository, videoProjectService);
+export const contextService = new ContextService(accountRepository, contentRepository, hooksRepository, videoProjectService);
 export const researchContextService = new ResearchContextService(researchRepository);
 // `researchContext` is optional on ContentService, and the two route files that
 // built this class disagreed about it: ideas.route passed it, scripts.route did
@@ -68,19 +68,19 @@ export const researchContextService = new ResearchContextService(researchReposit
 // depending on which router you arrived through. Research degrades silently by
 // design (see the degradation contract in ai-generation-patterns.md), so a
 // missing wire and a YouTube outage look identical. One instance, fully wired.
-export const contentService = new ContentService(contentRepository, userRepository, videoProjectService, researchContextService);
+export const contentService = new ContentService(contentRepository, userRepository, videoProjectService, accountRepository, researchContextService);
 // The generation seam (Phase 01b). One instance, shared by every service that
 // makes a model call — it is stateless, and Phase 08 attaches billing here rather
 // than at twelve call sites.
 export const stepRunner = new StepRunner(videoProjectRepository);
 export const hooksService = new HooksService(hooksRepository, videoProjectService, contextService, stepRunner);
 export const packagingService = new PackagingService(packagingRepository, videoProjectService, contextService, researchContextService);
-export const researchService = new ResearchService(researchRepository, userRepository);
+export const researchService = new ResearchService(researchRepository, accountRepository);
 // ponytail: UserService still builds its own ExtractService/ExtractRepository
 // internally (`user.service.ts:27`) rather than taking them as parameters, so
 // that one dependency is not visible here. Left as-is — injecting it changes the
 // constructor and its two test suites, which is a separate change from this one.
-export const userService = new UserService(userRepository);
+export const userService = new UserService(userRepository, accountRepository);
 // --- Controllers -----------------------------------------------------------
 export const accountController = new AccountController(accountService);
 export const hooksController = new HooksController(hooksService);

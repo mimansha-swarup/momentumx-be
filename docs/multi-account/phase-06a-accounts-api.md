@@ -20,20 +20,15 @@ Code done, **not deployed**. Suite: 954 tests, 61 suites, green; `tsc` clean; `d
 | `GET`/`POST` exempt from `accountMiddleware` | done, pinned by a named allowlist in `auth-coverage.test.ts` |
 | `isOnboarded` / `projectCount` / `role` | done, 32 service tests + 8 route tests |
 | `.claude/rules/api-design.md` updated | done, same commit |
-| **`isOnboarded` can only become true once Phase 06b lands** | **see below — a real gap, not a defect** |
+| `isOnboarded` becomes true once the channel is onboarded | done — Phase 06b landed with it |
 
-**The one thing to know before deploying this alone.** `isOnboarded` is derived from the
-ACCOUNT's context subcollection, which is correct and is the shape Phase 06b makes
-authoritative. But `PATCH /v1/user/onboarding` still writes the USER record, so nothing
-writes that subcollection after creation. A channel created by `POST /v1/accounts` therefore
-reports `isOnboarded: false` **forever**, and Phase 07's switcher would route the user back
-to onboarding every time they pick it.
-
-Sourcing it from the user record instead is not a fix — that makes every channel report the
-first one's answers, so a channel created seconds ago claims to be onboarded and the
-switcher drops the user on an empty dashboard. Both halves of that trade are wrong, and the
-right one is Phase 06b, which is already a hard gate before Phase 07. **Do not deploy 06a
-without 06b.**
+**`isOnboarded` is derived from the ACCOUNT's context subcollection**, and
+[Phase 06b](./phase-06b-move-channel-context.md) — which shipped with this — is what makes
+onboarding write there. Before it, that flag could never become true for a channel created
+by `POST /v1/accounts`, and the switcher would have routed the user back to onboarding every
+time they picked it. Sourcing it from the user record instead was not an option: then every
+channel reports the first one's answers, and a channel created seconds ago claims to be set
+up.
 
 ---
 

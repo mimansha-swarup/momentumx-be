@@ -124,8 +124,18 @@ class AccountRepository {
     txn.set(userRef, { lastActiveAccountId: account.id }, { merge: true });
   };
 
-  /** The channel half, from the account's own subcollection (never the user record). */
-  readContext = async (accountId: string): Promise<IChannelContext | null> => {
+  /**
+   * The channel half — niche, audience, competitors, the website scrape.
+   *
+   * Deliberately a SECOND method rather than part of `findById`. That one returns
+   * the account document (membership, roles, billing owner) and runs on every
+   * authenticated request; this one runs only when generating. They are separate
+   * because collapsing them is how an uncapped `websiteContent` scrape ends up on
+   * the document that every request reads, and then a *membership* write starts
+   * failing against the 1 MiB limit with an error that points nowhere near a
+   * website.
+   */
+  getContext = async (accountId: string): Promise<IChannelContext | null> => {
     const doc = await this.db
       .collection(this.collection)
       .doc(accountId)
@@ -133,6 +143,22 @@ class AccountRepository {
       .doc(CHANNEL_CONTEXT_DOC)
       .get();
     return doc.exists ? (doc.data() as IChannelContext) : null;
+  };
+
+  /**
+   * Merge into the channel context. The channel now OWNS these fields — they are
+   * not a copy of anything on the user record.
+   */
+  writeContext = async (
+    accountId: string,
+    patch: Record<string, unknown>
+  ): Promise<void> => {
+    await this.db
+      .collection(this.collection)
+      .doc(accountId)
+      .collection(SUBCOLLECTIONS.CONTEXT)
+      .doc(CHANNEL_CONTEXT_DOC)
+      .set(patch, { merge: true });
   };
 
   update = async (accountId: string, patch: Record<string, unknown>): Promise<void> => {

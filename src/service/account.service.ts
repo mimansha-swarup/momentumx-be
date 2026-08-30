@@ -229,7 +229,7 @@ class AccountService {
     return Promise.all(
       memberships.map(async (account) => {
         const [context, projectCount] = await Promise.all([
-          this.repo.readContext(account.id),
+          this.repo.getContext(account.id),
           this.projects.countForAccount(account.id),
         ]);
 

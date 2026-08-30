@@ -36,6 +36,7 @@ jest.mock("../../src/utlils/content", () => ({
 jest.mock("../../src/repository/user.repository");
 jest.mock("../../src/repository/extract.repository");
 
+import { fakeAccountRepo } from "../helpers/account";
 import UserService from "../../src/service/user.service";
 import UserRepository from "../../src/repository/user.repository";
 import { resolveChannel } from "../../src/utlils/content";
@@ -55,7 +56,7 @@ describe("UserService.prefillFromChannel", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    service = new UserService(new UserRepository() as never);
+    service = new UserService(new UserRepository() as never, fakeAccountRepo());
     mockGenerate.mockImplementation(async () =>
       makeStream(
         JSON.stringify({
@@ -140,7 +141,7 @@ describe("UserService.prefillFromChannel — unresolvable channel", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    service = new UserService(new UserRepository() as never);
+    service = new UserService(new UserRepository() as never, fakeAccountRepo());
   });
 
   it("returns blank suggestions without calling the model when resolution fails", async () => {

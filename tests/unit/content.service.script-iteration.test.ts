@@ -33,7 +33,7 @@ import ContentService from "../../src/service/content.service";
 import ContentRepository from "../../src/repository/content.repository";
 import UserRepository from "../../src/repository/user.repository";
 import { generateStreamingContent } from "../../src/utlils/ai";
-import { makeTestAccountService, TEST_ACCOUNT_ID, testOwner, OTHER_ACCOUNT_ID } from "../helpers/account";
+import { makeTestAccountService, TEST_ACCOUNT_ID, testOwner, OTHER_ACCOUNT_ID, fakeAccountRepo } from "../helpers/account";
 
 jest.mock("../../src/repository/content.repository");
 jest.mock("../../src/repository/user.repository");
@@ -65,7 +65,7 @@ describe("ContentService — regenerateScript", () => {
   beforeEach(() => {
     mockContentRepo = new MockContentRepo() as jest.Mocked<ContentRepository>;
     mockUserRepo = new MockUserRepo() as jest.Mocked<UserRepository>;
-    service = new ContentService(mockContentRepo, mockUserRepo, mockVpService as any);
+    service = new ContentService(mockContentRepo, mockUserRepo, mockVpService as any, fakeAccountRepo());
     mockContentRepo.getScriptById = jest.fn().mockResolvedValue(scriptDoc);
     mockUserRepo.get = jest.fn().mockResolvedValue(userRecord);
     mockContentRepo.editScript = jest.fn().mockResolvedValue(undefined);
@@ -122,7 +122,7 @@ describe("ContentService — exportScript", () => {
   beforeEach(() => {
     mockContentRepo = new MockContentRepo() as jest.Mocked<ContentRepository>;
     mockUserRepo = new MockUserRepo() as jest.Mocked<UserRepository>;
-    service = new ContentService(mockContentRepo, mockUserRepo, {} as any);
+    service = new ContentService(mockContentRepo, mockUserRepo, {} as any, fakeAccountRepo());
   });
 
   it("throws 404 if script not found", async () => {
@@ -158,7 +158,7 @@ describe("ContentService — edit whitelist & SSE ownership guard", () => {
   beforeEach(() => {
     mockContentRepo = new MockContentRepo() as jest.Mocked<ContentRepository>;
     mockUserRepo = new MockUserRepo() as jest.Mocked<UserRepository>;
-    service = new ContentService(mockContentRepo, mockUserRepo, {} as any);
+    service = new ContentService(mockContentRepo, mockUserRepo, {} as any, fakeAccountRepo());
   });
 
   afterEach(() => jest.clearAllMocks());
@@ -208,7 +208,7 @@ describe("ContentService — edit whitelist & SSE ownership guard", () => {
       completeStep: jest.fn(),
       linkResource: jest.fn(),
     };
-    service = new ContentService(mockContentRepo, mockUserRepo, mockVp as any);
+    service = new ContentService(mockContentRepo, mockUserRepo, mockVp as any, fakeAccountRepo());
     mockUserRepo.get = jest.fn().mockResolvedValue({});
     const res = { setHeader: jest.fn(), flushHeaders: jest.fn(), write: jest.fn(), end: jest.fn() };
     const err = await service.generateScripts(testOwner("user-1"), "proj-1", res as any).catch((e) => e);
@@ -251,7 +251,7 @@ describe("ContentService — generateScripts project-scoped script id & FKs", ()
       linkResource: jest.fn().mockResolvedValue(undefined),
       abandonStep: jest.fn().mockResolvedValue(undefined),
     };
-    service = new ContentService(mockContentRepo, mockUserRepo, mockVp as any);
+    service = new ContentService(mockContentRepo, mockUserRepo, mockVp as any, fakeAccountRepo());
     mockUserRepo.get = jest.fn().mockResolvedValue({ brandName: "B", targetAudience: "a", competitors: [], niche: "n", websiteContent: "c" });
     mockUserRepo.update = jest.fn().mockResolvedValue(undefined);
     mockContentRepo.getIdea = jest.fn().mockResolvedValue({ id: "idea-1", createdBy: "user-1", accountId: TEST_ACCOUNT_ID, title: "My Idea" });

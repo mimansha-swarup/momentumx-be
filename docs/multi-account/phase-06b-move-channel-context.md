@@ -2,12 +2,46 @@
 title: "Phase 06b — Move Channel Context to the Account"
 description: "Switch generation to read the channel's niche, competitors and website from the account instead of the user."
 date: 2026-08-19
-last_updated: 2026-08-19
-status: "planned"
+last_updated: 2026-08-30
+status: "code-complete (backend) — frontend outstanding"
 tags: ["multi-account", "phase-06b", "generation"]
 ---
 
 # Phase 06b — Move Channel Context to the Account
+
+## Where this stands (2026-08-30)
+
+Backend done. Suite: 954 tests, 61 suites, green; `tsc` clean; `dist/` current.
+
+**The four steps collapsed into one commit,** and that is a consequence of an earlier
+decision rather than a shortcut. Dual-write → soak → re-sync → flip exists to carry
+*existing data* across a *deploy*. There is no existing data (it is development data and
+gets wiped before Phase 06 lands — see [phase-04](./phase-04-backfill.md)) and nothing is
+deployed, so there is no window to protect. Writes and reads moved together.
+
+| | |
+|---|---|
+| Step 1 — dual-write | **skipped**, deliberately: nothing to protect |
+| Step 2 — re-sync migration | **skipped**, same reason |
+| Step 3 — flip the six read sites | done |
+| Step 4 — writes go to the account only | done |
+| `AccountRepository.getContext` / `writeContext` | done, separate from `findById` |
+| Per-channel completeness | done |
+
+**`GET /v1/user/profile` keeps its shape.** Identity from `users/{uid}`, the channel half
+from the active account, merged into the response the frontend already parses. The doc left
+this open; merging is what keeps all five frontend consumers working unchanged, and two of
+them fail *silently* if channel fields disappear — `EnrichNudge` shows permanently, and
+`selectIsOnboarded` routes every user back to onboarding.
+
+**Still outstanding, and it is the frontend half.** Nothing in `momentumx-fe` sends
+`X-Account-Id` yet, so every one of these reads and writes resolves to the fallback channel.
+The per-channel behaviour is real on the server and invisible until Phase 07 ships the
+switcher. `stats.ideas/scripts` also still live on the user record, so the dashboard counts
+remain per-user rather than per-channel — Phase 08 territory, noted here because the doc's
+consumer table lists it.
+
+---
 
 **Size:** medium — seven read sites, two write sites, one dual-write window.
 **Depends on:** Phase 06a. Its acceptance test needs one user with **two** channels, which

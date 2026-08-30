@@ -1,4 +1,4 @@
-import UserRepository from "../repository/user.repository.js";
+import AccountRepository from "../repository/account.repository.js";
 import ContentRepository from "../repository/content.repository.js";
 import HooksRepository from "../repository/hooks.repository.js";
 import VideoProjectService from "./video-project.service.js";
@@ -12,6 +12,11 @@ import {
   IChannelContextOverrides,
   ISessionContext,
 } from "../types/routes/context.js";
+// The STORED channel shape, distinct from the assembled `IChannelContext` above:
+// one is what the account document holds, the other is what a prompt is built
+// from. They overlap but are not the same type, and conflating them is how a
+// field that exists in storage silently stops reaching the prompt.
+import { IChannelContext as IStoredChannelContext } from "../types/routes/account.js";
 
 interface ICompetitorRecord {
   url?: string;
@@ -45,7 +50,7 @@ const EMPTY_SESSION: ISessionContext = {
  */
 class ContextService {
   constructor(
-    private userRepo: UserRepository,
+    private accounts: AccountRepository,
     private contentRepo: ContentRepository,
     private hooksRepo: HooksRepository,
     private videoProjectService: VideoProjectService
@@ -56,25 +61,33 @@ class ContextService {
     options: IAssembleOptions = {}
   ): Promise<IAssembledContext> => {
     const [channelContext, sessionContext] = await Promise.all([
-      // Channel context is still read from the USER record — Phase 06b is what
-      // moves it onto the account. The session half is account-scoped already,
-      // because the project it loads is.
-      this.buildChannelContext(owner.userId, options.overrides),
+      this.buildChannelContext(owner.accountId, options.overrides),
       this.buildSessionContext(owner, options.videoProjectId),
     ]);
     return { channelContext, sessionContext };
   };
 
+  /**
+   * Phase 06b. Reads the ACTIVE CHANNEL, not the user.
+   *
+   * This one method feeds hooks, title and packaging, so it is where the failure
+   * this phase exists to prevent was widest: with the channel read from
+   * `users/{uid}`, switching to the finance channel and generating produced
+   * prompts built from the cooking channel's niche, competitors and website text.
+   * The documents saved were tagged correctly — Phases 03–06 saw to that — and
+   * the CONTENT was wrong. No error, no failing test; it reads as "the AI got
+   * worse", which nobody traces to a deploy.
+   */
   private buildChannelContext = async (
-    userId: string,
+    accountId: string,
     overrides?: IChannelContextOverrides
   ): Promise<IChannelContext> => {
-    const userRecord = await this.userRepo.get(userId);
-    if (!userRecord && !overrides) {
-      throw NotFound("User not found");
+    const stored = await this.accounts.getContext(accountId);
+    if (!stored && !overrides) {
+      throw NotFound("Channel not found");
     }
 
-    const record = userRecord ?? {};
+    const record = (stored ?? {}) as Partial<IStoredChannelContext>;
     const competitors: ICompetitorRecord[] = Array.isArray(record.competitors)
       ? record.competitors
       : [];

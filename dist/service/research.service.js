@@ -1,17 +1,19 @@
 import { DEFAULT_NICHE } from "../constants/research.js";
 import { BadRequest } from "../utlils/errors.js";
 class ResearchService {
-    constructor(repo, userRepo) {
+    constructor(repo, accounts) {
         this.repo = repo;
-        this.userRepo = userRepo;
-        this.getTrending = async (userId) => {
-            const userRecord = await this.userRepo.get(userId);
-            const niche = userRecord?.niche || DEFAULT_NICHE;
+        this.accounts = accounts;
+        this.getTrending = async (owner) => {
+            // The CHANNEL's niche. Read from the user record, trending for the finance
+            // channel came back full of cooking videos.
+            const context = await this.accounts.getContext(owner.accountId);
+            const niche = context?.niche || DEFAULT_NICHE;
             return this.repo.getTrendingVideos(niche);
         };
-        this.getCompetitorInsights = async (userId) => {
-            const userRecord = await this.userRepo.get(userId);
-            const competitors = userRecord?.competitors || [];
+        this.getCompetitorInsights = async (owner) => {
+            const context = await this.accounts.getContext(owner.accountId);
+            const competitors = context?.competitors || [];
             const withChannelId = competitors.filter((c) => c.id);
             const results = await Promise.allSettled(withChannelId.map((c) => this.repo.getChannelTopVideos(c.id)));
             return withChannelId.map((c, idx) => {

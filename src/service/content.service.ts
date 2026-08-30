@@ -9,6 +9,7 @@ import {
 } from "../constants/prompt.js";
 
 import ContentRepository from "../repository/content.repository.js";
+import AccountRepository from "../repository/account.repository.js";
 import UserRepository from "../repository/user.repository.js";
 import VideoProjectService, { STEP_LOCK_MS } from "./video-project.service.js";
 import ResearchContextService from "./research-context.service.js";
@@ -55,6 +56,7 @@ class ContentService {
     repo: ContentRepository,
     userRepo: UserRepository,
     private videoProjectService: VideoProjectService,
+    private accounts: AccountRepository,
     private researchContext?: ResearchContextService,
   ) {
     this.repo = repo;
@@ -125,13 +127,18 @@ class ContentService {
   ): Promise<IGeneratedIdea[]> => {
     const { userId } = owner;
     assertOwner(owner.userId);
-    const [similarTitles, userRecord] = await Promise.all([
+    // Phase 06b: the CHANNEL's niche, audience, competitors and website text —
+    // the whole reason a prompt is any good. Read from the user record, ideas
+    // generated in the finance channel came out about cooking, saved against the
+    // right accountId, with nothing failing.
+    const [similarTitles, channel] = await Promise.all([
       getClusteredTitles(owner.accountId, this.repo),
-      this.userRepo.get(userId),
+      this.accounts.getContext(owner.accountId),
     ]);
-    if (!userRecord && !override) {
-      throw NotFound("User not found");
+    if (!channel && !override) {
+      throw NotFound("Channel not found");
     }
+    const userRecord = channel as DocumentData | undefined;
 
     // Instant-first-idea (3.3): an optional, not-yet-persisted context (from the
     // onboarding prefill, possibly user-edited) is merged over the stored record
@@ -275,7 +282,7 @@ class ContentService {
       }
 
       const [userRecord, idea] = await Promise.all([
-        this.userRepo.get(userId),
+        this.accounts.getContext(owner.accountId) as Promise<DocumentData | undefined>,
         this.repo.getIdea(project.ideaId),
       ]);
 
@@ -515,7 +522,9 @@ class ContentService {
       throw Forbidden();
     }
 
-    const userRecord = await this.userRepo.get(userId);
+    const userRecord = (await this.accounts.getContext(owner.accountId)) as
+      | DocumentData
+      | undefined;
     const userPrompt = this.buildScriptUserPrompt(userRecord, scriptDoc.title);
     const systemPrompt = SCRIPT_SYSTEM_PROMPT.replace(
       "{videoFormatStyle}",
