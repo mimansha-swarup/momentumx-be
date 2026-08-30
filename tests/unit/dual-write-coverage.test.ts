@@ -163,7 +163,16 @@ describe("phase 06 — every tenancy query filters the account", () => {
       .filter((f) => f.endsWith(".ts"))
       .filter((f) => /\.where\(\s*["']accountId["']/.test(fs.readFileSync(path.join(dir, f), "utf8")));
 
+    // GROW-ONLY, and every addition needs a reason here. The list is exact so
+    // that DELETING a filter fails just as loudly as changing one — the lazy way
+    // to satisfy the test above is to drop the `where` rather than fix it, which
+    // turns a mis-scoped list into an unscoped one.
+    //
+    // `account.repository.ts` joined when channel deletion learned to purge the
+    // channel's content: `purgeAccountData` queries all six tenancy collections
+    // by `accountId`, which is the correct scope for a destructive sweep.
     expect(filtered.sort()).toEqual([
+      "account.repository.ts",
       "content.repository.ts",
       "packaging.repository.ts",
       "video-project.repository.ts",

@@ -330,11 +330,14 @@ class AccountService {
          */
         this.deleteAccount = async (userId, accountId) => {
             await this.assertOwner(userId, accountId);
-            const live = (await this.repo.findByMember(userId)).filter((a) => !a.deletedAt);
-            if (live.length <= 1) {
+            // Counted and tombstoned in one transaction — see `softDeleteUnlessLast`.
+            if (!(await this.repo.softDeleteUnlessLast(accountId, userId))) {
                 throw BadRequest("You cannot delete your only channel");
             }
-            await this.repo.softDelete(accountId);
+            // Tombstone FIRST, purge second. The other order leaves a live channel with
+            // half its content if anything fails in between; this one leaves content
+            // that is already unreachable behind the tombstone.
+            await this.repo.purgeAccountData(accountId);
             // Leaving the pointer on a tombstone costs the user a 410 on their next
             // request before the middleware repairs it. Clearing it here is one write.
             await this.clearActiveAccount(userId, accountId);

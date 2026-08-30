@@ -246,6 +246,78 @@ describe("DELETE /v1/accounts/:id", () => {
     });
   });
 
+  /**
+   * Firestore does not cascade. Tombstoning the account left every idea,
+   * script, hook batch, packaging doc, project and event exactly where it was —
+   * present and billable, invisible only because every query filters accountId.
+   * Phase 05 requires enumerate-and-delete or mark-and-sweep; Phase 06a shipped
+   * the endpoint doing neither and marked it done.
+   */
+  describe("purges the channel's content, because Firestore will not", () => {
+    const seedContent = (accountId: string) => {
+      db.seed("ideas", [
+        { id: `i1-${accountId}`, accountId },
+        { id: `i2-${accountId}`, accountId },
+      ]);
+      db.seed("scripts", [{ id: `s1-${accountId}`, accountId }]);
+      db.seed("hooks", [{ id: `h1-${accountId}`, accountId }]);
+      db.seed("packaging", [{ id: `p1-${accountId}`, accountId }]);
+      db.seed("videoProjects", [{ id: `v1-${accountId}`, accountId }]);
+      db.seed("events", [{ id: `e1-${accountId}`, accountId }]);
+    };
+
+    it("deletes every tenancy collection's documents for that channel", async () => {
+      seedContent(ACC_B);
+
+      await make().deleteAccount(uid, ACC_B);
+
+      for (const collection of ["ideas", "scripts", "hooks", "packaging", "videoProjects", "events"]) {
+        expect(db.all(collection).filter((d) => d.accountId === ACC_B)).toEqual([]);
+      }
+    });
+
+    it("leaves the OTHER channel's content completely alone", async () => {
+      // The purge is a destructive query. Getting its filter wrong deletes a
+      // channel the user never asked to touch, and nothing would report it.
+      seedContent(ACC_A);
+      seedContent(ACC_B);
+
+      await make().deleteAccount(uid, ACC_B);
+
+      // By id, not by count — the shared fixture already seeds projects for A.
+      for (const [collection, id] of [
+        ["ideas", `i1-${ACC_A}`],
+        ["scripts", `s1-${ACC_A}`],
+        ["hooks", `h1-${ACC_A}`],
+        ["packaging", `p1-${ACC_A}`],
+        ["videoProjects", `v1-${ACC_A}`],
+        ["events", `e1-${ACC_A}`],
+      ]) {
+        expect(db.all(collection).map((d) => d.id)).toContain(id);
+      }
+    });
+
+    it("deletes the channel context subcollection, not just the account document", async () => {
+      // The one that matters most for a deletion request: it holds the niche,
+      // the competitor list and the scraped website text. A subcollection is not
+      // removed with its parent.
+      seedContext(ACC_B, { niche: "cooking", websiteContent: "scraped page text" });
+
+      await make().deleteAccount(uid, ACC_B);
+
+      expect(db.all(`accounts/${ACC_B}/context`)).toEqual([]);
+    });
+
+    it("does not purge anything when the last-channel refusal fires", async () => {
+      seedContent(ACC_A);
+      await make().deleteAccount(uid, ACC_B);
+
+      await expect(make().deleteAccount(uid, ACC_A)).rejects.toMatchObject({ statusCode: 400 });
+
+      expect(db.all("ideas").filter((d) => d.accountId === ACC_A)).toHaveLength(2);
+    });
+  });
+
   it("refuses a stranger with account_forbidden, not role_forbidden", async () => {
     // The client branches on these: account_forbidden ejects to the channel list,
     // role_forbidden shows an inline message. Telling a non-member their role is

@@ -177,10 +177,103 @@ class AccountRepository {
    * pointer, so hard-deleting here would turn "this channel was deleted" into
    * "this id never existed" for every client holding it.
    */
-  softDelete = async (accountId: string): Promise<void> => {
-    await this.update(accountId, {
-      deletedAt: firebase.firestore.FieldValue.serverTimestamp(),
+  /**
+   * Tombstone — but never the caller's last live channel.
+   *
+   * The guard used to live in the service as a read, a check, and then a write:
+   * two concurrent `DELETE`s for a user with exactly two channels both read
+   * `live.length === 2`, both passed, and both tombstoned. That leaves zero
+   * channels, which is precisely what the guard exists to prevent —
+   * `ensureDefaultAccount` then mints a fresh empty one on the next request, and
+   * every document still carrying an old `accountId` is present, billable and
+   * unreachable. Counting and writing in one transaction is the only version of
+   * this check that holds.
+   *
+   * Returns false when it refused, so the caller can answer 400.
+   */
+  softDeleteUnlessLast = async (accountId: string, userId: string): Promise<boolean> =>
+    this.db.runTransaction(async (txn) => {
+      const snap = await txn.get(
+        this.db.collection(this.collection).where("memberUids", "array-contains", userId)
+      );
+      const live = snap.docs.filter((doc) => !(doc.data() as IAccount).deletedAt);
+      if (live.length <= 1) return false;
+
+      const now = firebase.firestore.FieldValue.serverTimestamp();
+      txn.update(this.db.collection(this.collection).doc(accountId), {
+        deletedAt: now,
+        updatedAt: now,
+      });
+      return true;
     });
+
+  /**
+   * The six tenancy collections. Every one of them carries `accountId`, which is
+   * what makes this a query rather than a graph walk from the account document.
+   */
+  private static readonly PURGE_COLLECTIONS: COLLECTIONS[] = [
+    COLLECTIONS.IDEAS,
+    COLLECTIONS.SCRIPTS,
+    COLLECTIONS.HOOKS,
+    COLLECTIONS.PACKAGING,
+    COLLECTIONS.VIDEO_PROJECTS,
+    COLLECTIONS.EVENTS,
+  ];
+
+  /**
+   * Delete a deleted channel's content.
+   *
+   * **Firestore does not cascade.** Tombstoning `accounts/{id}` leaves every
+   * idea, script, hook batch, packaging document, video project and event
+   * exactly where it was — present and billable, and unreachable only because
+   * every query filters `accountId`. Phase 05 spells this out: "there is no
+   * cascade, so account deletion has to enumerate and delete, or mark and
+   * sweep". The endpoint shipped in Phase 06a doing neither.
+   *
+   * `accounts/{id}/context/channel` goes too, and it is the one that matters
+   * most for a deletion request: it holds the niche, the competitor list and the
+   * scraped website text. A subcollection is not removed with its parent either.
+   * `usage/**` has no documents until Phase 08, so it is not swept here — add it
+   * with the code that starts writing it.
+   *
+   * ponytail: capped and run inline. A channel above `cap` documents keeps the
+   * remainder, which stays unreachable behind the tombstone rather than becoming
+   * visible again. Phase 10's sweep is where an unbounded, resumable job belongs
+   * — this deletes what a real channel actually holds without risking a
+   * half-finished delete inside a serverless timeout.
+   */
+  purgeAccountData = async (accountId: string, cap = 5000): Promise<number> => {
+    const PAGE = 450; // Firestore caps a batch at 500 writes.
+    let deleted = 0;
+
+    for (const collection of AccountRepository.PURGE_COLLECTIONS) {
+      while (deleted < cap) {
+        const snap = await this.db
+          .collection(collection)
+          .where("accountId", "==", accountId)
+          .limit(PAGE)
+          .get();
+        if (snap.empty) break;
+
+        const batch = this.db.batch();
+        snap.docs.forEach((doc) => batch.delete(doc.ref));
+        await batch.commit();
+        deleted += snap.size;
+
+        // A short page is the last page. Re-querying would cost one empty read
+        // per collection for nothing.
+        if (snap.size < PAGE) break;
+      }
+    }
+
+    await this.db
+      .collection(this.collection)
+      .doc(accountId)
+      .collection(SUBCOLLECTIONS.CONTEXT)
+      .doc(CHANNEL_CONTEXT_DOC)
+      .delete();
+
+    return deleted;
   };
 }
 
