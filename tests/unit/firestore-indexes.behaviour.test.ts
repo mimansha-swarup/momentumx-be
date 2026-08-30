@@ -94,11 +94,19 @@ describe("firestore.indexes.json — write-cost exemptions", () => {
   // Firestore auto-indexes every field including every sub-field of a map, so
   // each member's uid would become its own indexed field path — an unbounded set,
   // and pure write cost for something never queried.
+  //
+  // The three channel fields sit on `accounts/{id}/context/channel`, whose
+  // collection group is `context`, NOT `accounts`. They were declared under
+  // `accounts` — where those fields have never existed since Phase 06b moved
+  // them off the account document — so all three exemptions were no-ops and the
+  // 20k-character website scrape was auto-indexed on every context write. This
+  // test asserted them under `accounts` too, which pinned the mistake rather
+  // than catching it.
   it.each([
     ["accounts", "members"],
-    ["accounts", "websiteContent"],
-    ["accounts", "channelDescription"],
-    ["accounts", "competitors"],
+    ["context", "websiteContent"],
+    ["context", "channelDescription"],
+    ["context", "competitors"],
     ["ideas", "embedding"],
   ])("exempts %s.%s from automatic indexing", (collectionGroup, fieldPath) => {
     const override = exempt(collectionGroup, fieldPath);
@@ -107,6 +115,36 @@ describe("firestore.indexes.json — write-cost exemptions", () => {
     // An empty `indexes` array is what "exempt from all single-field indexing"
     // means to Firestore. A populated one silently re-enables the cost.
     expect(override!.indexes).toEqual([]);
+  });
+
+  /**
+   * An exemption on the wrong collection group is indistinguishable from no
+   * exemption — Firestore accepts it, deploys it, and indexes the field anyway.
+   * Nothing above could catch that, because the file was only ever checked
+   * against itself.
+   *
+   * So: the channel context lives in the `context` subcollection, and no field
+   * it declares may be exempted under `accounts`. Reading the field list from
+   * the type means moving a field between the two documents fails here rather
+   * than silently un-exempting it.
+   */
+  it("never exempts a channel-context field under the accounts group", () => {
+    const source = fs.readFileSync(
+      path.join(process.cwd(), "src", "types", "routes", "account.ts"),
+      "utf8"
+    );
+    const body = source.slice(source.indexOf("interface IChannelContext"));
+    const contextFields = new Set(
+      [...body.slice(0, body.indexOf("\n}")).matchAll(/^\s{2}(\w+)\??:/gm)].map((m) => m[1])
+    );
+
+    expect(contextFields.size).toBeGreaterThan(5);
+
+    const misplaced = config.fieldOverrides
+      .filter((o) => o.collectionGroup === "accounts" && contextFields.has(o.fieldPath))
+      .map((o) => `accounts.${o.fieldPath} (lives in accounts/{id}/context/channel)`);
+
+    expect(misplaced).toEqual([]);
   });
 });
 

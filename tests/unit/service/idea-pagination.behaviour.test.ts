@@ -57,7 +57,12 @@ const idea = (id: string, title: string, iso = "2026-08-01T10:00:00.000Z") => ({
 
 const makeService = (docs: unknown[]) => {
   const repo = new (ContentRepository as jest.MockedClass<typeof ContentRepository>)() as jest.Mocked<ContentRepository>;
-  repo.getIdeas = jest.fn().mockResolvedValue(docs);
+  // Honours `limit`, because the service now asks for one row MORE than the page
+  // to decide `hasNextPage`. A stub that ignores the limit cannot tell the probe
+  // apart from the page and would report whatever the fixture happened to hold.
+  repo.getIdeas = jest.fn(async ({ limit }: { limit: number }) =>
+    docs.slice(0, limit)
+  ) as unknown as typeof repo.getIdeas;
   const userRepo = new (UserRepository as jest.MockedClass<typeof UserRepository>)() as jest.Mocked<UserRepository>;
   return { service: new ContentService(repo, userRepo, {} as never, fakeAccountRepo()), repo };
 };
@@ -124,20 +129,48 @@ describe("getPaginatedUsersIdeas — the cursor must match the ordering the page
     expect(res.meta.hasNextPage).toBe(false);
   });
 
-  it("reports hasNextPage only when the page came back full", async () => {
-    const full = await makeService([idea("a", "A"), idea("b", "B")]).service.getPaginatedUsersIdeas({
-      userId: "user-1", limit: 2,
+  /**
+   * This asserted `hasNextPage === (limit === docs.length)`, which is a guess,
+   * not an answer: a final page that happens to be exactly `limit` long looks
+   * identical to a full page with more behind it. The client rendered "Load
+   * more" and the next request came back empty. The service now asks the
+   * repository for one row beyond the page and reports what it finds.
+   */
+  const page = (docs: unknown[], limit: number) =>
+    makeService(docs).service.getPaginatedUsersIdeas({
+      userId: "user-1", limit,
       cursor: { createdAt: "", title: "", docId: "" },
       filters: { searchText: "" },
     } as never);
-    expect(full.meta.hasNextPage).toBe(true);
 
-    const partial = await makeService([idea("a", "A")]).service.getPaginatedUsersIdeas({
-      userId: "user-1", limit: 2,
-      cursor: { createdAt: "", title: "", docId: "" },
-      filters: { searchText: "" },
-    } as never);
-    expect(partial.meta.hasNextPage).toBe(false);
+  it("reports another page when one actually exists", async () => {
+    const res = await page([idea("a", "A"), idea("b", "B"), idea("c", "C")], 2);
+
+    expect(res.meta.hasNextPage).toBe(true);
+    // And the probe row is not served to the client.
+    expect(res.lists).toHaveLength(2);
+    expect(res.lists.map((l) => (l as unknown as { id: string }).id)).toEqual(["a", "b"]);
+  });
+
+  it("reports no next page for a final page that is exactly full", async () => {
+    // The case the old rule got wrong, and the only one a user notices.
+    const res = await page([idea("a", "A"), idea("b", "B")], 2);
+
+    expect(res.meta.hasNextPage).toBe(false);
+    expect(res.lists).toHaveLength(2);
+  });
+
+  it("reports no next page for a partial page", async () => {
+    const res = await page([idea("a", "A")], 2);
+
+    expect(res.meta.hasNextPage).toBe(false);
+  });
+
+  it("emits a cursor from the last row OF THE PAGE, not from the probe row", async () => {
+    // Emitting the probe's cursor would skip a record on every "Load more".
+    const res = await page([idea("a", "A"), idea("b", "B"), idea("c", "C")], 2);
+
+    expect(res.meta.nextCursor).toMatchObject({ docId: "b" });
   });
 
   it("serialises timestamps for the client rather than leaking raw Firestore objects", async () => {

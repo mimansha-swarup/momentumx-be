@@ -209,6 +209,10 @@ class VideoProjectRepository {
     this.findById(projectId);
 
   findById = async (projectId: string): Promise<IVideoProject | null> => {
+    // A route param reaching `.doc()` unchecked: `GET /v1/…/a%2Fb` decodes to
+    // "a/b", which addresses a COLLECTION and throws a bare Error — rendered as
+    // 500 "Something went wrong" where the honest answer is not-found.
+    if (!isDocumentId(projectId)) return null;
     const doc = await this.db.collection(this.collection).doc(projectId).get();
     if (!doc.exists) return null;
     return this.hydrate(doc.data() as IVideoProject);

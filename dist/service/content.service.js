@@ -41,7 +41,14 @@ class ContentService {
         });
         this.getPaginatedUsersIdeas = async (args) => {
             const { limit, filters } = args;
-            const docs = await this.repo.getIdeas(args);
+            // One more than the page, then discard it. `hasNextPage: limit ===
+            // docs.length` was a guess: a final page that happens to be exactly `limit`
+            // long claimed another page, and the "Load more" it rendered came back
+            // empty. The extra row is the only way to know without a second query, and
+            // `video-project.repository.list` already does exactly this.
+            const fetched = await this.repo.getIdeas({ ...args, limit: limit + 1 });
+            const hasNextPage = fetched.length > limit;
+            const docs = hasNextPage ? fetched.slice(0, limit) : fetched;
             const lastDoc = docs[docs.length - 1];
             // The cursor must match the ORDERING the repository used, and search orders
             // by title while the default orders by createdAt. Emitting a createdAt cursor
@@ -61,7 +68,7 @@ class ContentService {
             return {
                 meta: {
                     nextCursor,
-                    hasNextPage: limit === docs.length,
+                    hasNextPage,
                 },
                 lists: docs?.map((doc) => ({
                     ...doc,
@@ -129,7 +136,9 @@ class ContentService {
             }
             if (countTowardStats) {
                 // Lifetime idea counter (stats.ideas); the P5 metering plan builds on it.
-                this.userRepo.update(userId, {
+                // Awaited, like the two sibling counters below: unawaited, a Firestore
+                // failure here is an unhandled rejection rather than a failed request.
+                await this.userRepo.update(userId, {
                     "stats.ideas": firebase.firestore.FieldValue.increment(ideas.length),
                 });
             }
@@ -305,8 +314,11 @@ class ContentService {
         this.getScriptById = async (scriptId, owner) => {
             const { userId } = owner;
             const doc = await this.repo.getScriptById(scriptId);
+            // 404, not `200 {data: null}`. Hooks, packaging and video-projects all throw
+            // here; only this one answered success with nothing in it, so a deleted or
+            // mistyped script id rendered an empty editor instead of a not-found state.
             if (!doc)
-                return null;
+                throw NotFound("Script not found");
             if (doc.accountId !== owner.accountId)
                 await forbidCrossAccount(this.accounts, doc.accountId, owner);
             return doc;

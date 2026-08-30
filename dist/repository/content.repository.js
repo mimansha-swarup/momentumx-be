@@ -1,7 +1,13 @@
+import { isDocumentId } from "../utlils/firestore-id.js";
 import { db, firebase } from "../config/firebase.js";
 class ContentRepository {
     constructor() {
         this.getIdea = async (ideaId) => {
+            // A route param reaching `.doc()` unchecked: `GET /v1/…/a%2Fb` decodes to
+            // "a/b", which addresses a COLLECTION and throws a bare Error — rendered as
+            // 500 "Something went wrong" where the honest answer is not-found.
+            if (!isDocumentId(ideaId))
+                return undefined;
             const doc = await this.db.collection(this.collection).doc(ideaId).get();
             return doc.data();
         };
@@ -97,6 +103,11 @@ class ContentRepository {
             }
         };
         this.getScriptById = async (scriptId) => {
+            // A route param reaching `.doc()` unchecked: `GET /v1/…/a%2Fb` decodes to
+            // "a/b", which addresses a COLLECTION and throws a bare Error — rendered as
+            // 500 "Something went wrong" where the honest answer is not-found.
+            if (!isDocumentId(scriptId))
+                return null;
             const snapshot = await this.db
                 .collection(this.script_collection)
                 .doc(scriptId)

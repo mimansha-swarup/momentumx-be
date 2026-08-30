@@ -1,3 +1,4 @@
+import { isDocumentId } from "../utlils/firestore-id.js";
 import { db, firebase } from "../config/firebase.js";
 class PackagingRepository {
     constructor() {
@@ -19,6 +20,11 @@ class PackagingRepository {
             return dataWithId;
         };
         this.get = async (packagingId) => {
+            // A route param reaching `.doc()` unchecked: `GET /v1/…/a%2Fb` decodes to
+            // "a/b", which addresses a COLLECTION and throws a bare Error — rendered as
+            // 500 "Something went wrong" where the honest answer is not-found.
+            if (!isDocumentId(packagingId))
+                return null;
             try {
                 const doc = await this.db
                     .collection(this.collection)

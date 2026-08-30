@@ -350,17 +350,17 @@
       "indexes": []
     },
     {
-      "collectionGroup": "accounts",
+      "collectionGroup": "context",
       "fieldPath": "websiteContent",
       "indexes": []
     },
     {
-      "collectionGroup": "accounts",
+      "collectionGroup": "context",
       "fieldPath": "channelDescription",
       "indexes": []
     },
     {
-      "collectionGroup": "accounts",
+      "collectionGroup": "context",
       "fieldPath": "competitors",
       "indexes": []
     },

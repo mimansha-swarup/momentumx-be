@@ -92,6 +92,18 @@ describe("ContentService — regenerateScript", () => {
     expect(err.statusCode).toBe(403);
   });
 
+  // GET /v1/scripts/:scriptId answered `200 { data: null }` for a script that
+  // does not exist — alone among the id-addressed routes, since hooks, packaging
+  // and video-projects all throw. The client rendered an empty editor on a
+  // success response instead of a not-found state.
+  it("reading a missing script is 404, not 200 with a null body", async () => {
+    mockContentRepo.getScriptById = jest.fn().mockResolvedValue(null);
+
+    const err = await service.getScriptById("script-gone", testOwner("user-1")).catch((e) => e);
+
+    expect(err.statusCode).toBe(404);
+  });
+
   it("happy path: returns { id, title, script } and calls editScript", async () => {
     const result = await service.regenerateScript(testOwner("user-1"), "script-1");
     expect(mockContentRepo.editScript).toHaveBeenCalledWith("script-1", { script: "Generated script text." });

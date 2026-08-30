@@ -411,7 +411,11 @@ class PackagingService {
     const existing = await this.repo.get(projectId);
     let result: Record<string, unknown>;
     if (existing) {
-      result = await this.repo.update(existing.id as string, {
+      // `projectId`, not `existing.id`: the packaging document is keyed on the
+      // video project by construction (firestore-conventions.md), while
+      // `repo.get` returns bare `doc.data()` and never stamps `id` — so the cast
+      // was hiding a possibly-undefined value on its way into `.doc()`.
+      result = await this.repo.update(projectId, {
         ...packagingData,
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       });
@@ -575,10 +579,13 @@ class PackagingService {
         fieldKey = "shorts";
       }
     } catch (genError) {
-      // Rollback status on generation failure
-      await this.repo.update(packagingId, {
-        [`itemStatuses.${statusKey}`]: previousStatus,
-      });
+      // No rollback here, deliberately. This used to write
+      // `itemStatuses.<item> = previousStatus` — the value it had just READ,
+      // because regenerate calls the pure `run*` generators, and the only writer
+      // of item statuses (`persistGeneratedItem` → `upsertGeneratedItem`) is on
+      // the `generate*` path. Nothing between the read above and this catch can
+      // change the status, so the "rollback" was a write of the current value.
+      // If a status is ever set before generation starts, restore it here.
       throw genError;
     }
 
