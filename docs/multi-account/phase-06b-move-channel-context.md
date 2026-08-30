@@ -232,6 +232,16 @@ unwritable under pressure, at the moment you need it, with a production incident
 Treat "reverse re-sync exists and has been run once against a scratch account" as an
 acceptance item for step 4, alongside the content checks above.
 
+**STATUS: step 4 shipped without it, and this item is now void rather than outstanding.**
+The four steps collapsed into one commit because the wipe decision removed what they were
+protecting: there is no existing data to carry and nothing is deployed, so there is no
+window in which `users/{uid}` holds anything worth re-syncing back to. A reverse re-sync
+would copy empty fields over a live channel context — the failure it was written to
+prevent, inverted. What replaces it is the wipe itself: the six content collections are
+cleared before this deploys, so no record predates the account model.
+
+If data ever exists on both sides again, this item comes back.
+
 ---
 
 ## Risks

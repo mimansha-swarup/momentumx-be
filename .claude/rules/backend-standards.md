@@ -51,7 +51,7 @@ Folder names are **singular**: `src/controller/`, `src/service/`, `src/repositor
 
 Route files: `src/routes/v1/{resource}.route.ts`, registered in `src/routes/v1/index.ts`.
 
-**Middleware exception:** `src/middleware/` predates this convention and uses snake_case (`auth.ts`, `response_formatter.ts`, `error_handler.ts`, `rate_limit.ts`, `async_handler.ts`, `logger_middleware.ts`). Do NOT rename these (breaks imports); new middleware follows the existing snake_case style of that folder.
+**Middleware exception:** `src/middleware/` predates this convention and uses snake_case (`auth.ts`, `account.ts`, `response_formatter.ts`, `error_handler.ts`, `rate_limit.ts`, `async_handler.ts`, `logger_middleware.ts`, `query_normalizer.ts`, `validate.ts`). Do NOT rename these (breaks imports); new middleware follows the existing snake_case style of that folder. `account.ts` is the most security-sensitive file in the folder — it is the single place an account id may be read from a request.
 
 ---
 
@@ -94,7 +94,7 @@ const user: any = doc.data();
 res.sendSuccess({ data, message?, statusCode?, meta? })
 
 // ✅ Error
-res.sendError({ message, statusCode?, detail? })
+res.sendError({ message, statusCode?, code?, detail? })
 
 // ❌ Never
 res.json({ success: true, data })
@@ -115,15 +115,16 @@ async getUser(userId: string) {
   return user;
 }
 
-// ✅ Controllers catch — send error response
-async getProfile(req: Request, res: Response) {
-  try {
-    const user = await this.userService.getUser(req.userId);
-    res.sendSuccess({ data: user });
-  } catch (error) {
-    res.sendError({ message: 'Failed to get profile', detail: error });
-  }
-}
+// ✅ Controllers do NOT catch — asyncHandler forwards to the error handler
+getProfile = asyncHandler(async (req: Request, res: Response) => {
+  const user = await this.userService.getUser(req.userId);
+  res.sendSuccess({ data: user });
+});
+
+// ❌ This file used to prescribe a per-method try/catch. Zero of the eight
+//    controllers do that, and hand-catching loses the HttpError: `statusCode`,
+//    `code` and `detail` are flattened into a generic 500, which is exactly what
+//    the 403 discriminator (api-design.md) exists to preserve.
 
 // ❌ Never do these
 catch (error) {
@@ -153,13 +154,25 @@ app.use(authMiddleware);
 
 ---
 
-## Service Instantiation Pattern
+## Service Instantiation Pattern — One Composition Root
+
+Everything is constructed once in `src/container.ts` and imported as a singleton.
+Route files import the controller; they never build one.
 
 ```typescript
+// ✅ src/routes/v1/user.route.ts
+import { userController } from "../../container.js";
+
+// ❌ Per-file construction. This file used to prescribe it, and it is what
+//    `container.ts` replaced — 51 constructions of ~15 classes, which let the
+//    SAME class exist at two capability levels depending on which router you
+//    arrived through (ideas.route passed ContentService its research context,
+//    scripts.route did not).
 const repo = new UserRepository();
 const service = new UserService(repo);
-const controller = new UserController(service);
 ```
+
+Wiring is pinned by `tests/unit/container.behaviour.test.ts`.
 
 ---
 

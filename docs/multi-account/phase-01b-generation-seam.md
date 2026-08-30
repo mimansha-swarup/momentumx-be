@@ -18,7 +18,11 @@ a conversion per generation service.
 
 ## Why this phase exists
 
-There are twelve places in this codebase that call a Gemini model:
+There are **eleven** places in this codebase that call a Gemini model (this said twelve,
+and the frontmatter said 11 — the frontmatter was right). **The file:line references below
+are stale by 40–70 lines and should not be used as coordinates.**
+`tests/unit/generation-seam-coverage.test.ts` is the accurate, self-updating inventory;
+its `UNWRAPPED` map is the conversion status. The list here is for shape only:
 
 ```
 content.service.ts:118   generateIdeas

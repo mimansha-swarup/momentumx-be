@@ -131,9 +131,10 @@ Check your logs for requests arriving without the header before flipping this.
   read, and TTL would be its only brake. Unchecked it grows into Spark's **1 GiB stored-data
   cap**, and hitting that cap fails writes **across the whole database**. If a downgrade is
   ever likely, cap `events` at write time instead of relying on TTL.
-- **The `migrations/{collection}` documents** from Phase 04 and Phase 05a. Keep them —
-  five tiny documents, and the only audit trail of what the backfill actually did. Decide
-  this deliberately rather than deleting them as clutter.
+- ~~**The `migrations/{collection}` documents** from Phase 04 and Phase 05a.~~ **VOID —
+  they do not exist.** Phase 04 was dropped and its script deleted; Phase 05a's
+  `rekey-packaging.ts` was deleted having never been run; `COLLECTIONS.MIGRATIONS` is gone
+  from the enum. There is no backfill audit trail to keep, because there was no backfill.
 - **Orphaned `topics` indexes.** If Phase 02's cleanup was skipped, eight indexes on the
   dead `topics` collection group are still deployed and will show up in step 1's
   verification as unexplained entries. Confirm they are gone.

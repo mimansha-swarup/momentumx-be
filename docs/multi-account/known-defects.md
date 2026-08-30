@@ -28,7 +28,7 @@ nobody reads to the bottom of. Anything a phase owns lives in that phase doc, no
 
 | Section | Covers |
 |---|---|
-| Backend (`momentumx-be`) | **None open.** |
+| Backend (`momentumx-be`) | **Two open**, both in §9 — competitor `channelTitle` is a URL, and trending falls back to a hardcoded niche. This cell said "None open" while §9 listed them. |
 | §2–§10 | **Frontend** (`momentumx-fe`) — open |
 
 Both repos are audited. Sections are labelled because the two deploy separately, and a

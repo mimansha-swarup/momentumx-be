@@ -156,8 +156,22 @@ channel back with all its data attached. UUID ids remove that resurrection path,
 tombstone still earns its place: it distinguishes "this channel was deleted" (410 Gone) from
 "this id never existed" (404), which is what stops a stale bookmark or a shared link reading
 as a bug. `DELETE` here sets
-`deletedAt` and must also purge the `accounts/{id}/usage/**` subcollection, which Firestore
-does not delete with its parent.
+`deletedAt` and then purges the channel's data, which Firestore does not delete with its
+parent: the six tenancy collections by `accountId` (`ideas`, `scripts`, `hooks`,
+`packaging`, `videoProjects`, `events`) and `accounts/{id}/context/channel` — the one
+holding the niche, the competitor list and the scraped website text.
+`accounts/{id}/usage/**` has no documents until Phase 08 and is swept with the code that
+starts writing it.
+
+**This shipped as a tombstone-only delete and was marked done for two phases.** The
+content stayed present and billable, unreachable only because every query filters
+`accountId`. The purge is capped and runs inline; a channel above the cap keeps the
+remainder behind the tombstone rather than becoming visible again, and Phase 10 is where
+an unbounded resumable sweep belongs.
+
+The last-channel refusal is now counted and tombstoned in **one transaction**
+(`softDeleteUnlessLast`). Read-check-write let two concurrent deletes both pass and leave
+the user with zero channels — the exact outcome the guard exists to prevent.
 
 ---
 

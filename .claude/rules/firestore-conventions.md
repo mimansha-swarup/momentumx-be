@@ -159,13 +159,21 @@ with `ownerOf(req)`; nothing else may assemble one.
 ## Firestore Collections
 
 ```
-accounts       — channels: members, roles, owner, display name, tombstone (deletedAt)
+accounts       — channels: members, roles, owner, display name, tombstone (deletedAt).
+                 Deleting one tombstones the account and then PURGES the six tenancy
+                 collections by accountId plus the context subcollection — Firestore
+                 cascades nothing, and after the tombstone none of it is reachable
                  (+ a `context/channel` SUBCOLLECTION — the scrape is uncapped and the
                   account doc is read on every request, so it must not live on it)
 billing        — Phase 08, unused
 invites        — Phase 09, unused
-users          — user profiles, onboarding data, channel/competitor info,
-                 and `lastActiveAccountId` (the pointer accountMiddleware repairs)
+users          — IDENTITY ONLY: uid, name, email, photoURL, stats, and
+                 `lastActiveAccountId` (the pointer accountMiddleware repairs).
+                 NOT the channel — Phase 06b moved niche, targetAudience,
+                 brandName, the channel URL, the website scrape and competitors
+                 into `accounts/{id}/context/channel`. Writing them here again
+                 makes onboarding a second channel overwrite the first one's,
+                 and makes every channel report the first one's onboarded state.
 ideas          — generated video ideas with vector embeddings
 scripts        — full video scripts (document ID = own UUID; ideaId + videoProjectId FKs link back.
                  Legacy docs may have ideaId field — handle as-is, do NOT backfill)

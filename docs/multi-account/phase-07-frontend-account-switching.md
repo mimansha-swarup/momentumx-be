@@ -403,13 +403,21 @@ property — it is load-bearing, and the bug it fixed was subtle.
 The one-way door is in the right place. It has historically been under-gated because these
 were written as recommendations. They are checklist items.
 
-1. **Phase 03 confirmed live on all three deploy artifacts** — Vercel, Render, Cloud
-   Functions — *before* Phase 04 ran.
-2. **Phase 04 verified:** `mismatched === 0` and `missing === 0` across all five
-   collections, `migrations/{collection}.completedAt` present for each, orphan count
-   recorded and triaged, managed export taken **and restored once**.
-3. **Phase 06 cross-account suite green**, including the **non-uid-keyed fixture account**.
-   Without that fixture the suite proves nothing about the swap.
+1. ~~**Phase 03 confirmed live on all three deploy artifacts** *before Phase 04 ran*.~~
+   **VOID — there is no Phase 04.** Replaced by: Phases 03/05/06/06a/06b are live on
+   **Vercel and Render together**. Phase 06 flips reads, so a one-host deploy has Vercel
+   querying `accountId` while Render still serves the SSE route from the old build.
+2. ~~**Phase 04 verified:** `migrations/{collection}.completedAt` present for each…~~
+   **VOID — Phase 04 was dropped**, its script and 33 tests deleted, and
+   `COLLECTIONS.MIGRATIONS` removed from the enum. No `migrations` document can ever
+   exist, so this item could only ever be signed off by ignoring it. Replaced by:
+   **the six content collections have been wiped**, which is what the dropped backfill
+   was traded for — Phase 06 makes any untagged record invisible.
+3. ~~**Phase 06 cross-account suite green**, including the **non-uid-keyed fixture
+   account**.~~ The suite must be green; the *fixture* is **VOID**. README decision 2 and
+   `phase-06` both retired it — account ids are UUID v4, so the id spaces are disjoint by
+   construction and the fixture proves nothing. `tests/unit/cross-account.behaviour.test.ts`
+   does not have one and does not need one. Do not block the door on it.
 4. **Phase 05a landed and soaked** — packaging keyed on `videoProjectId`,
    `findByVideoProject` gone.
 5. **Phase 06a shipped** — create a channel, list channels, persist `lastActiveAccountId`.

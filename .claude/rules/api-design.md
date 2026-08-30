@@ -90,7 +90,7 @@ No router ships without auth. A router left unprotected "temporarily for testing
 
 ```typescript
 // Success
-{ success: true, data: unknown, message?: string, meta?: object }
+{ success: true, data: unknown, message?: string, meta?: object, warning?: string }
 
 // Error
 { success: false, message: string, code?: ErrorCode, detail?: unknown }
@@ -118,6 +118,13 @@ Without the discriminator a viewer clicking a button the UI failed to disable ge
 **ejected from the channel**, and a bookmarked project living in the user's other channel
 renders as *"Project not found. It may have been deleted."* — when it is one switch away.
 
+Services do not choose between the first two by hand: every cross-channel ownership check
+calls `forbidCrossAccount(this.accounts, doc.accountId, owner)` (`account.service.ts`),
+which looks the resource's channel up and answers `wrong_account` (with
+`{ accountId, displayName }`) for a member and `account_forbidden` for everyone else. All
+19 sites used to throw a bare `Forbidden()` with no `code` at all, so the client could not
+tell them apart and ejected the user from a channel over a project sitting one switch away.
+
 Use the named factories in `utlils/errors.ts` (`AccountForbidden()`, `WrongAccount()`,
 `RoleForbidden()`), never a `code` argument on `Forbidden()`: `message`, `detail` and `code`
 would be three loosely-typed trailing parameters in a row, which is the positional trap that
@@ -144,10 +151,26 @@ unconditional membership check inside that one middleware. Never read an account
 check, which is precisely how one user reads another's channel. Pinned by
 `tests/unit/dual-write-coverage.test.ts`.
 
-A missing header falls back to the caller's own channel rather than 400ing, so
-already-loaded browser tabs keep working across the deploy. **Phase 07 flips
-`FALLBACK_ALLOWS_WRITES` to `false`** in the same commit that makes the frontend send the
-header, at which point the fallback becomes read-only.
+**The header must be a document id.** It is trimmed and then checked with
+`isDocumentId` (`src/utlils/firestore-id.ts`) BEFORE it reaches `.doc()`, and a malformed
+one is a **400**, not a 403 — the client is broken, no permission decision was made. This
+is not cosmetic: `.doc()` splits on `/`, so `X-Account-Id: <other-id>/context/channel`
+addressed and successfully read another channel's context document (the membership check
+refused it only because that document has no `memberUids`), and `X-Account-Id: a/b`
+addressed a collection, threw a bare `Error`, and returned **500 on every protected
+route**. A well-formed but unknown id is still 403.
+
+A missing header falls back to the caller's channel rather than 400ing, so already-loaded
+browser tabs keep working across the deploy. The fallback resolves
+**`lastActiveAccountId` first**, then the first live membership — through the same
+`resolveActiveAccountId` that `GET /v1/accounts` reports as `activeAccountId`, because the
+two disagreeing is what made `POST /v1/accounts/:id/activate` a 204 that changed nothing
+for every data route, and made onboarding a newly created channel overwrite the first
+channel's niche, audience and website. A pointer at a tombstoned or departed channel falls
+through rather than 410ing: with no header this is a guess, and a bad guess must not lock a
+user out of channels that still work. **Phase 07 flips `FALLBACK_ALLOWS_WRITES` to
+`false`** in the same commit that makes the frontend send the header, at which point the
+fallback becomes read-only.
 
 **SSE exception.** `GET /v1/scripts/stream/:projectId` cannot send headers (`EventSource`),
 so it mounts `resolveAccountFromProject` instead, which derives the account from the
@@ -155,7 +178,9 @@ so it mounts `resolveAccountFromProject` instead, which derives the account from
 Phase 09 gates exactly this route on it.
 
 **CORS:** `X-Account-Id` must stay in `allowedHeaders` in `app.ts`. Drop it and the browser
-strips the header on every preflighted request while the entire test suite still passes.
+strips the header on every preflighted request — now pinned by a real preflight in
+`tests/unit/app.cors.behaviour.test.ts`, because for three phases this was asserted by
+nothing but the comment above the config.
 
 ---
 
@@ -281,7 +306,13 @@ Snapshot of the API surface. When exact behavior matters, verify against `src/ro
   GET   /:id                   — one channel in full (settings screen)
   PATCH /:id                   — rename (owner only)
   POST  /:id/activate          — set lastActiveAccountId. 204.
-  DELETE /:id                  — owner only; 400s on the user's LAST channel
+  DELETE /:id                  — owner only; 400s on the user's LAST channel (counted and
+                                 tombstoned in ONE transaction, so two concurrent deletes
+                                 cannot leave a user with zero channels). Tombstones the
+                                 account, then PURGES its ideas, scripts, hooks, packaging,
+                                 videoProjects and events plus the context subcollection —
+                                 Firestore does not cascade, and none of it is reachable
+                                 afterwards to clean up later.
 
 /v1/user
   POST  /onboarding/prefill    — infer {niche, targetAudience, brandName} from a channel URL (suggestions, not persisted)
@@ -314,6 +345,8 @@ Snapshot of the API surface. When exact behavior matters, verify against `src/ro
   POST  /:hooksId/select       — select a hook, completes hooks step
   POST  /:hooksId/regenerate   — regenerate hooks, cascades stale to packaging
   GET   /:hooksId/export       — export hooks as plain text
+  GET   /:hooksId              — get a single hooks batch
+                                 (registered AFTER /export so the literal wins)
 
 /v1/packaging
   # generate-* PERSIST server-side: each writes its item straight into the project's
@@ -331,7 +364,8 @@ Snapshot of the API surface. When exact behavior matters, verify against `src/ro
                                   body — server-resolved. A door save without videoProjectId
                                   creates ONE project and returns it on the saved doc; the client
                                   must adopt that id or repeat saves mint duplicates)
-  GET   /list                  — list user's packaging
+  GET   /list                  — list the ACTIVE CHANNEL's packaging (accountId-scoped,
+                                 not per-user — the pre-Phase-06 framing)
   GET   /:packagingId          — get single packaging
   POST  /:packagingId/regenerate/:item — regenerate one packaging item
   POST  /:packagingId/select-title — finalize a title → updates the project's display title

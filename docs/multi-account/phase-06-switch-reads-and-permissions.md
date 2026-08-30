@@ -94,7 +94,15 @@ into one ordering; that is the bug that made search paging re-return page 1 fore
 
 ### 2. Permission checks compare the account
 
-**Seventeen** places do this (`grep -rn 'createdBy\s*!==' src/` — the count is exact):
+**Seventeen** places did this. **That grep now returns zero** — the flip is done, and
+there are 19 `accountId !==` checks in its place (18 in services, 1 in
+`video-project.repository.ts`). Kept for the shape, not as an instruction: do not
+re-run the grep expecting a worklist.
+
+Since then all 18 service-level checks route through `forbidCrossAccount`, which answers
+`wrong_account` or `account_forbidden` rather than a bare 403; the repository one stays
+bare deliberately (it is an in-transaction backstop behind a service check that has
+already refused the caller). Originally (`grep -rn 'createdBy\s*!==' src/`):
 
 ```ts
 if (doc.createdBy !== userId) throw Forbidden();
@@ -116,9 +124,15 @@ consciously left with a comment saying why.
 
 ### 3. The repository rule, restated
 
-**Phase 01 item 6 already closed the exploitable holes** (`linkResource` for all three
-resource types, and the `ContextService` resolvers) using `createdBy`, because they needed
-no tenancy work and were live. **Phase 05a already deleted `findByVideoProject`** and made
+**Phase 01 item 6 closed `linkResource`** for all three resource types, using `createdBy`,
+because it needed no tenancy work and was live.
+
+**This section also claimed the `ContextService` resolvers were closed. They are not.**
+`resolveWorkingTitle`, `resolveScript` and `resolveSelectedHook` (`context.service.ts`)
+each fetch by bare id with no ownership or account check of any kind. Not exploitable
+today — every caller passes pointers off a project that has already been ownership-checked
+— but Phase 10's definition of done ("no document is reachable outside its channel") must
+not be signed off against this sentence. **Phase 05a already deleted `findByVideoProject`** and made
 packaging deterministic, in the required order.
 
 What remains here is turning those `createdBy` comparisons into `accountId` ones, along

@@ -200,10 +200,21 @@ export const CREDIT_COSTS: Record<GenerationKind, number> = {
   script: 5,         // the longest generation
   hooks: 1,
   title: 1,
-  packaging: 4,      // description + thumbnail + shorts, charged ONCE — see below
+  description: 2,    // was a single `packaging: 4` — see below
+  thumbnail: 1,
+  shorts: 1,
   prefill: 0,        // onboarding; free, but still traced
 } as const;
 ```
+
+**This literal did not compile against the shipped union**, and the phase's own safety
+argument — "the type makes it a compile error" — fired against the phase itself. Phase 01b
+shipped `GenerationKind` with `description | thumbnail | shorts` as three separate kinds
+and no `packaging` member (`src/constants/pipeline.ts`), because they are three independent
+unlocked generations with no shared `KIND_STEP` entry. So the "charge packaging once, not
+three times" decision below has **nowhere to attach**: the seam never sees a single
+`packaging` generation. Either price the three separately (as above) or give Phase 01b a
+composite kind first — but decide it before writing the debit, not after.
 
 Keyed on `GenerationKind` from `src/constants/pipeline.ts` (Phase 01b) so a new generation
 kind cannot be added without a price — the type makes it a compile error.

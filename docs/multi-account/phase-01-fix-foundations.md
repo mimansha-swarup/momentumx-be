@@ -114,7 +114,7 @@ entire point of this project — one person's work silently overwrites the other
 |---|---|
 | `packaging.repository.ts` → `markStale()` and `clearStale()` | Both rewrite the **whole** `itemStatuses` map. If a regenerate completes in between, its `completed` status is reverted to `stale`. |
 | `video-project.service.ts` → `startStep()` | This is the in-flight lock. Two generate calls can both read `not_started` and both start. Today that's a duplicate Gemini call. **After Phase 08 it's a double charge, or a free double generation.** |
-| `packaging.repository.ts` → `upsertGeneratedItem()` | Calls `findByVideoProject()` **outside** the transaction, then writes inside it. The comment claims the transaction makes this safe; it doesn't — the document it decided to write to can change in between. |
+| `packaging.repository.ts` → `upsertGeneratedItem()` | ~~Calls `findByVideoProject()` **outside** the transaction, then writes inside it.~~ **Superseded by Phase 05a:** `findByVideoProject` is deleted and this is now a point read on `doc(videoProjectId)` *inside* the transaction. Do not go looking for the method. |
 
 **Fixes:**
 
@@ -317,7 +317,7 @@ comparison becomes `accountId`, along with the other 17.
 **The same shape, elsewhere.** These are not exploitable today because every caller passes
 an already-checked id, but they take a bare document id with no ownership filter:
 
-- `findByVideoProject` (`packaging.repository.ts:147-151`) — queries by `videoProjectId`
+- ~~`findByVideoProject`~~ (**deleted in Phase 05a — this method no longer exists**) — queried by `videoProjectId`
   with no ownership filter at all. (Phase 05a deletes this method entirely.)
 - `ContextService` resolves the idea, script and hooks by id with no checks, trusting that a
   project's stored pointers are internally consistent — which item 6 above is what makes true.
@@ -383,7 +383,7 @@ would otherwise inherit, in one change.
 exactly as `createdBy` is. With the schema in place it cannot arrive from a client at all,
 which is the stronger guarantee — do not rely on the ordering a second time.
 
-**Noted, not fixed here:** `validate()` is used three times in `user.route.ts` and once in
+**Noted, not fixed here:** **Superseded.** `validate()` is now used 21 times across 7 of the 8 routers (account 2, hooks 3, ideas 2, packaging 7, scripts 1, user 3, video-project 3); only `research.route.ts` has none, and it takes no bodies. `tests/unit/validation-coverage.test.ts` enforces it. Original text: `validate()` is used three times in `user.route.ts` and once in
 `ideas.route.ts`, and **zero times** in the other five routers (`hooks`, `packaging`,
 `research`, `scripts`, `video-project`). Packaging is where the gap has teeth, because its
 body is spread onto a document. The rest is real but separate work.

@@ -22,7 +22,7 @@ Built and tested; **not deployed**. Suite: 897 tests, 59 suites.
 | | |
 |---|---|
 | `code` on the error contract (4 files) | done — `tests/unit/error-code-contract.behaviour.test.ts` |
-| `accountMiddleware`, mounted on all 7 routers | done — `tests/unit/auth-coverage.test.ts` pins the mount AND the order |
+| `accountMiddleware`, mounted on all 8 routers | done — `tests/unit/auth-coverage.test.ts` pins the mount AND the order |
 | `resolveAccountFromProject` on the SSE route | done |
 | Tombstone → 410, pointer cleared | done |
 | CORS `X-Account-Id` | done |
@@ -99,7 +99,8 @@ accountMiddleware(req, res, next):
       if still missing → ensureDefaultAccount(req.userId)
 
   account = accounts/{accountId}
-  if not found                              → 404
+  if malformed id (contains "/", empty, "..")→ 400   ← before it reaches .doc()
+  if not found                              → 403 account_forbidden, NOT 404
   if req.userId not in account.memberUids   → 403, log { event: "account_mismatch" }
 
   req.accountId = accountId
@@ -309,7 +310,12 @@ same commit. Phase 10 keeps only the end-state tidy.
 
 - A request with a valid `X-Account-Id` succeeds; `req.accountId` and `req.role` are set.
 - A request with **someone else's** account id returns 403 and logs `account_mismatch`.
-- A request for a non-existent account returns 404.
+- A request for a non-existent account returns **403 `account_forbidden`**, not 404. The
+  pseudo-code above said 404 and the code never did that: an existence oracle over account
+  ids is exactly what this middleware should not be. Acceptance was written against a
+  status the system does not return.
+- A request whose header is not a valid document id returns **400** without reading
+  anything.
 - A request with **no** header still works, using the fallback.
 - A browser request from the real frontend origin succeeds with the header present — the
   CORS check. Verify in a browser, not with `curl`; curl doesn't do preflight.

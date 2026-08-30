@@ -28,6 +28,9 @@ GENERATION_CONFIG_SCRIPTS           → plain text (text/plain, streamed via SSE
 GENERATION_CONFIG_HOOKS             → {hooks: string[5]} (responseSchema-enforced)
 GENERATION_CONFIG_PREFILL           → {niche, targetAudience, brandName} (responseSchema-enforced)
 GENERATION_CONFIG_TITLE_VARIATIONS  → {titles: [{title, characterCount?, score, reason}]} (responseSchema-enforced; post-script Title step)
+GENERATION_CONFIG_DESCRIPTION       → SEO description (responseSchema-enforced; packaging step)
+GENERATION_CONFIG_THUMBNAIL         → thumbnail brief (responseSchema-enforced; packaging step)
+GENERATION_CONFIG_SHORTS            → {segments, totalDuration} (responseSchema-enforced; packaging step)
 ```
 
 **Critical:** Never use a JSON config with a plain text prompt — Gemini will return malformed output that breaks `JSON.parse`.
@@ -65,14 +68,25 @@ Engineer modifies that file.
 
 ---
 
-## Always Parse JSON Responses
+## Always Parse JSON Responses — Through `collectJson`, Never Inline
 
 ```typescript
-// Gemini returns JSON as a string — always parse (packaging, titles, scoring)
+// ✅ The only way JSON generations are drained and parsed
+const result = await collectJson<TitleVariations>(stream, "title-variations");
+
+// ❌ This section used to prescribe exactly this, contradicting the rule above
 const result = JSON.parse(accumulatedRes);
 ```
 
-If `JSON.parse` throws, the prompt or config is misconfigured — fix the prompt/config, do not swallow the error and do not add "repair" heuristics on top of malformed output.
+`collectJson` (`src/utlils/ai.ts`) handles the three real failure modes — blocked
+stream, empty body, unparseable body — as a **503 the client can retry**, with a
+structured log naming which one it was. A raw `JSON.parse` throws a `SyntaxError`
+that the error handler masks as "Something went wrong". No service does an inline
+parse today; this section described a practice the codebase had already retired.
+
+If the parse fails, the prompt or config is misconfigured — fix the prompt/config,
+do not swallow the error and do not add "repair" heuristics on top of malformed
+output.
 
 ---
 
@@ -137,11 +151,18 @@ Non-negotiable:
 in-memory steps inside `getClusteredTitles` and stated that all KMeans logic lives
 in that one file. It does not, and looking only there will miss two of the four.
 
+**This block used to show `.where("createdBy", "==", userId)`.** Phase 06 moved
+tenancy from the author to the channel, and this file was not updated with the
+others — so a clustering-adjacent query written from this rule would have been
+correctly indexed, correctly shaped and **wrongly scoped**, which is the exact
+failure that phase exists to prevent. `accountId` is the permission field;
+`createdBy` is authorship only. See `firestore-conventions.md`.
+
 ```typescript
 // 1+2. Filter archived and cap at 200 — IN THE QUERY, not in memory.
 //      src/repository/content.repository.ts → getIdeasForClustering()
 db.collection(COLLECTIONS.IDEAS)
-  .where("createdBy", "==", userId)
+  .where("accountId", "==", accountId)  // ← tenancy: the CHANNEL, not the author
   .where("archived", "==", false)   // ← archived filter
   .limit(200)                        // ← the cap
   .select("title", "embedding")      // projected: never read whole idea docs

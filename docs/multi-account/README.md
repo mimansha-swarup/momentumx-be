@@ -30,8 +30,13 @@ the UI; see the naming rule in the decisions table.
 
 One line explains the whole cost:
 
-> **`createdBy == uid` is the only thing separating one user's data from another's,
-> and it appears in every query and every permission check in the system.**
+> **`createdBy == uid` WAS the only thing separating one user's data from another's,
+> and it appeared in every query and every permission check in the system.**
+
+The counts below describe the system **as it was before Phase 06**, which is what makes
+the size of the change legible. As of Phase 06 they are all zero: no service compares
+`createdBy`, no repository queries it, and `tests/unit/dual-write-coverage.test.ts` fails
+if either comes back.
 
 Six collections carry `createdBy` — `ideas`, `scripts`, `hooks`, `packaging`,
 `videoProjects`, `events` — and four of them are *queried* by it (`hooks` is only ever
@@ -172,9 +177,9 @@ Each phase is a separate document and is meant to be shippable on its own.
 | [04](./phase-04-backfill.md) | ~~Backfill existing data~~ | **Dropped** — dev data is disposable, so it gets wiped before Phase 06 instead of migrated | n/a | ⬜ dropped |
 | [05](./phase-05-account-context-api.md) | Account context in the API | `X-Account-Id` header, membership check, `req.accountId`, the error-code contract | Yes | 🟡 built, not deployed |
 | [05a](./phase-05a-packaging-deterministic-key.md) | **Packaging: one deterministic key** | Every packaging doc keyed on `videoProjectId`; every lookup query deleted | No | ✅ done |
-| [06](./phase-06-switch-reads-and-permissions.md) | Switch reads and permissions | Queries and permission checks move from `createdBy` to `accountId` | Yes, until Phase 07 | — |
-| [06a](./phase-06a-accounts-api.md) | **The Accounts API** | List, create and activate channels — the endpoints the switcher talks to | Yes | — |
-| [06b](./phase-06b-move-channel-context.md) | Move channel context to the account | Generation reads niche/competitors/website from the channel, not the person | ⚠️ Step 4 is a second door | — |
+| [06](./phase-06-switch-reads-and-permissions.md) | Switch reads and permissions | Queries and permission checks move from `createdBy` to `accountId` | Yes, until Phase 07 | 🟡 code-complete, **not deployed** |
+| [06a](./phase-06a-accounts-api.md) | **The Accounts API** | List, create and activate channels — the endpoints the switcher talks to | Yes | 🟡 code-complete, **not deployed** |
+| [06b](./phase-06b-move-channel-context.md) | Move channel context to the account | Generation reads niche/competitors/website from the channel, not the person | ⚠️ Step 4 is a second door | 🟡 backend code-complete; frontend outstanding |
 | [07](./phase-07-frontend-account-switching.md) | Frontend account state and switching | Switcher UI, add a channel, per-channel onboarding | ⚠️ **One-way door** | — |
 | [08](./phase-08-credits-and-metering.md) | Credits and metering | Monthly allowance, price list, check-and-consume through the seam | Yes | — |
 | [09](./phase-09-sharing-invites-and-roles.md) | Sharing: invites and roles | Invite links, role enforcement, read-only UI | Yes | — |
@@ -315,7 +320,7 @@ the plan (07) lands on the codebase with the least coverage. Phase 07 names the 
 one test over the root reducer and the account-switch reset, which is the only cheap way to
 catch the two failure modes that fail *open* and are invisible until a second channel exists.
 
-**Backend suite status, measured 2026-08-26:** 906 tests, 60 suites, **all passing.** An earlier draft of Phase 01 claimed the suite "fails about one
+**Backend suite status, measured 2026-08-30:** 1034 tests, 66 suites, **all passing.** An earlier draft of Phase 01 claimed the suite "fails about one
 run in three". That is **not currently reproducible** — thirteen consecutive clean runs
 have now been observed across two sessions. The claim has been removed rather than
 repeated. If intermittent failures return, treat it as a Phase 01 blocker for the reason
