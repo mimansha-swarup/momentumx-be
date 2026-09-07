@@ -72,7 +72,7 @@ Every query that filters `createdBy` filters `accountId` instead:
 |---|---|
 | `content.repository.ts` | `getIdeas`, `getIdeasForClustering`, `getActiveBatch`, `archiveUserIdeas`, `getScripts` |
 | `video-project.repository.ts` | `list`, `findByIdeaId`, `findByScriptId` |
-| `packaging.repository.ts` | `getByUserId` |
+| `packaging.repository.ts` | `getByAccountId` (renamed from `getByUserId` in this phase — the name was half the bug) |
 
 The indexes for all of these were built in Phase 02 and are `READY`.
 
