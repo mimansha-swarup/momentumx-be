@@ -320,7 +320,7 @@ the plan (07) lands on the codebase with the least coverage. Phase 07 names the 
 one test over the root reducer and the account-switch reset, which is the only cheap way to
 catch the two failure modes that fail *open* and are invisible until a second channel exists.
 
-**Backend suite status, measured 2026-08-30:** 1034 tests, 66 suites, **all passing.** An earlier draft of Phase 01 claimed the suite "fails about one
+**Backend suite status, measured 2026-09-07:** 1038 tests, 66 suites, **all passing.** An earlier draft of Phase 01 claimed the suite "fails about one
 run in three". That is **not currently reproducible** — thirteen consecutive clean runs
 have now been observed across two sessions. The claim has been removed rather than
 repeated. If intermittent failures return, treat it as a Phase 01 blocker for the reason

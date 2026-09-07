@@ -11,7 +11,7 @@ tags: ["multi-account", "phase-06", "security", "tenancy"]
 
 ## Where this stands (2026-08-29)
 
-Code done, **not deployed**. Suite: 1034 tests, 66 suites, green; `tsc` clean; `dist/` current.
+Code done, **not deployed**. Suite: 1038 tests, 66 suites, green; `tsc` clean; `dist/` current.
 
 | | |
 |---|---|
@@ -22,6 +22,7 @@ Code done, **not deployed**. Suite: 1034 tests, 66 suites, green; `tsc` clean; `
 | `eventService.capture` takes the owner | done — the last `ensureDefaultAccount` on a write path |
 | Cross-account suite over a Firestore fake | done, 29 tests — every route in the list below, plus the body-supplied-id cases |
 | `.claude/rules/firestore-conventions.md` rewritten | done, same commit |
+| `ContextService` resolvers ownership-checked | done — the one item this doc wrongly recorded as closed in Phase 01 |
 | **Wipe the content collections** | **outstanding — do it before this deploys** |
 | **Deployed to Vercel + Render together** | **outstanding** |
 
@@ -127,12 +128,18 @@ consciously left with a comment saying why.
 **Phase 01 item 6 closed `linkResource`** for all three resource types, using `createdBy`,
 because it needed no tenancy work and was live.
 
-**This section also claimed the `ContextService` resolvers were closed. They are not.**
-`resolveWorkingTitle`, `resolveScript` and `resolveSelectedHook` (`context.service.ts`)
-each fetch by bare id with no ownership or account check of any kind. Not exploitable
-today — every caller passes pointers off a project that has already been ownership-checked
-— but Phase 10's definition of done ("no document is reachable outside its channel") must
-not be signed off against this sentence. **Phase 05a already deleted `findByVideoProject`** and made
+**This section claimed the `ContextService` resolvers were closed, and for two phases they
+were not** — `resolveWorkingTitle`, `resolveScript` and `resolveSelectedHook` each fetched
+by bare id with no check of any kind. They are closed **now**: all three take the `owner`
+and run `assertSameChannel`, which refuses a resource from another channel rather than
+reading it into the prompt, and refuses an untagged legacy document rather than admitting
+it. Four tests in `tests/unit/context.service.test.ts` pin it.
+
+It was never exploitable from a request body — the ids come off an already-checked project
+— but it was the last read before the model, so a bad pointer would have produced Phase
+06b's exact failure: documents tagged correctly, content belonging to a different channel,
+no error and no failing test. Phase 10's definition of done ("no document is reachable
+outside its channel") can now be signed off against this section. **Phase 05a already deleted `findByVideoProject`** and made
 packaging deterministic, in the required order.
 
 What remains here is turning those `createdBy` comparisons into `accountId` ones, along

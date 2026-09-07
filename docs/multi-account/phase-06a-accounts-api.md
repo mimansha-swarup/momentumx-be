@@ -11,7 +11,7 @@ tags: ["multi-account", "phase-06a", "api"]
 
 ## Where this stands (2026-08-30)
 
-Code done, **not deployed**. Suite: 1034 tests, 66 suites, green; `tsc` clean; `dist/` current.
+Code done, **not deployed**. Suite: 1038 tests, 66 suites, green; `tsc` clean; `dist/` current.
 
 | | |
 |---|---|

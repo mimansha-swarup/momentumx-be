@@ -27,7 +27,7 @@ import ContentRepository from "../../src/repository/content.repository";
 import HooksRepository from "../../src/repository/hooks.repository";
 import VideoProjectService from "../../src/service/video-project.service";
 import { HttpError, Forbidden } from "../../src/utlils/errors";
-import { testOwner, fakeAccountRepo } from "../helpers/account";
+import { testOwner, fakeAccountRepo, TEST_ACCOUNT_ID, OTHER_ACCOUNT_ID } from "../helpers/account";
 
 jest.mock("../../src/repository/user.repository");
 jest.mock("../../src/repository/content.repository");
@@ -76,6 +76,10 @@ const accountRepo = {
   getContext: jest.fn(),
   // Parameters declared so `mock.calls[n][1]` is the patch, not `never`.
   writeContext: jest.fn(async (_accountId: string, _patch: Record<string, unknown>) => undefined),
+  // Reached by `forbidCrossAccount` when a linked resource belongs elsewhere.
+  // Null = "the caller is not a member of that channel", so the refusal is
+  // `account_forbidden` rather than an offer to switch.
+  findById: jest.fn(async (_accountId: string) => null as Record<string, unknown> | null),
 };
 const channelRepo = () => accountRepo as never;
 
@@ -101,9 +105,9 @@ describe("ContextService.assemble — degradation matrix", () => {
 
     accountRepo.getContext.mockResolvedValue(userDoc);
     vpService.getById = jest.fn().mockResolvedValue(fullProject);
-    contentRepo.getIdea = jest.fn().mockResolvedValue({ id: "idea-1", title: "Idea title" });
-    contentRepo.getScriptById = jest.fn().mockResolvedValue({ id: "script-1", script: "Full script text" });
-    hooksRepo.findById = jest.fn().mockResolvedValue({ id: "hooks-1", hooks: ["Hook 0", "Hook 1", "Hook 2"] });
+    contentRepo.getIdea = jest.fn().mockResolvedValue({ id: "idea-1", title: "Idea title", accountId: TEST_ACCOUNT_ID });
+    contentRepo.getScriptById = jest.fn().mockResolvedValue({ id: "script-1", script: "Full script text", accountId: TEST_ACCOUNT_ID });
+    hooksRepo.findById = jest.fn().mockResolvedValue({ id: "hooks-1", hooks: ["Hook 0", "Hook 1", "Hook 2"], accountId: TEST_ACCOUNT_ID });
   });
 
   it("full context: project with script + selected hook + packaging", async () => {
@@ -205,11 +209,80 @@ describe("ContextService.assemble — degradation matrix", () => {
 
   it("selectedHookIndex out of range degrades selectedHook to null", async () => {
     // Project selects index 1, but the stored batch has fewer hooks.
-    hooksRepo.findById = jest.fn().mockResolvedValue({ id: "hooks-1", hooks: [] });
+    hooksRepo.findById = jest.fn().mockResolvedValue({ id: "hooks-1", hooks: [], accountId: TEST_ACCOUNT_ID });
 
     const ctx = await service.assemble(testOwner(USER_ID), { videoProjectId: "proj-1" });
 
     expect(ctx.sessionContext.selectedHook).toBeNull();
+  });
+
+  /**
+   * The gap Phase 06 recorded as closed and was not.
+   *
+   * These three resolvers fetch by an id taken off the project document, so
+   * nothing here is reachable from a request body — which is why the check was
+   * skipped. But this is the last read before the model: a pointer at another
+   * channel's document would have been read and pasted into the prompt, and the
+   * result is Phase 06b's exact failure — documents tagged correctly, the CONTENT
+   * belonging to a different channel, no error and no failing test.
+   *
+   * A foreign resource THROWS rather than degrading to null. Degrading would make
+   * it indistinguishable from "no script yet" and would generate quietly from a
+   * silently emptier context.
+   */
+  describe("a linked resource from another channel is refused, not read", () => {
+    const foreign = { accountId: OTHER_ACCOUNT_ID };
+
+    it("refuses an idea belonging to another channel", async () => {
+      contentRepo.getIdea = jest
+        .fn()
+        .mockResolvedValue({ id: "idea-x", title: "Their idea", ...foreign });
+
+      const err = await service
+        .assemble(testOwner(USER_ID), { videoProjectId: "proj-1" })
+        .catch((e) => e);
+
+      expect(err.statusCode).toBe(403);
+    });
+
+    it("refuses a script belonging to another channel, rather than putting it in the prompt", async () => {
+      contentRepo.getScriptById = jest
+        .fn()
+        .mockResolvedValue({ id: "script-x", script: "Their script text", ...foreign });
+
+      const err = await service
+        .assemble(testOwner(USER_ID), { videoProjectId: "proj-1" })
+        .catch((e) => e);
+
+      expect(err.statusCode).toBe(403);
+      expect(err.message).not.toContain("Their script text");
+    });
+
+    it("refuses a hook batch belonging to another channel", async () => {
+      hooksRepo.findById = jest
+        .fn()
+        .mockResolvedValue({ id: "hooks-x", hooks: ["Their hook"], ...foreign });
+
+      const err = await service
+        .assemble(testOwner(USER_ID), { videoProjectId: "proj-1" })
+        .catch((e) => e);
+
+      expect(err.statusCode).toBe(403);
+    });
+
+    it("refuses an untagged legacy resource too — fail closed, not open", async () => {
+      // No `accountId` at all. Phase 06's rule is that a document written before
+      // the tenancy flip is refused rather than admitted.
+      contentRepo.getScriptById = jest
+        .fn()
+        .mockResolvedValue({ id: "script-legacy", script: "Old script" });
+
+      const err = await service
+        .assemble(testOwner(USER_ID), { videoProjectId: "proj-1" })
+        .catch((e) => e);
+
+      expect(err.statusCode).toBe(403);
+    });
   });
 
   it("sparse user doc yields nulls/empties, never throws", async () => {
