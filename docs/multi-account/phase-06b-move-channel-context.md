@@ -11,7 +11,7 @@ tags: ["multi-account", "phase-06b", "generation"]
 
 ## Where this stands (2026-08-30)
 
-Backend done. Suite: 954 tests, 61 suites, green; `tsc` clean; `dist/` current.
+Backend done. Suite: 1034 tests, 66 suites, green; `tsc` clean; `dist/` current.
 
 **The four steps collapsed into one commit,** and that is a consequence of an earlier
 decision rather than a shortcut. Dual-write → soak → re-sync → flip exists to carry

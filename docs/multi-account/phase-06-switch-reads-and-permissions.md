@@ -11,7 +11,7 @@ tags: ["multi-account", "phase-06", "security", "tenancy"]
 
 ## Where this stands (2026-08-29)
 
-Code done, **not deployed**. Suite: 902 tests, 59 suites, green; `tsc` clean; `dist/` current.
+Code done, **not deployed**. Suite: 1034 tests, 66 suites, green; `tsc` clean; `dist/` current.
 
 | | |
 |---|---|
