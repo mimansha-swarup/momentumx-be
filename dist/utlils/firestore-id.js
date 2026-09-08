@@ -23,7 +23,10 @@
  */
 export const isDocumentId = (value) => typeof value === "string" &&
     value.length > 0 &&
-    value.length <= 1500 &&
+    // BYTES, not characters — Firestore counts UTF-8. `value.length` is UTF-16
+    // code units, so a 1000-character id of 4-byte characters measured as 1000
+    // here and 4000 at the SDK, passing the guard and failing at the write.
+    Buffer.byteLength(value, "utf8") <= 1500 &&
     !value.includes("/") &&
     value !== "." &&
     value !== ".." &&

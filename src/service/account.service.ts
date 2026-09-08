@@ -117,14 +117,28 @@ export const adoptChannelIdentity = async (
   context: Record<string, unknown>
 ): Promise<void> => {
   const account = await accounts.findById(accountId);
-  if (!account || account.displayName !== PLACEHOLDER_CHANNEL_NAME) return;
+  if (!account) return;
 
-  const displayName = deriveDisplayName(context);
+  const patch: { displayName?: string; handle?: string } = {};
+
+  // The NAME fills a placeholder only. A name the owner set through
+  // `PATCH /v1/accounts/:id` is theirs and stays.
+  if (account.displayName === PLACEHOLDER_CHANNEL_NAME) {
+    const displayName = deriveDisplayName(context);
+    // Nothing usable yet — leave the placeholder rather than writing it back.
+    if (displayName !== PLACEHOLDER_CHANNEL_NAME) patch.displayName = displayName;
+  }
+
+  // The HANDLE is independent of the name, and this used to sit behind the
+  // placeholder guard above — so it could only ever be written in the same call
+  // that named the channel. A user who onboards with niche + targetAudience and
+  // no URL is named "Cooking" immediately, and adding their channel URL later
+  // could then never fill the handle in: the guard returned first, permanently.
+  // Only ever fills a blank; it does not overwrite a handle already there.
   const handle = deriveHandle(context.userName);
-  // Nothing usable yet — leave the placeholder rather than writing it back.
-  if (displayName === PLACEHOLDER_CHANNEL_NAME && !handle) return;
+  if (handle && !account.handle) patch.handle = handle;
 
-  await accounts.update(accountId, { displayName, handle });
+  if (Object.keys(patch).length > 0) await accounts.update(accountId, patch);
 };
 
 /** `"@foo"` when the stored channel URL is a handle URL, else null. */
@@ -401,7 +415,34 @@ class AccountService {
     // Tombstone FIRST, purge second. The other order leaves a live channel with
     // half its content if anything fails in between; this one leaves content
     // that is already unreachable behind the tombstone.
-    await this.repo.purgeAccountData(accountId);
+    //
+    // The purge cannot fail the request, and cannot be silent. The channel IS
+    // deleted once the tombstone commits — answering 500 would tell the user it
+    // failed when it did not, and their retry hits `assertOwner`, which throws
+    // `Gone()` for a tombstoned account, so the remainder could never be swept
+    // through the API again. Both outcomes are logged instead, structured, the
+    // same way `account_mismatch` is: an incomplete purge has to be findable.
+    try {
+      const { deleted, incomplete } = await this.repo.purgeAccountData(accountId);
+      if (incomplete.length) {
+        console.warn(
+          JSON.stringify({
+            event: "account_purge_incomplete",
+            accountId,
+            deleted,
+            collections: incomplete,
+          })
+        );
+      }
+    } catch (purgeError) {
+      console.error(
+        JSON.stringify({
+          event: "account_purge_failed",
+          accountId,
+          message: purgeError instanceof Error ? purgeError.message : String(purgeError),
+        })
+      );
+    }
     // Leaving the pointer on a tombstone costs the user a 410 on their next
     // request before the middleware repairs it. Clearing it here is one write.
     await this.clearActiveAccount(userId, accountId);

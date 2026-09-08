@@ -308,6 +308,105 @@ describe("DELETE /v1/accounts/:id", () => {
       expect(db.all(`accounts/${ACC_B}/context`)).toEqual([]);
     });
 
+    /**
+     * The paging loop was entirely unexercised: every other fixture seeds two
+     * documents, so the first page is always short and the loop always exits
+     * after one pass. Replacing the whole `while` with a single get+commit kept
+     * the suite green while a channel with more than one page kept everything
+     * past the first 450 — the "present and billable" state the purge exists to
+     * end.
+     */
+    it("pages past the batch limit instead of stopping at the first 450", async () => {
+      db.seed(
+        "ideas",
+        Array.from({ length: 1000 }, (_, i) => ({ id: `bulk-${i}`, accountId: ACC_B }))
+      );
+
+      await make().deleteAccount(uid, ACC_B);
+
+      expect(db.all("ideas").filter((d) => d.accountId === ACC_B)).toEqual([]);
+    });
+
+    /**
+     * The cap used to be ONE counter shared across the `for` loop, so a channel
+     * whose first collection exhausted it left the remaining five never even
+     * queried — five whole collections skipped, chosen by array order, with
+     * nothing logged. A per-collection cap cannot starve a sibling.
+     */
+    it("a huge collection does not starve the others", async () => {
+      const repo = new AccountRepository();
+      db.seed(
+        "ideas",
+        Array.from({ length: 2500 }, (_, i) => ({ id: `many-${i}`, accountId: ACC_B }))
+      );
+      db.seed("events", [{ id: "ev-1", accountId: ACC_B }]);
+
+      const { incomplete } = await repo.purgeAccountData(ACC_B, 1000);
+
+      // Ideas hit the cap and are reported as unfinished...
+      expect(incomplete).toContain("ideas");
+      // ...but events, last in the list, were still swept.
+      expect(db.all("events").filter((d) => d.accountId === ACC_B)).toEqual([]);
+    });
+
+    it("reports which collections it could not finish, rather than returning a bare count", async () => {
+      const repo = new AccountRepository();
+      db.seed(
+        "scripts",
+        Array.from({ length: 1200 }, (_, i) => ({ id: `s-${i}`, accountId: ACC_B }))
+      );
+
+      const { deleted, incomplete } = await repo.purgeAccountData(ACC_B, 900);
+
+      expect(incomplete).toEqual(["scripts"]);
+      expect(deleted).toBeGreaterThanOrEqual(900);
+    });
+
+    it("deletes the channel context FIRST, so a later failure cannot strand it", async () => {
+      // It holds the niche, the competitor list and the website scrape — the
+      // data a deletion request is actually about. Deleting it last meant a
+      // timeout part-way through the content loop left exactly that behind, and
+      // the tombstone makes the operation unrepeatable through the API.
+      seedContext(ACC_B, { niche: "cooking", websiteContent: "scraped page text" });
+      db.seed("ideas", [{ id: "i-1", accountId: ACC_B }]);
+
+      const repo = new AccountRepository();
+      const realBatch = db.batch.bind(db);
+      let calls = 0;
+      // Fail the FIRST content batch — the context is already gone by then.
+      jest.spyOn(db, "batch").mockImplementation(() => {
+        if (calls++ === 0) throw new Error("firestore unavailable");
+        return realBatch();
+      });
+
+      await expect(repo.purgeAccountData(ACC_B)).rejects.toThrow("firestore unavailable");
+      expect(db.all(`accounts/${ACC_B}/context`)).toEqual([]);
+
+      jest.restoreAllMocks();
+    });
+
+    it("a failed purge still leaves the channel deleted, and says so in the log", async () => {
+      const warn = jest.spyOn(console, "error").mockImplementation(() => undefined);
+      // An arrow-function class property, so it lives on the INSTANCE — the
+      // service has to be built around the spied repo.
+      const repo = new AccountRepository();
+      repo.purgeAccountData = jest.fn().mockRejectedValue(new Error("firestore unavailable"));
+      const service = new AccountService(repo, new UserRepository(), new VideoProjectRepository());
+
+      // Not a 500: the tombstone already committed, so the channel IS gone, and
+      // a retry would hit `assertOwner` → 410 with the remainder unsweepable.
+      await expect(service.deleteAccount(uid, ACC_B)).resolves.toBeUndefined();
+
+      const logged = warn.mock.calls.map((c) => String(c[0])).find((l) => l.includes("purge_failed"));
+      expect(logged).toBeDefined();
+      expect(JSON.parse(logged!)).toMatchObject({
+        event: "account_purge_failed",
+        accountId: ACC_B,
+      });
+
+      warn.mockRestore();
+    });
+
     it("does not purge anything when the last-channel refusal fires", async () => {
       seedContent(ACC_A);
       await make().deleteAccount(uid, ACC_B);

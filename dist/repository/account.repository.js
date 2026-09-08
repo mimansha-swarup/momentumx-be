@@ -1,5 +1,7 @@
 import { CHANNEL_CONTEXT_DOC, } from "../constants/collection.js";
 import { db, firebase } from "../config/firebase.js";
+import { isDocumentId } from "../utlils/firestore-id.js";
+import { NotFound } from "../utlils/errors.js";
 class AccountRepository {
     constructor() {
         /**
@@ -8,7 +10,16 @@ class AccountRepository {
          * trusted until this read confirms the caller is in `memberUids`.
          */
         this.findById = async (accountId) => {
-            if (!accountId)
+            // `isDocumentId`, not just a truthiness check — and this is the repository
+            // its own docstring is written about. The guard was added to content,
+            // hooks, packaging and video-project and skipped here, which left the
+            // account routes exposed to exactly the two failures it describes:
+            // `/v1/accounts/a%2Fb` threw a bare Error out of `.doc()` (a 500 where 404
+            // is honest), and `/v1/accounts/<other-id>%2Fcontext%2Fchannel` RESOLVED —
+            // reading another channel's context document, refused only because that
+            // document has no `memberUids`. `accountMiddleware` validates the HEADER;
+            // `req.params.id` reaches here untouched.
+            if (!isDocumentId(accountId))
                 return null;
             const doc = await this.db.collection(this.collection).doc(accountId).get();
             if (!doc.exists)
@@ -105,6 +116,8 @@ class AccountRepository {
          * website.
          */
         this.getContext = async (accountId) => {
+            if (!isDocumentId(accountId))
+                return null;
             const doc = await this.db
                 .collection(this.collection)
                 .doc(accountId)
@@ -118,6 +131,8 @@ class AccountRepository {
          * not a copy of anything on the user record.
          */
         this.writeContext = async (accountId, patch) => {
+            if (!isDocumentId(accountId))
+                throw NotFound("Channel not found");
             await this.db
                 .collection(this.collection)
                 .doc(accountId)
@@ -126,6 +141,8 @@ class AccountRepository {
                 .set(patch, { merge: true });
         };
         this.update = async (accountId, patch) => {
+            if (!isDocumentId(accountId))
+                throw NotFound("Channel not found");
             await this.db
                 .collection(this.collection)
                 .doc(accountId)
@@ -182,17 +199,33 @@ class AccountRepository {
          * `usage/**` has no documents until Phase 08, so it is not swept here — add it
          * with the code that starts writing it.
          *
-         * ponytail: capped and run inline. A channel above `cap` documents keeps the
-         * remainder, which stays unreachable behind the tombstone rather than becoming
-         * visible again. Phase 10's sweep is where an unbounded, resumable job belongs
-         * — this deletes what a real channel actually holds without risking a
-         * half-finished delete inside a serverless timeout.
+         * ponytail: capped PER COLLECTION and run inline. The first version shared one
+         * counter across the whole loop, so a channel with 5,000+ ideas exhausted the
+         * budget and `scripts`, `hooks`, `packaging`, `videoProjects` and `events`
+         * were never queried at all — five whole collections skipped, chosen by array
+         * order, silently. A per-collection cap cannot starve a sibling.
+         *
+         * Returns a report rather than a number so the caller can say what was left.
+         * Phase 10's sweep is where an unbounded, resumable job belongs.
          */
-        this.purgeAccountData = async (accountId, cap = 5000) => {
+        this.purgeAccountData = async (accountId, capPerCollection = 2000) => {
             const PAGE = 450; // Firestore caps a batch at 500 writes.
             let deleted = 0;
+            const incomplete = [];
+            // FIRST, not last. The context holds the niche, the competitor list and the
+            // uncapped website scrape — the data a deletion request is actually about.
+            // Deleting it after the content loop meant that a timeout or a Firestore
+            // error part-way through left precisely that document behind, and the
+            // tombstone makes the operation unrepeatable through the API.
+            await this.db
+                .collection(this.collection)
+                .doc(accountId)
+                .collection("context" /* SUBCOLLECTIONS.CONTEXT */)
+                .doc(CHANNEL_CONTEXT_DOC)
+                .delete();
             for (const collection of AccountRepository.PURGE_COLLECTIONS) {
-                while (deleted < cap) {
+                let fromThis = 0;
+                while (fromThis < capPerCollection) {
                     const snap = await this.db
                         .collection(collection)
                         .where("accountId", "==", accountId)
@@ -203,20 +236,18 @@ class AccountRepository {
                     const batch = this.db.batch();
                     snap.docs.forEach((doc) => batch.delete(doc.ref));
                     await batch.commit();
+                    fromThis += snap.size;
                     deleted += snap.size;
                     // A short page is the last page. Re-querying would cost one empty read
                     // per collection for nothing.
                     if (snap.size < PAGE)
                         break;
                 }
+                // Hit the cap on a full page, so there is very likely more behind it.
+                if (fromThis >= capPerCollection)
+                    incomplete.push(collection);
             }
-            await this.db
-                .collection(this.collection)
-                .doc(accountId)
-                .collection("context" /* SUBCOLLECTIONS.CONTEXT */)
-                .doc(CHANNEL_CONTEXT_DOC)
-                .delete();
-            return deleted;
+            return { deleted, incomplete };
         };
         this.db = db;
         this.collection = "accounts" /* COLLECTIONS.ACCOUNTS */;

@@ -410,6 +410,54 @@ describe("adoptChannelIdentity — a channel gets its name from onboarding", () 
     });
   });
 
+  /**
+   * The handle used to sit behind the placeholder guard, so it could only ever
+   * be written in the same call that named the channel. Onboarding with niche +
+   * targetAudience and no URL names the channel immediately — after which
+   * adding the channel URL and running refresh-context could never fill the
+   * handle in. The comment on that call site described the path as the one
+   * where the handle arrives; it was unreachable.
+   */
+  it("fills in the handle later, once the channel URL is known", async () => {
+    const repo = {
+      findById: jest.fn(async () => ({ id: "acc-1", displayName: "Cooking", handle: null })),
+      update: jest.fn(async () => undefined),
+    };
+
+    await adoptChannelIdentity(repo as never, "acc-1", {
+      userName: "https://youtube.com/@cooking",
+    });
+
+    // The name it already has is untouched; only the handle is added.
+    expect(repo.update).toHaveBeenCalledWith("acc-1", { handle: "@cooking" });
+  });
+
+  it("does not overwrite a handle the channel already has", async () => {
+    const repo = {
+      findById: jest.fn(async () => ({ id: "acc-1", displayName: "Cooking", handle: "@old" })),
+      update: jest.fn(async () => undefined),
+    };
+
+    await adoptChannelIdentity(repo as never, "acc-1", {
+      userName: "https://youtube.com/@new",
+    });
+
+    expect(repo.update).not.toHaveBeenCalled();
+  });
+
+  it("never writes a null handle over nothing", async () => {
+    // The old version always sent `handle` in the patch, so a name derived from
+    // a niche wrote `handle: null` alongside it.
+    const repo = {
+      findById: jest.fn(async () => ({ id: "acc-1", displayName: PLACEHOLDER_CHANNEL_NAME, handle: null })),
+      update: jest.fn(async () => undefined),
+    };
+
+    await adoptChannelIdentity(repo as never, "acc-1", { niche: "Cooking" });
+
+    expect(repo.update).toHaveBeenCalledWith("acc-1", { displayName: "Cooking" });
+  });
+
   it("leaves a channel the owner renamed alone", async () => {
     // PATCH /v1/accounts/:id is the owner's choice. Onboarding must not rename a
     // channel out from under them, and neither must a later brand-name edit —
