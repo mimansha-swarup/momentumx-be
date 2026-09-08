@@ -100,11 +100,32 @@ export const fakeAccountRepo = (
     targetAudience: "home cooks",
     brandName: "Test Kitchen",
     format: "talking_head",
-  }
+  },
+  /**
+   * Channels this fake knows about, keyed by id. `forbidCrossAccount` reads
+   * them to decide WHICH 403 a cross-channel refusal is.
+   *
+   * This defaulted to `findById: async () => null`, which meant every service
+   * suite took the `account_forbidden` branch and the `wrong_account` path —
+   * the entire reason those call sites exist — was produced by no service,
+   * controller or route test in the repo. Pass a channel here to exercise the
+   * "you are a member, you are just standing somewhere else" case.
+   */
+  knownAccounts: Record<string, Record<string, unknown>> = {}
 ) =>
   ({
     getContext: jest.fn(async () => context),
     writeContext: jest.fn(async () => undefined),
-    findById: jest.fn(async () => null),
+    findById: jest.fn(async (id: string) => knownAccounts[id] ?? null),
     findByMember: jest.fn(async () => []),
+    update: jest.fn(async () => undefined),
   }) as never;
+
+/** A channel the caller belongs to — the switch target in a `wrong_account`. */
+export const memberChannel = (id: string, userId: string, displayName = "Other Channel") => ({
+  id,
+  displayName,
+  memberUids: [userId],
+  ownerUids: [userId],
+  deletedAt: null,
+});

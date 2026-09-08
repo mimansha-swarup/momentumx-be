@@ -242,7 +242,7 @@ describe("ContextService.assemble — degradation matrix", () => {
         .assemble(testOwner(USER_ID), { videoProjectId: "proj-1" })
         .catch((e) => e);
 
-      expect(err.statusCode).toBe(403);
+      expect(err).toMatchObject({ statusCode: 403, code: "account_forbidden" });
     });
 
     it("refuses a script belonging to another channel, rather than putting it in the prompt", async () => {
@@ -254,8 +254,14 @@ describe("ContextService.assemble — degradation matrix", () => {
         .assemble(testOwner(USER_ID), { videoProjectId: "proj-1" })
         .catch((e) => e);
 
-      expect(err.statusCode).toBe(403);
-      expect(err.message).not.toContain("Their script text");
+      // `code`, not just the status: an undifferentiated 403 is read by the
+      // client as account_forbidden and ejects the user. This suite's stub does
+      // not know the foreign channel, so account_forbidden is the right answer
+      // here — the wrong_account half is covered in cross-account.behaviour.
+      expect(err).toMatchObject({ statusCode: 403, code: "account_forbidden" });
+      // NOT `expect(err.message).not.toContain(...)` — the message is a fixed
+      // literal, so that assertion could never fail and read as proof.
+      expect(err.detail).toBeUndefined();
     });
 
     it("refuses a hook batch belonging to another channel", async () => {
@@ -267,7 +273,7 @@ describe("ContextService.assemble — degradation matrix", () => {
         .assemble(testOwner(USER_ID), { videoProjectId: "proj-1" })
         .catch((e) => e);
 
-      expect(err.statusCode).toBe(403);
+      expect(err).toMatchObject({ statusCode: 403, code: "account_forbidden" });
     });
 
     it("refuses an untagged legacy resource too — fail closed, not open", async () => {
@@ -281,7 +287,7 @@ describe("ContextService.assemble — degradation matrix", () => {
         .assemble(testOwner(USER_ID), { videoProjectId: "proj-1" })
         .catch((e) => e);
 
-      expect(err.statusCode).toBe(403);
+      expect(err).toMatchObject({ statusCode: 403, code: "account_forbidden" });
     });
   });
 

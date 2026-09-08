@@ -37,7 +37,7 @@ jest.mock("../../src/utlils/ai", () => ({
   collectJson: jest.fn(),
 }));
 
-import { fakeAccountRepo } from "../helpers/account";
+import { fakeAccountRepo, memberChannel } from "../helpers/account";
 import { FakeFirestore } from "../helpers/fake-firestore";
 import ContentRepository from "../../src/repository/content.repository";
 import VideoProjectRepository from "../../src/repository/video-project.repository";
@@ -114,28 +114,47 @@ const ids = (rows: { id?: unknown }[]) => rows.map((r) => String(r.id)).sort();
 
 // Real repositories over the fake store, so a check that reads the wrong field
 // fails here rather than passing against a stub that never looked.
+/**
+ * The fixture's whole point is that ONE user owns both channels, so every
+ * refusal in this file is "you are a member of that channel, you are just
+ * acting in the other one" — a `wrong_account`, not an eject.
+ *
+ * `fakeAccountRepo` used to answer `findById → null` unconditionally, which
+ * collapsed every one of these onto `account_forbidden` and left the
+ * discriminator — the entire reason `forbidCrossAccount` exists — produced by
+ * no service, controller or route test anywhere.
+ */
+const CHANNELS = {
+  [ACC_A]: memberChannel(ACC_A, uidOwner, "Channel A"),
+  [ACC_B]: memberChannel(ACC_B, uidOwner, "Channel B"),
+};
+const accounts = () => fakeAccountRepo(undefined, CHANNELS);
+
 const wire = () => {
   const contentRepo = new ContentRepository();
   const projectRepo = new VideoProjectRepository();
   const packagingRepo = new PackagingRepository();
   const hooksRepo = new HooksRepository();
   const userRepo = new UserRepository();
-  const projects = new VideoProjectService(contentRepo && projectRepo, contentRepo, packagingRepo, hooksRepo, fakeAccountRepo());
-  const context = new ContextService(fakeAccountRepo(), contentRepo, hooksRepo, projects);
+  const projects = new VideoProjectService(contentRepo && projectRepo, contentRepo, packagingRepo, hooksRepo, accounts());
+  const context = new ContextService(accounts(), contentRepo, hooksRepo, projects);
   return {
     projects,
     context,
-    content: new ContentService(contentRepo, userRepo, projects, fakeAccountRepo()),
-    packaging: new PackagingService(packagingRepo, projects, context, fakeAccountRepo()),
+    content: new ContentService(contentRepo, userRepo, projects, accounts()),
+    packaging: new PackagingService(packagingRepo, projects, context, accounts()),
     hooks: new HooksService(hooksRepo, projects, context, {
       run: async (_s: unknown, g: () => unknown) => g(),
     } as never,
-    fakeAccountRepo()
+    accounts()
   ),
   };
 };
 
-const forbidden = { statusCode: 403 };
+// A cross-channel refusal by ONE user who owns both channels. The `code` is the
+// load-bearing half: without it the client cannot tell this from "you are not in
+// this channel" and ejects the user instead of offering the switch.
+const forbidden = { statusCode: 403, code: "wrong_account" };
 
 describe("listing one channel never returns the same user's other channel", () => {
   const content = () => new ContentRepository();
@@ -209,7 +228,7 @@ describe("reaching another channel's document by id is refused", () => {
       new ContentRepository(),
       new PackagingRepository(),
       new HooksRepository(),
-      fakeAccountRepo()
+      accounts()
     );
 
   it("a project", async () => {
@@ -242,7 +261,7 @@ describe("reaching another channel's document by id is refused", () => {
       vpService(),
       undefined,
       { run: async (_s: unknown, g: () => unknown) => g() } as never,
-      fakeAccountRepo()
+      accounts()
     );
 
     await expect(hooks.getById(inA, "hooks-b")).rejects.toMatchObject({ statusCode: 403 });
@@ -276,7 +295,7 @@ describe("a co-member of the channel is allowed, even on documents they did not 
       new ContentRepository(),
       new PackagingRepository(),
       new HooksRepository(),
-      fakeAccountRepo()
+      accounts()
     );
 
   it("reads a project authored by someone else in the same channel", async () => {
@@ -315,7 +334,7 @@ describe("the account is what decides, not the author", () => {
       new ContentRepository(),
       new PackagingRepository(),
       new HooksRepository(),
-      fakeAccountRepo()
+      accounts()
     );
 
     await expect(service.getById("proj-b", inA)).rejects.toMatchObject({ statusCode: 403 });
