@@ -160,7 +160,16 @@ class FakeDocRef {
       const fresh: Doc = {};
       for (const [k, v] of Object.entries(data)) {
         const resolved = resolveValue(undefined, v);
-        if (resolved !== DELETE_KEY) fresh[k] = resolved;
+        if (resolved === DELETE_KEY) {
+          // Real Firestore REJECTS this: "FieldValue.delete() can only be used
+          // with update() and set() with {merge:true}". Silently dropping the
+          // key made the fake more permissive than production, so code that
+          // throws in production passed here.
+          throw new Error(
+            "fake-firestore: FieldValue.delete() requires update() or set({merge:true})"
+          );
+        }
+        fresh[k] = resolved;
       }
       this.store.set(this.id, fresh);
       return;
@@ -395,24 +404,59 @@ class FakeQuery {
     }
 
     if (this.after?.length) {
-      // `startAfter` takes EITHER a DocumentSnapshot or raw ordered values, and
-      // the repositories pass a snapshot. A snapshot can never `===` a field
-      // value, so the lookup below always missed and the fake returned the
-      // UNSLICED list — pagination was effectively unmodelled, and a broken
-      // cursor read as a working one.
-      const [cursor] = this.after;
-      const asSnapshot = cursor as { id?: string; data?: () => Doc } | undefined;
-      const idx =
-        asSnapshot && typeof asSnapshot.data === "function" && asSnapshot.id !== undefined
-          ? rows.findIndex(({ id }) => id === asSnapshot.id)
-          : rows.findIndex(({ id, d }) => {
-              const key = this.orders[0]?.field ?? "__name__";
-              return key === "__name__" ? id === cursor : at(d, key) === cursor;
-            });
+      /**
+       * Firestore positions a cursor by the ORDERED FIELD VALUES, and keeps
+       * every row that sorts strictly after them. It does NOT require the
+       * cursor document to be in the result set.
+       *
+       * Two bugs lived here. First the lookup compared a `DocumentSnapshot` to a
+       * field value with `===`, so it always missed and the fake returned the
+       * UNSLICED list — a broken cursor read as a working one. The fix for that
+       * matched the snapshot by `id` and THREW when no row matched, which is
+       * wrong in a new direction: `video-project.repository.list` filters
+       * `isDeleted == false`, so a project soft-deleted between page 1 and
+       * "load more" is a cursor that is legitimately absent from the result —
+       * real Firestore pages on, this fake blew up.
+       *
+       * Second, only `after[0]` was read. `content.repository.getIdeas` passes
+       * TWO values (`title`, then `docId`) precisely because two ideas can share
+       * a title and a single-value cursor skips every duplicate after the first.
+       * Dropping the tie-breaker was invisible to any test written against this.
+       *
+       * So: build the cursor's ordered values — from the snapshot's data, or
+       * from the raw values as given — and compare lexicographically against
+       * each row's, honouring each order's direction.
+       */
+      const asSnapshot = this.after[0] as { id?: string; data?: () => Doc } | undefined;
+      const fromSnapshot =
+        this.after.length === 1 &&
+        asSnapshot != null &&
+        typeof asSnapshot.data === "function";
 
-      // A cursor that names no row is a caller error, not "start from the top".
-      if (idx < 0) throw new Error("fake-firestore: startAfter cursor is not in the result set");
-      rows = rows.slice(idx + 1);
+      const orders = this.orders.length ? this.orders : [{ field: "__name__", dir: "asc" }];
+      const cursorValues = fromSnapshot
+        ? orders.map((o) =>
+            o.field === "__name__" ? asSnapshot!.id : at(asSnapshot!.data!(), o.field)
+          )
+        : this.after;
+
+      const compare = (rowValues: unknown[]): number => {
+        for (let i = 0; i < cursorValues.length; i++) {
+          const a = rowValues[i];
+          const b = cursorValues[i];
+          if (a === b) continue;
+          const cmp =
+            typeof a === "string" && typeof b === "string"
+              ? a.localeCompare(b)
+              : ms(a) - ms(b);
+          if (cmp !== 0) return orders[i]?.dir === "desc" ? -cmp : cmp;
+        }
+        return 0;
+      };
+
+      rows = rows.filter(({ id, d }) =>
+        compare(orders.map((o) => (o.field === "__name__" ? id : at(d, o.field)))) > 0
+      );
     }
 
     if (this.cap !== undefined) rows = rows.slice(0, this.cap);

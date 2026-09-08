@@ -84,6 +84,15 @@ describe("FieldValue sentinels resolve against what is stored", () => {
     expect(db.all("users")[0].count).toBe(3);
   });
 
+  it("set() without merge REJECTS a delete sentinel, as Firestore does", async () => {
+    // "FieldValue.delete() can only be used with update() and set() with
+    // {merge:true}". Silently dropping the key made the fake more permissive
+    // than production — code that throws in production passed here.
+    await expect(
+      db.collection("users").doc("u1").set({ gone: FieldValue.delete() })
+    ).rejects.toThrow(/FieldValue.delete/);
+  });
+
   it("delete removes the key rather than setting it undefined", async () => {
     // `undefined` leaves `"field" in doc` true, which diverges from `select()`
     // projections and from any `in`/existence check.
@@ -147,13 +156,49 @@ describe("queries answer what Firestore would answer", () => {
     expect(snap.docs.map((d) => d.id)).toEqual(["p3"]);
   });
 
-  it("refuses a cursor that names no row instead of silently returning page 1", async () => {
-    db.seed("videoProjects", [{ id: "p1", accountId: "a", updatedAt: 300 }]);
-    const stray = await db.collection("videoProjects").doc("missing").get();
+  it("pages on when the cursor document is no longer in the result set", async () => {
+    // Firestore positions by the cursor's ORDERED VALUES; membership in the
+    // filtered result is irrelevant. `video-project.repository.list` filters
+    // `isDeleted == false`, so a project soft-deleted between page 1 and "load
+    // more" is exactly this case — real Firestore pages on. An earlier version
+    // of this fake threw here, which is a new wrongness rather than a fix.
+    db.seed("videoProjects", [
+      { id: "p1", accountId: "a", updatedAt: 300, isDeleted: false },
+      { id: "gone", accountId: "a", updatedAt: 200, isDeleted: true },
+      { id: "p3", accountId: "a", updatedAt: 100, isDeleted: false },
+    ]);
+    const cursor = await db.collection("videoProjects").doc("gone").get();
 
-    await expect(
-      db.collection("videoProjects").orderBy("updatedAt", "desc").startAfter(stray).get()
-    ).rejects.toThrow(/startAfter/);
+    const snap = await db
+      .collection("videoProjects")
+      .where("isDeleted", "==", false)
+      .orderBy("updatedAt", "desc")
+      .startAfter(cursor)
+      .get();
+
+    expect(snap.docs.map((d) => d.id)).toEqual(["p3"]);
+  });
+
+  it("honours the second cursor value, so duplicates are not skipped", async () => {
+    // `content.repository.getIdeas` passes (title, docId) because two ideas can
+    // share a title and a single-value cursor skips every duplicate after the
+    // first. Reading only `after[0]` implemented exactly the bug the second
+    // value exists to prevent, invisibly.
+    db.seed("ideas", [
+      { id: "a", accountId: "x", title: "Same" },
+      { id: "b", accountId: "x", title: "Same" },
+      { id: "c", accountId: "x", title: "Same" },
+    ]);
+
+    const snap = await db
+      .collection("ideas")
+      .where("accountId", "==", "x")
+      .orderBy("title")
+      .orderBy({ __name__: "__name__" } as never)
+      .startAfter("Same", "a")
+      .get();
+
+    expect(snap.docs.map((d) => d.id)).toEqual(["b", "c"]);
   });
 });
 
