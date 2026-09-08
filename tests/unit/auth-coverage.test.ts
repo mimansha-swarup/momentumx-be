@@ -111,13 +111,32 @@ describe("auth + account coverage — every /v1 router mounts both middlewares",
    * convention and gets the full check above, or is named here with its reason.
    */
   it("every file under src/routes is either checked above or named here", () => {
+    // SHRINK-ONLY, like ACCOUNT_EXEMPT. One entry, and it is pinned below.
     const UNCHECKED: Record<string, string> = {
       "index.ts": "mounts the sub-routers; its only own route is /health",
     };
+    expect(Object.keys(UNCHECKED)).toEqual(["index.ts"]);
 
-    const unchecked = fs
-      .readdirSync(ROUTES_DIR)
-      .filter((f) => f.endsWith(".ts") && !f.endsWith(".route.ts"));
+    // RECURSIVE. The first version used a flat `readdirSync`, so a directory
+    // entry like `admin` matched neither `.ts` nor `.route.ts` and was dropped
+    // by both filters — meaning `src/routes/v1/admin/admin.route.ts`, mounted
+    // from index.ts with `router.use("/admin", adminRouter)`, shipped with no
+    // auth and no account context, invisible to this entire suite. That is
+    // exactly the failure this test was added to close, and it closed only the
+    // flat-file half of it.
+    const walk = (dir: string, prefix = ""): string[] =>
+      fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+        const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+        if (entry.isDirectory()) return walk(path.join(dir, entry.name), rel);
+        return entry.name.endsWith(".ts") ? [rel] : [];
+      });
+
+    // A nested *.route.ts is not checked by the per-file describes above either,
+    // because those iterate the flat listing — so nesting is banned outright
+    // rather than silently half-covered.
+    const unchecked = walk(ROUTES_DIR).filter(
+      (f) => f.includes("/") || !f.endsWith(".route.ts")
+    );
 
     expect(unchecked.filter((f) => !UNCHECKED[f])).toEqual([]);
   });

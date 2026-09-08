@@ -100,6 +100,17 @@ const SORTED_QUERIES: {
   },
 ];
 
+/**
+ * How many literal `.orderBy("field")` calls exist across the repositories.
+ *
+ * Five, not eight: `getIdeas` builds its branches from one `.orderBy` per
+ * ordering, and the four ideas rows above are the *filter combinations* over
+ * those two orderings. Pinned as a number so that ADDING a sorted query fails
+ * here even when its (file, field) pair already appears — which is the case the
+ * set comparison alone cannot see.
+ */
+const EXPECTED_ORDERBY_SITES = 5;
+
 describe("every sorted query has an index Firestore will accept", () => {
   it.each(SORTED_QUERIES.map((q) => [q.where, q] as const))("%s", (_label, query) => {
     const covered = config.indexes.some((index) => {
@@ -108,13 +119,16 @@ describe("every sorted query has an index Firestore will accept", () => {
       const paths = index.fields.map((f) => f.fieldPath);
       // Equality fields may appear in any order — Firestore does not care, and
       // the declaration order in the file is a style choice.
-      const equalityCovered = query.equality.every((field) => paths.includes(field));
-      // The sort field must come AFTER every equality field. An index that sorts
-      // before it filters does not serve the query.
-      const sortAt = paths.indexOf(query.orderBy);
-      const lastEqualityAt = Math.max(...query.equality.map((f) => paths.indexOf(f)));
+      // The equality fields must be a CONTIGUOUS PREFIX, then the sort field.
+      // Merely "all present, sort somewhere after" accepts
+      // [accountId, archived, somethingElse, createdAt], which Firestore will
+      // NOT use to serve where(accountId).where(archived).orderBy(createdAt).
+      const prefix = paths.slice(0, query.equality.length);
+      const equalityIsPrefix =
+        prefix.length === query.equality.length &&
+        query.equality.every((field) => prefix.includes(field));
 
-      return equalityCovered && sortAt > lastEqualityAt;
+      return equalityIsPrefix && paths[query.equality.length] === query.orderBy;
     });
 
     expect(covered).toBe(true);
@@ -147,5 +161,13 @@ describe("every sorted query has an index Firestore will accept", () => {
     );
 
     expect([...new Set(found)].sort()).toEqual([...declared].sort());
+
+    // …and the COUNT, because the set above collapses duplicates. A second
+    // `createdAt`-sorted query added to `content.repository.ts` — say
+    // `where(accountId).where(videoProjectId).orderBy(createdAt)` — produces a
+    // pair that is already in `declared`, so the set comparison passes while no
+    // index exists for that shape. Firestore answers FAILED_PRECONDITION for
+    // every user on that endpoint, which is the outage this file exists for.
+    expect(found.length).toBe(EXPECTED_ORDERBY_SITES);
   });
 });

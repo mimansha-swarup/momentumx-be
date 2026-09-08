@@ -18,7 +18,9 @@ import path from "path";
  */
 
 const SERVICE_DIR = path.join(process.cwd(), "src", "service");
-const MODEL_CALL = /\b(generateContent|generateStreamingContent)\s*\(/;
+// Kept in sync with the seam's actual exports by the "exactly the two helpers"
+// test below — so a third helper cannot be added without this list being faced.
+const MODEL_CALL_G = /\b(generateContent|generateStreamingContent)\s*\(/g;
 
 const stripComments = (source: string): string =>
   source
@@ -42,7 +44,6 @@ const collectCallSites = (): CallSite[] => {
 
   for (const file of fs.readdirSync(SERVICE_DIR).filter((f) => f.endsWith(".ts"))) {
     const raw = stripComments(fs.readFileSync(path.join(SERVICE_DIR, file), "utf8"));
-    const lines = raw.split("\n");
 
     // Character offset of each line start, so we can map depth back to lines.
     const seamRegions: Array<[number, number]> = [];
@@ -61,14 +62,17 @@ const collectCallSites = (): CallSite[] => {
       seamRegions.push([match.index, i]);
     }
 
-    let offset = 0;
-    lines.forEach((line, idx) => {
-      if (MODEL_CALL.test(line)) {
-        const inside = seamRegions.some(([s, e]) => offset >= s && offset <= e);
-        sites.push({ file, line: idx + 1, insideSeam: inside });
-      }
-      offset += line.length + 1;
-    });
+    // Scanned over the whole source, not line by line: a call whose `(` lands on
+    // the next line was invisible, and the sibling ratchets in this repo were
+    // both explicitly de-lined while this one was left as it was.
+    for (const call of raw.matchAll(MODEL_CALL_G)) {
+      const inside = seamRegions.some(([s, e]) => call.index! >= s && call.index! <= e);
+      sites.push({
+        file,
+        line: raw.slice(0, call.index).split("\n").length,
+        insideSeam: inside,
+      });
+    }
   }
 
   return sites;
@@ -192,9 +196,32 @@ describe("the model SDK is reachable from exactly one file", () => {
     expect(importers).toEqual([EMBEDDING_DOOR, SDK_DOOR].sort());
   });
 
-  it("nothing outside the seam calls the SDK's streaming method directly", () => {
+  // `content.ts` is exempt from the IMPORT rule because it needs the embedding
+  // model — but a whole-file exemption meant a generation call could simply be
+  // written there: `src/utlils` is not scanned by `collectCallSites`, so all six
+  // tests above would pass. Narrow it to the named import it actually needs.
+  it("the embedding door imports only the embedding model, not the generation factory", () => {
+    const source = sources.find(({ rel }) => rel === EMBEDDING_DOOR)!.source;
+    const importLine = source.match(/import\s+([^;]*?)\s+from\s+["'][^"']*config\/ai[^"']*["']/);
+
+    expect(importLine).not.toBeNull();
+    // A DEFAULT import is `genAIModel` — the generation factory.
+    expect(importLine![1]).toMatch(/^\{[^}]*\}$/);
+    expect(importLine![1]).toContain("embeddingModel");
+    expect(importLine![1]).not.toContain("genAIModel");
+  });
+
+  it("nothing outside the seam calls the SDK's generation methods directly", () => {
     const offenders = sources
-      .filter(({ rel, source }) => rel !== SDK_DOOR && /\.generateContentStream\s*\(/.test(source))
+      .filter(
+        ({ rel, source }) =>
+          rel !== SDK_DOOR &&
+          // BOTH SDK methods. The ban was on `generateContentStream` only, so a
+          // call to the SDK's non-streaming `generateContent` was unrestricted.
+          /\.generateContentStream\s*\(|genAIModel\s*\([^)]*\)\s*\.\s*generateContent\s*\(/.test(
+            source
+          )
+      )
       .map(({ rel }) => rel);
 
     expect(offenders).toEqual([]);
@@ -204,9 +231,21 @@ describe("the model SDK is reachable from exactly one file", () => {
     // A third helper added here would be wrapped by nothing and counted by
     // nothing — MODEL_CALL above only knows these two names.
     const seam = sources.find(({ rel }) => rel === SDK_DOOR)!.source;
-    const exported = [...seam.matchAll(/export const (\w+)\s*=\s*(?:async\s*)?[(<]/g)].map(
-      (m) => m[1]
-    );
+    // EVERY export form, not just `export const x = (`. Executed against the
+    // five ways this could be written, the first version saw exactly one:
+    //   export const foo = (a) => {}              SEEN
+    //   export async function generateAudio() {}  INVISIBLE
+    //   export function generateAudio() {}        INVISIBLE
+    //   export const generateAudio: Gen = async…  INVISIBLE
+    //   export const generateAudio = async funct… INVISIBLE
+    // A helper added in any of those four shapes is wrapped by nothing and
+    // counted by nothing — which is precisely what this test claims to prevent.
+    const exported = [
+      ...seam.matchAll(/export\s+(?:async\s+)?function\s+(\w+)/g),
+      ...seam.matchAll(/export\s+const\s+(\w+)\s*(?::[^=]+)?=/g),
+      ...seam.matchAll(/export\s*\{([^}]*)\}/g),
+    ].flatMap((m) => m[1].split(",").map((name) => name.trim().split(/\s+as\s+/)[0]))
+      .filter(Boolean);
 
     expect(exported.sort()).toEqual(["collectJson", "generateContent", "generateStreamingContent"]);
   });

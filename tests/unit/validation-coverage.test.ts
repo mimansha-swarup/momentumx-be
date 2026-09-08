@@ -172,6 +172,25 @@ describe("validation coverage — every body-reading route mounts a schema", () 
  * `.passthrough()` and the original hole reopens with `validate(` still sitting
  * on the route and this suite still green.
  */
+/**
+ * The ways a zod object stops stripping unknown keys.
+ *
+ * `z.looseObject(...)` is the zod-4 spelling and this repo is on 4.4.3 —
+ * verified: `z.looseObject({a:z.string()}).parse({a:'x',evil:1})` returns
+ * `{a:'x',evil:1}`. The first version of this scan knew only the zod-3 names,
+ * so it was one edit away from reopening the packaging-save hole on a codebase
+ * where that edit is the idiomatic one.
+ *
+ * Field-level `z.unknown()` / `z.any()` are deliberately NOT here. They say
+ * "this key is permitted, its shape is owned downstream" — `packagingSaveSchema`
+ * uses them for exactly that — and the enclosing `z.object` still strips
+ * everything unnamed. Flagging them produced four false positives on correct
+ * code, which is how a ratchet gets deleted. The whole-body case is covered by
+ * the separate check below.
+ */
+const OBJECT_LEVEL_ESCAPE =
+  /\.(passthrough|loose|catchall|nonstrict)\s*\(|\bz\.looseObject\s*\(/g;
+
 describe("validation coverage — a mounted schema also has to strip", () => {
   const VALIDATION_DIR = path.join(process.cwd(), "src", "validation");
 
@@ -180,22 +199,67 @@ describe("validation coverage — a mounted schema also has to strip", () => {
 
     for (const file of fs.readdirSync(VALIDATION_DIR).filter((f) => f.endsWith(".ts"))) {
       const source = stripComments(fs.readFileSync(path.join(VALIDATION_DIR, file), "utf8"));
-      for (const match of source.matchAll(/\.(passthrough|loose|catchall|nonstrict)\s*\(/g)) {
-        offenders.push(`${file}:${source.slice(0, match.index).split("\n").length} .${match[1]}()`);
+      // `z.looseObject(...)` is the idiomatic non-stripping object in zod 4 (this
+      // repo is on 4.4.3) and does NOT match `\.loose\s*\(`. Verified:
+      //   z.looseObject({a:z.string()}).parse({a:'x',evil:1}) -> {a:'x',evil:1}
+      // So the first version of this scan knew only the zod-3 spellings, on a
+      // zod-4 codebase — one edit away from reopening the packaging-save hole
+      // it was written for. `z.any()` and `z.record(...)` as a whole body are
+      // the same escape by a different route.
+      for (const match of source.matchAll(OBJECT_LEVEL_ESCAPE)) {
+        offenders.push(`${file}:${source.slice(0, match.index).split("\n").length} ${match[0]}`);
       }
     }
 
     expect(offenders).toEqual([]);
   });
 
-  // The strip is a property of the middleware, not of each schema. If this ever
-  // stops reassigning, every controller goes back to reading the raw body and
-  // no schema change is involved.
-  it("validate replaces req.body with the parsed result", () => {
-    const source = stripComments(
-      fs.readFileSync(path.join(process.cwd(), "src", "middleware", "validate.ts"), "utf8")
-    );
+  // The escape `OBJECT_LEVEL_ESCAPE` cannot see: `export const fooSchema =
+  // z.any()`. There is no object to strip with, so `validate` passes the raw
+  // body through untouched.
+  it("every exported request schema is built from z.object", () => {
+    const offenders: string[] = [];
 
-    expect(source).toMatch(/req\.body\s*=\s*result\.data/);
+    for (const file of fs.readdirSync(VALIDATION_DIR).filter((f) => f.endsWith(".ts"))) {
+      const source = stripComments(fs.readFileSync(path.join(VALIDATION_DIR, file), "utf8"));
+      // Identifiers in this file that ARE a z.object — so an alias
+      // (`profileUpdateSchema = userFields`) or a chain
+      // (`onboardingSchema = userFields.refine(...)`) resolves correctly.
+      // `.refine`/`.superRefine` add a predicate; they do not stop stripping.
+      const objectLocals = new Set(
+        [...source.matchAll(/(?:const|let)\s+(\w+)\s*=\s*z\s*\.\s*object\s*\(/g)].map(
+          (m) => m[1]
+        )
+      );
+
+      for (const match of source.matchAll(/export const (\w*[Ss]chema)\s*=\s*([\s\S]{0,40})/g)) {
+        const rhs = match[2].trim();
+        const rootsInObject =
+          /^z\s*\.\s*object\s*\(/.test(rhs) ||
+          [...objectLocals].some((local) => new RegExp(`^${local}\\b`).test(rhs));
+        if (!rootsInObject) offenders.push(`${file} ${match[1]}`);
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  /**
+   * The strip is a property of the middleware, not of each schema — so assert it
+   * BEHAVIOURALLY. The first version of this matched the source text for
+   * `req.body = result.data`, which `if (FLAG) req.body = result.data` also
+   * satisfies, as does an early `return next()` inserted above it.
+   */
+  it("validate actually strips unknown keys off req.body", async () => {
+    const { validate } = await import("../../src/middleware/validate");
+    const { z } = await import("zod");
+
+    const req = { body: { title: "keep", isStale: true, itemStatuses: {} } } as never;
+    const next = jest.fn();
+
+    validate(z.object({ title: z.string() }))(req, {} as never, next);
+
+    expect(next).toHaveBeenCalledWith();
+    expect((req as { body: Record<string, unknown> }).body).toEqual({ title: "keep" });
   });
 });

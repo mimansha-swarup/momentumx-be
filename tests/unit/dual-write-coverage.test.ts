@@ -108,7 +108,101 @@ const stripComments = (source: string): string =>
     .map((line) => line.replace(/\/\/.*$/, ""))
     .join("\n");
 
+/**
+ * Every shape "read an account id off the request" actually takes.
+ *
+ * The first version was two patterns — `/x-account-id/i` and
+ * `req.(body|query|params|headers)\W+accountId` — and running them against
+ * candidate code showed four ways through, including the two a developer is
+ * MOST likely to write:
+ *
+ *   const a = req.header(ACCOUNT_HEADER);   ← EVADED (and `ACCOUNT_HEADER` is exported)
+ *   const { accountId } = req.body;         ← EVADED (commonest Express idiom)
+ *   const { accountId } = req.query;        ← EVADED
+ *   const { accountId: acc } = req.params;  ← EVADED
+ *   req.body.accountId                      ← caught
+ *   req.headers["x-account-id"]             ← caught
+ *
+ * The scan was widened to all of `src` without the patterns being re-tested,
+ * which is how a ratchet ends up broader and no stronger.
+ */
+/**
+ * SHRINK-ONLY, and pinned by a test below — adding a third entry is a deliberate
+ * edit with a written reason, not a two-line convenience. This lacked the
+ * staleness check its sibling `ACCOUNT_EXEMPT` (auth-coverage) has.
+ */
+const EXEMPT_FILES: Record<string, string> = {
+  // The middleware IS the check. It is the one place allowed to read it.
+  "src/middleware/account.ts": "resolves and membership-checks the header",
+  // Names the header in the CORS allowlist, which is a declaration, not a read.
+  // `app.cors.behaviour.test.ts` asserts the explicit list survives — and that
+  // test had to be rewritten, because `cors` REFLECTS the requested headers
+  // when the option is absent, so its preflight version passed with the config
+  // deleted outright.
+  "src/app.ts": "declares the header in CORS allowedHeaders",
+};
+
+const READS_AN_ACCOUNT_ID: RegExp[] = [
+  // The literal header, however it is spelled or cased.
+  /x-account-id/i,
+  // The exported constant, which is the tidy way to spell the same thing.
+  /\bACCOUNT_HEADER\b/,
+  // Member access: req.body.accountId, req.query.accountId, …
+  /req\.(body|query|params|headers)\W+accountId/,
+  // Destructuring, with or without a rename: const { accountId: acc } = req.body
+  /\{[^}]*\baccountId\b[^}]*\}\s*=\s*req\.(body|query|params|headers)\b/,
+];
+
 describe("phase 05 — the account id enters at exactly one place", () => {
+  // The patterns are the whole protection, so they get their own test rather
+  // than being trusted because they look thorough.
+  it("catches every shape of reading an account id off the request", () => {
+    const shouldCatch = [
+      'const a = req.header(ACCOUNT_HEADER);',
+      'const { accountId } = req.body;',
+      'const { accountId } = req.query;',
+      'const { accountId: acc } = req.params;',
+      'req.body.accountId',
+      'req.headers["x-account-id"]',
+      'const id = req.get("X-Account-Id");',
+    ];
+
+    const missed = shouldCatch.filter(
+      (snippet) => !READS_AN_ACCOUNT_ID.some((p) => p.test(snippet))
+    );
+
+    expect(missed).toEqual([]);
+  });
+
+  it("does not fire on ordinary account-id usage that is not a request read", () => {
+    // `owner.accountId` and `req.accountId` (set BY the middleware) are the
+    // normal way every service and controller works. Flagging those would make
+    // the ratchet unusable and it would be deleted.
+    const shouldPass = [
+      "const { accountId } = owner;",
+      "doc.accountId !== owner.accountId",
+      "ownerOf(req)",
+      "req.accountId",
+    ];
+
+    const falsePositives = shouldPass.filter((snippet) =>
+      READS_AN_ACCOUNT_ID.some((p) => p.test(snippet))
+    );
+
+    expect(falsePositives).toEqual([]);
+  });
+
+  it("the exemption list is exactly two files, each with a reason", () => {
+    // Shrink-only. This is the sibling of ACCOUNT_EXEMPT in auth-coverage, and
+    // it lacked the staleness check that makes that one hold.
+    expect(Object.keys(EXEMPT_FILES).sort()).toEqual([
+      "src/app.ts",
+      "src/middleware/account.ts",
+    ]);
+    for (const reason of Object.values(EXEMPT_FILES)) {
+      expect(reason.length).toBeGreaterThan(10);
+    }
+  });
   it("only accountMiddleware reads an account id from the request", () => {
     // Phase 03's version of this asserted NOTHING read the header. Phase 05 is
     // the phase that introduces it, so the invariant narrows rather than
@@ -126,14 +220,6 @@ describe("phase 05 — the account id enters at exactly one place", () => {
     // forgeable account id — AFTER the membership check — and this test, the one
     // written to prevent exactly that, could not see the file. `src/service` and
     // `src/repository` were unscanned for the same reason.
-    const EXEMPT: Record<string, string> = {
-      // The middleware IS the check. It is the one place allowed to read it.
-      "src/middleware/account.ts": "resolves and membership-checks the header",
-      // Names the header in the CORS allowlist, which is a declaration, not a
-      // read — and dropping it there silently pins every user to one channel.
-      // `tests/unit/app.cors.behaviour.test.ts` asserts it stays.
-      "src/app.ts": "declares the header in CORS allowedHeaders",
-    };
     const offenders: string[] = [];
 
     {
@@ -143,13 +229,13 @@ describe("phase 05 — the account id enters at exactly one place", () => {
           if (entry.isDirectory()) walk(full);
           else if (entry.name.endsWith(".ts")) {
             const rel = path.relative(process.cwd(), full);
-            if (EXEMPT[rel]) continue;
+            if (EXEMPT_FILES[rel]) continue;
             // Comments stripped first. This scans for CODE that reads an
             // account id from the request; a comment explaining why a route is
             // exempt from the account middleware necessarily names the header,
             // and flagging that turns documentation into a build failure.
             const source = stripComments(fs.readFileSync(full, "utf8"));
-            if (/x-account-id/i.test(source) || /req\.(body|query|params|headers)\W+accountId/.test(source)) {
+            if (READS_AN_ACCOUNT_ID.some((pattern) => pattern.test(source))) {
               offenders.push(rel);
             }
           }
