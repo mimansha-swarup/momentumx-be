@@ -24,7 +24,8 @@ Code done, **not deployed**. Suite: 1038 tests, 66 suites, green; `tsc` clean; `
 | `.claude/rules/firestore-conventions.md` rewritten | done, same commit |
 | `ContextService` resolvers ownership-checked | done — the one item this doc wrongly recorded as closed in Phase 01 |
 | **Wipe the content collections** | **outstanding — do it before this deploys** |
-| **Deployed to Vercel + Render together** | **outstanding** |
+| **Deployed to Vercel + Render together** | **outstanding** — Render serves the WHOLE API (`node dist/server.js` → `app.use(rootRouter)`), not just the stream, so a Vercel-only deploy leaves the old tenancy live on a public host |
+| **`firebase deploy --only firestore:indexes`** | **outstanding** — no deploy artifact ships `firestore.indexes.json`, and 06b's field exemptions moved to the `context` group |
 
 **One live bug was caught by the flip itself.** `acquireStep`'s third parameter became the
 account, and `step-runner.ts` was still passing `spec.actor.userId` into it. Both are

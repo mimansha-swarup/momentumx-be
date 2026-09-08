@@ -81,7 +81,7 @@ one deployment.
 | Artifact | What it serves | How it deploys |
 |---|---|---|
 | **Vercel** (`momentumx-be.vercel.app`) | every route except the script stream | serverless, from committed `dist/` |
-| **Render** (`momentumx-be.onrender.com`) | **only** `GET /v1/scripts/stream/:projectId` and `/v1/health` | persistent `node dist/server.js` (`package.json` `start`) |
+| **Render** (`momentumx-be.onrender.com`) | **the ENTIRE API.** The frontend only *sends* it the script stream and `/v1/health` — see below | persistent `node dist/server.js` (`package.json` `start`) |
 | **Cloud Functions** (`functions/`) | the `onCreateUser` auth trigger | `firebase deploy --only functions`, own `package.json`, own build |
 
 **Why two web hosts:** Vercel is serverless and enforces an execution timeout; the SSE
@@ -91,9 +91,31 @@ script stream runs 60–180 s and gets killed. Render holds the connection. Intr
 13-minute `/v1/health` keep-alive in the same commit because Render's free instance spins
 down after ~15 minutes idle.
 
+**Render serves every route, not just the stream.** This table said "only
+`GET /v1/scripts/stream/:projectId` and `/v1/health`" for the whole plan, and that
+describes what the FRONTEND SENDS there, not what Render answers. `start` is
+`node dist/server.js` → `src/app.ts` → `app.use(rootRouter)`: the full API, on
+`https://momentumx-be.onrender.com`, which is hardcoded in the shipped frontend bundle
+(`momentumx-fe/src/utils/network.ts`). Consequences, and they are not small:
+
+- **A Vercel-only deploy leaves every security fix unshipped on a live, publicly
+  reachable host.** Header validation, the account-scoped list cursor, the ownership
+  checks in the context assembler — all of it stays vulnerable on the Render URL.
+- Phase 08's credit gate has the same shape: Vercel gated, Render ungated, same API.
+- An attacker does not have to discover that host. It ships in the JS.
+
 **There is no Render config file in this repo.** It is dashboard-configured, so any
 environment variable a phase adds (`ALLOWED_ORIGINS`, `TENANCY_READ`, …) must be set
-there by hand, separately.
+there by hand, separately — and auto-deploy on this branch must be confirmed, not
+assumed, or Render simply keeps running the old build.
+
+**`firestore.indexes.json` is deployed by NONE of the three artifacts.** It needs
+`firebase deploy --only firestore:indexes`, run separately. Phase 06b moved
+`websiteContent`, `channelDescription` and `competitors` into the `context`
+subcollection and the field exemptions moved with them — until that deploy runs, the
+uncapped website scrape is auto-indexed, and Firestore rejects an indexed string over
+1500 bytes, which fails onboarding and `POST /v1/user/refresh-context` for any real
+website.
 
 **Consequences that are now hard rules:**
 

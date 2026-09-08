@@ -411,10 +411,15 @@ class PackagingService {
     const existing = await this.repo.get(projectId);
     let result: Record<string, unknown>;
     if (existing) {
-      // `projectId`, not `existing.id`: the packaging document is keyed on the
-      // video project by construction (firestore-conventions.md), while
-      // `repo.get` returns bare `doc.data()` and never stamps `id` — so the cast
-      // was hiding a possibly-undefined value on its way into `.doc()`.
+      // `projectId`, not `existing.id as string`. The packaging document is
+      // keyed on the video project by construction (firestore-conventions.md),
+      // so these are the same value and the cast said nothing.
+      //
+      // An earlier version of this comment claimed `repo.get` "never stamps
+      // `id`" — it does: both `saveWithId` and `upsertGeneratedItem` write
+      // `id` INTO the document data, so `existing.id` was always defined. The
+      // change is a clarity fix, not a bug fix, and the comment should not have
+      // claimed otherwise.
       result = await this.repo.update(projectId, {
         ...packagingData,
         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
@@ -554,7 +559,6 @@ class PackagingService {
     // Save previous item status for rollback on failure
     const currentStatuses: Partial<IPackagingItemStatuses> = pkg.itemStatuses ?? {};
     const statusKey = item as PackagingItemName;
-    const previousStatus = currentStatuses[statusKey] ?? "not_started";
 
     let result: unknown;
     let fieldKey: string;
@@ -580,7 +584,7 @@ class PackagingService {
       }
     } catch (genError) {
       // No rollback here, deliberately. This used to write
-      // `itemStatuses.<item> = previousStatus` — the value it had just READ,
+      // `itemStatuses.<item>` back to the value it had just READ,
       // because regenerate calls the pure `run*` generators, and the only writer
       // of item statuses (`persistGeneratedItem` → `upsertGeneratedItem`) is on
       // the `generate*` path. Nothing between the read above and this catch can
