@@ -1,168 +1,55 @@
 ---
 title: "Product Overview"
-description: "What MomentumX is, who it's for, and what it offers"
-date: 2026-02-26
-last_updated: 2026-07-12
-status: "final"
+last_updated: 2026-10-20
 tags: ["product", "positioning", "overview"]
 ---
 
 # Product Overview
 
-MomentumX is an **AI-powered workflow tool built exclusively for YouTube creators** — think Trello for Creators, where every video is a project that moves through a structured pipeline, and AI powers every step of the work.
+**MomentumX is a YouTube creator workflow tool: “Trello for Creators — with AI built in.”** It helps creators choose ideas, research, write scripts, and prepare hooks, titles, descriptions, thumbnail concepts and Shorts. The value is connected, channel-specific work from idea to publish-ready assets.
 
-It is not just a generation tool. It is a creator operating system: a place to plan, research, write, and package every video — with AI as a deeply integrated collaborator, not a bolt-on feature.
+The primary audience is growth-stage creators (roughly 1,000–50,000 subscribers) in business, finance, AI, productivity and educational niches, especially talking-head creators building a business or personal brand. Free access is intended to demonstrate the workflow to this audience. Channel format settings also support faceless output.
 
----
+## Product model
 
-## The Problem
+**Projects are the container; tools are the entry points.** Creators can commit a generated idea, bring their own title, or enter through packaging. Projects retain relationships between script, hooks, title and packaging.
 
-YouTube creators face three compounding challenges:
-
-**1. Ideation Fatigue**
-Deciding what to make next is harder than it looks. You need ideas that are relevant to your niche, differentiated from competitors, aligned with what YouTube rewards right now, and not something you've already covered.
-
-**2. Production Overhead**
-Even after settling on an idea, the work is far from over. Writing a high-retention script takes hours. Crafting a clickable title requires copywriting skill. Thumbnails, descriptions, hooks, and Shorts each demand separate creative effort.
-
-**3. No Workflow Structure**
-Most creators juggle ideas across notes apps, docs, and DMs. There's no single place to plan what's in the pipeline, what's in progress, and what's ready to publish. The result is inconsistency — the biggest killer of YouTube growth.
-
----
-
-## The Solution
-
-MomentumX combines project-based workflow management with deeply integrated AI — built specifically for the YouTube content creation process.
-
-Every video in MomentumX is a **project**. It starts the moment a creator picks an idea and moves through a structured pipeline until everything needed to publish is ready. The creator controls the flow — steps are flexible, not forced — and AI is available to generate, refine, or iterate at every stage.
-
-```
-Onboarding → Research → Script → Hooks → Packaging → Publish
+```text
+Research / Idea → Script → Hooks → Title → Packaging
 ```
 
-| Stage | What you get |
-|---|---|
-| **Idea** | AI-generated video concepts, competitor analysis, trend discovery, keyword/SEO data |
-| **Script** | A full ~10-minute retention-structured video script, streamed in real time |
-| **Hooks** | 5 attention-grabbing opening lines in varied styles |
-| **Title** | 3 title variations, SEO description, thumbnail brief, Shorts script |
+The default path is guided and jumpable: suggest a useful next step while allowing creators to revisit or enter later. Generation still needs appropriate input; hooks require a completed script step, while packaging can use supplied or stored content. The idea supplies a working project title; the selected optimized title is the publishing headline.
 
-At every stage, the creator can give feedback, regenerate specific items, or refine output with a follow-up prompt. Nothing is one-shot.
+The workspace should show projects, current step, completion and stale state, and a clear continuation action. New creators should see an immediate Idea entry point; returning creators should be able to resume. Board, list or dashboard presentation remains a design choice.
 
----
+The intended launch is one cohesive product with iteration and export throughout the flow. Locally completed capabilities do not establish that the production experience is ready.
 
-## The Personalization Edge
+## Context and first value
 
-This is not a generic AI writing tool. MomentumX is built around the creator's specific context.
+The intended onboarding experience delivers value before extensive setup: paste a YouTube channel URL, review inferred niche/audience/brand suggestions, try ideas, then enrich context over time. A manual niche-and-audience path supports creators without a channel URL. Connection uses public URLs; private analytics and OAuth are future work.
 
-During onboarding, the creator provides:
-- Brand name, niche, and target audience
-- Their YouTube channel URL
-- Competitor channel URLs
-- Their website URL
+Context includes niche, audience, brand, format, own channel titles/description, competitors and website content when supplied. Channel membership controls access, so collaborators can work together regardless of who originally created an asset. See the [account contract](../multi-account/README.md).
 
-MomentumX then enriches this with live data:
-- Pulls the creator's **own top-performing titles** from YouTube
-- Pulls **competitors' top titles** (by view count)
-- Scrapes the creator's **website content** for brand voice context
+Research belongs at the point of creation: evidence behind ideas and competitive/keyword context for titles and descriptions. A standalone analytics dashboard is outside intended launch scope. Research can be unavailable or cached; personalization and grounding do not guarantee output quality.
 
-Every AI generation — titles, scripts, packaging — is shaped by this data. The output speaks to *your* audience, competes in *your* space, and sounds like *your* brand.
+## Intended monetization
 
----
+The intended business model is freemium with one subscription, provisionally **$9/month**. The paid value is continued use of the connected workflow. Intended trial: one full project, approximately five daily Ideas, and approximately two daily watermarked thumbnail images. Paid text was intended to be generous/fair-use, with approximately 50 unwatermarked images per month. These are pricing/packaging targets, not current API entitlements.
 
-## The Content Pipeline in Detail
+Current generation allowances use optional monthly credits. Reconcile those allowances with the proposed trial and paid plan before offering subscriptions. Payments and thumbnail image delivery remain outside current scope. See [current status and open work](./roadmap.md).
 
-### 1. Idea Generation
+The intended primary conversion point is the free-project limit; watermarking is a secondary upgrade incentive, not a distribution strategy. Free-to-paid conversion is the intended business measure.
 
-MomentumX generates 10 video ideas per session. Each idea includes:
-- A video concept (theme / angle)
-- A working title for the video
-- The idea type (evergreen, trendy, etc.)
-- Evidence grounded in live research (competitor videos, trending topics, keyword data)
+## Future direction and decisions
 
-These are:
-- Built around proven viral frameworks (curiosity gaps, hook archetypes, psychological triggers)
-- Tailored to the creator's niche, audience, and competitors
-- Optimized for 2025 YouTube algorithm and audience behavior
-- Non-repetitive — the system tracks all previously generated ideas and actively avoids similar concepts
+Distribution remains unresolved: select and validate channels that reach target creators, such as niche communities, content, referrals or partnerships. Workspace presentation and commercial quotas also need validation rather than being treated as shipped decisions.
 
-**Output:** 10 idea suggestions with working titles and research grounding.
+Longer-term directions include a content calendar and scheduled/published lifecycle, reusable brand/assets, analytics-informed generation, directional AI refinement, a trend entry feed and cross-platform repurposing. Shared accounts and roles already exist locally; a broader agency product remains future work. This overview does not establish release status.
 
----
+## Related documentation
 
-### 2. Script Generation
-
-Once a title is selected, MomentumX generates a full script for it — streamed in real time so the creator sees it being written.
-
-Scripts follow a structured retention framework:
-- **Hook** → immediate attention grab
-- **Setup** → context and stakes
-- **Tension** → conflict or problem deepening
-- **Twist** → unexpected angle
-- **Payoff** → resolution with value
-- **Resolution** → emotional close
-
-Scripts are written in a first-person, human tone — raw and lived-in, not corporate. Each paragraph ends with a soft cliffhanger to hold viewers through to the next section.
-
----
-
-### 3. Hooks
-
-With a script in hand, MomentumX generates 5 hook variations — attention-grabbing opening lines in varied styles (question, bold claim, story teaser, contrarian, pattern interrupt).
-
-### 4. Title & Packaging
-
-With a script and hook selected, MomentumX generates all supporting content for publishing:
-
-| Asset | Details |
-|---|---|
-| **Titles** | 3 variations using different psychological hook archetypes (Fortune Teller, Contrarian, Quick Win, etc.) |
-| **Description** | SEO-optimized, includes a hook visible before "Show More", relevant keywords, and a CTA |
-| **Thumbnail Brief** | 3 distinct visual concepts with layout, text overlay, color, and emotion guidance |
-| **Shorts Script** | Segmented script with start/end timestamps, written for vertical video with a CTA |
-
----
-
-## Who It's For
-
-MomentumX is built for **serious YouTube creators** who:
-- Are growing a content-based business or personal brand
-- Operate in niches like business, finance, AI, automation, productivity, or the creator economy
-- Want to publish consistently without the creative grind slowing them down
-- Care about performance metrics, not just publishing volume
-
----
-
-## Positioning
-
-**Trello for Creators — with AI built in.**
-
-MomentumX is not a general AI assistant repurposed for content creation. It is a YouTube-native workflow tool where AI and project management are equally core.
-
-What makes it defensible against "just use Trello + ChatGPT":
-
-- **YouTube-native** — every flow, every prompt, every framework is built for YouTube specifically. Trello is generic. ChatGPT doesn't know your niche, your channel, or your competitors.
-- **AI is not a plugin** — it's embedded in every step of the workflow, not accessed separately. Research, writing, packaging — all AI-powered natively.
-- **Competitive intelligence baked in** — MomentumX knows your space. It ingests your channel, your competitors' channels, trends in your niche, and keyword data. It generates content that competes, not just content that exists.
-
-> *"MomentumX is where YouTube creators run their content operation — plan videos, research ideas, write scripts, and package everything for publish, with AI as a collaborator at every step."*
-
----
-
-## Future Direction
-
-**Teams & Agencies**
-MomentumX is a solo tool today. Teams and agency use cases (multiple creators, shared workspaces, role-based access) are planned for a future phase.
-
-**Board Visual Model** *(to be decided)*
-The visual representation of the project pipeline — whether it's a Kanban board, a dashboard view, or another model — is yet to be defined and will be discussed and finalized separately.
-
-**Video Project Lifecycle** *(defined — see pipeline-spec.md)*
-The pipeline state machine is fully defined and implemented. Each project tracks `currentStep` (research → script → hooks → title → packaging) and `overallStatus` (in_progress / completed / stale). Extended lifecycle stages beyond the pipeline (e.g. Scheduled, Published) are planned for a future phase.
-
----
-
-## Related Documentation
-
-- [Content Pipeline Deep Dive](./content-pipeline.md) *(coming soon)*
-- [Onboarding Flow](./onboarding.md) *(coming soon)*
+- [Roadmap and locally implemented status](./roadmap.md)
+- [Pipeline status model](./pipeline-spec.md)
+- [Onboarding API](../features/onboarding/api.md)
+- [API communication](../api-communication.md)
+- [Operational readiness](../multi-account/operational-readiness.md)

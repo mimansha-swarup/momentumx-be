@@ -1,4 +1,4 @@
-import { assertGeneration, generationWrite } from "./generation-guard.js";
+import { assertGeneration, generationWrite, prepareGenerationDelivery } from "./generation-guard.js";
 import { isDocumentId } from "../utlils/firestore-id.js";
 import { db, firebase } from "../config/firebase.js";
 class PackagingRepository {
@@ -68,7 +68,7 @@ class PackagingRepository {
             try {
                 const ref = this.db.collection(this.collection).doc(packagingId);
                 if (charge)
-                    await generationWrite(charge, tx => tx.update(ref, data));
+                    await generationWrite(charge, tx => tx.update(ref, data), true);
                 else
                     await ref.update(data);
                 return { id: packagingId, ...data };
@@ -90,7 +90,7 @@ class PackagingRepository {
         // strings, so a sixth `accountId: string` parameter would let an existing
         // 5-argument call keep compiling with the wrong value in the slot.
         { userId, accountId }, field, item, canonical, charge) => {
-            return this.db.runTransaction(async (txn) => {
+            const result = await this.db.runTransaction(async (txn) => {
                 await assertGeneration(txn, charge);
                 // A point read, because the id IS the videoProjectId. This used to be a
                 // `where("videoProjectId", "==", ...)` query, which existed only to find
@@ -111,6 +111,9 @@ class PackagingRepository {
                     ...(snap.exists ? (snap.data()?.itemStatuses ?? {}) : {}),
                     [item]: "completed",
                 };
+                const deliver = await prepareGenerationDelivery(txn, charge);
+                if (charge?.projectId)
+                    txn.update(this.db.collection("videoProjects" /* COLLECTIONS.VIDEO_PROJECTS */).doc(charge.projectId), { packagingId: ref.id });
                 if (!snap.exists) {
                     txn.set(ref, {
                         id: ref.id,
@@ -138,10 +141,14 @@ class PackagingRepository {
                         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
                     });
                 }
+                deliver();
                 // Return the consistent in-transaction status snapshot; the service decides
                 // step completion (packaging = its 3 items; title completes on select).
                 return { packagingId: ref.id, created: !snap.exists, statuses };
             });
+            if (charge)
+                charge.outputPersisted = true;
+            return result;
         };
         // Inverse of markStale, for the "Keep as-is" path: the creator accepted the
         // content as-is, so the doc must stop reporting stale or every card keeps an

@@ -1,5 +1,6 @@
 import { memberRole } from "../utlils/account-member.js";
 import { db } from "../config/firebase.js";
+import { consumedCredits } from "./billing.repository.js";
 import { AccountForbidden, Conflict, RoleForbidden } from "../utlils/errors.js";
 /** Call before any writes, INSIDE the transaction that persists generation output. */
 export const assertGeneration = async (tx, charge) => {
@@ -38,4 +39,42 @@ export const assertGeneration = async (tx, charge) => {
     if (superseded)
         throw Conflict("This generation was superseded by a newer request");
 };
-export const generationWrite = (charge, write) => db.runTransaction(async (tx) => { await assertGeneration(tx, charge); write(tx); });
+/** After assertGeneration, read accounting before any artifact writes; invoke the
+ * returned writer in that transaction. A delivered receipt keeps subsequent
+ * metadata writes fenced without charging twice.
+ */
+export const prepareGenerationDelivery = async (tx, charge) => {
+    if (!charge)
+        return () => { };
+    const ref = db.collection("billing" /* COLLECTIONS.BILLING */).doc(charge.ownerUid);
+    const billing = (await tx.get(ref)).data();
+    const receipt = charge.debited ? billing?.pendingCharges?.[charge.token] : billing?.usageReceipts?.[charge.token];
+    const lock = billing?.generationLocks?.[charge.lockKey];
+    if (receipt?.delivered || (lock?.token === charge.token && lock.delivered))
+        return () => { };
+    const usageRef = db.collection("accounts" /* COLLECTIONS.ACCOUNTS */).doc(charge.accountId).collection("usage" /* SUBCOLLECTIONS.USAGE */).doc(charge.periodStart);
+    const usage = (await tx.get(usageRef)).data();
+    const updates = {};
+    if (charge.debited && billing?.periodStart === charge.periodStart) {
+        updates.consumed = consumedCredits(consumedCredits(billing.consumed ?? 0) + charge.cost);
+    }
+    const receiptField = charge.debited ? "pendingCharges" : "usageReceipts";
+    if (receipt)
+        updates[`${receiptField}.${charge.token}.delivered`] = true;
+    if (lock?.token === charge.token)
+        updates[`generationLocks.${charge.lockKey}.delivered`] = true;
+    return () => {
+        tx.update(ref, updates);
+        tx.set(usageRef, { credits: (usage?.credits ?? 0) + charge.cost, [charge.counter]: (usage?.[charge.counter] ?? 0) + 1 }, { merge: true });
+    };
+};
+export const generationWrite = async (charge, write, deliversOutput = false) => {
+    await db.runTransaction(async (tx) => {
+        await assertGeneration(tx, charge);
+        const deliver = deliversOutput ? await prepareGenerationDelivery(tx, charge) : () => { };
+        await write(tx);
+        deliver();
+    });
+    if (deliversOutput)
+        charge.outputPersisted = true;
+};

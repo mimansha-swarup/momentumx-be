@@ -35,11 +35,15 @@ const titles = data?.items?.map((v) => v?.snippet?.title);
 
 ## Onboarding Flow
 
-Competitor and own-channel data is fetched **once at onboarding** and stored in Firestore (`users` doc: `competitors`, `topTitles`) — it is NOT re-fetched on every generation. Research endpoints (`/v1/research/*`) hit the API live per request.
+Onboarding stores channel and competitor context under the selected account, not the
+identity profile. Explicit refresh can enrich it again. Research fetches use the existing
+shared bounded public YouTube cache where applicable; do not assume every request is live.
+Keep network timeouts/cache failure fallbacks and recheck permission before context writes.
 
 ## Quota Budget
 
-Daily quota: 10,000 units. Costs per call:
+Treat quota as project-specific; inspect the configured project allocation before sizing
+traffic. Common endpoint budgeting values (verify current provider policy before changes):
 
 ```
 search.list    → 100 units   (expensive — the whole budget is ~100 searches/day)

@@ -1,310 +1,42 @@
----
-title: "Script — API Reference"
-description: "All endpoints for script generation, retrieval, and editing."
-date: 2026-02-27
-last_updated: 2026-07-12
-status: "implemented"
-tags: ["api", "script"]
----
+# Script API
 
-# Script API Reference
+All calls require `Authorization: Bearer <Firebase ID token>` and selected-channel membership. Writes require `X-Account-Id` and editor/owner role; saved-content reads and exports allow viewers and retain the documented headerless read fallback. Initial GET generation is an exception: it derives the channel from the project and requires editor/owner permission, as detailed below. Access follows channel membership, not authorship. See [shared API conventions](../../api-communication.md) for envelopes, channel selection, errors and credits.
 
-Base path: `/v1/scripts`
+JSON successes use `{ success: true, message, data }`. Common failures include 400 invalid input, 401 invalid/missing authentication, 403 insufficient access, 404 missing/unavailable resource, 409 generation conflict, 402 insufficient credits when enforcement applies, and 503 provider unavailability. See shared conventions for machine-readable codes and retry behavior.
 
-All endpoints require `Authorization: Bearer <token>` except `GET /scripts/stream/:projectId` which uses `?token=` query param.
+Base: `/v1/scripts`.
 
----
-
-## Endpoints Summary
-
-| Method | URL | Purpose | Status |
-|---|---|---|---|
-| `GET` | `/v1/scripts/stream/:projectId` | Stream script generation via SSE (project-scoped) | ✅ Built |
-| `GET` | `/v1/scripts` | List all user scripts | ✅ Built |
-| `GET` | `/v1/scripts/:scriptId` | Get single script | ✅ Built |
-| `PATCH` | `/v1/scripts/edit/:scriptId` | Edit script text | ✅ Built |
-| `POST` | `/v1/scripts/:scriptId/regenerate` | Regenerate script (non-SSE) | ✅ Built |
-| `GET` | `/v1/scripts/:scriptId/export` | Export script as plain text | ✅ Built |
-
----
-
-## GET `/v1/scripts/stream/:projectId`
-
-Streams a full YouTube video script for the given video project via SSE. The script is generated for the idea referenced by `project.ideaId`.
-
-**Auth:** `?token=<firebase_jwt>` query param, verified by `sseAuthMiddleware`. Bearer headers not supported — browser `EventSource` API cannot send custom headers.
-
-**Note on `:projectId`:** This is the **video project ID**. The script document is saved under its own `randomUUID` id (reused across regenerations via `project.scriptId`), not the idea's id, and stores `ideaId` + `videoProjectId` FKs.
-
-### Path Parameters
-
-| Param | Type | Description |
+| Method/path | Request | Success |
 |---|---|---|
-| `projectId` | `string` | The video project to generate a script for (idea derived from `project.ideaId`) |
+| `GET /stream/:projectId` | Project ID, no body | Script text over SSE |
+| `GET /` | No body | Script array in `data`, newest first |
+| `GET /:scriptId` | Script ID | Script in `data` |
+| `PATCH /edit/:scriptId` | `{ script?, title? }`; at least one | `data: { script?, title?, scriptId }` |
+| `POST /:scriptId/regenerate` | No body | `data: { id, title, script }` |
+| `GET /:scriptId/export` | No body | `data: { title, text }` |
 
-### Query Parameters
+A saved script includes `id`, `title`, `script`, `accountId`, `createdBy`, timestamps and its `ideaId`/`videoProjectId` links. Treat script, project and idea IDs as opaque; use the returned links rather than assuming they differ or match. Manual edits allow only script text (1–100,000 characters) and title (trimmed, 1–300 characters); unknown fields are stripped.
 
-| Param | Type | Required | Description |
-|---|---|---|---|
-| `token` | `string` | Yes | Firebase JWT. Must be valid and non-expired. |
+Initial generation returns saved script content when it already exists. Use the explicit regeneration endpoint to replace it. Regeneration reuses the script ID and can make Hooks, Title and Packaging need review. Editing script text also invalidates downstream work; title-only edits do not.
 
-### Response — SSE stream `200`
+## Initial script stream
 
-Headers set before streaming:
-```
-Content-Type: text/event-stream
-Cache-Control: no-cache
-Connection: keep-alive
-```
+`GET /stream/:projectId` prefers a bearer header and accepts `?token=<Firebase ID token>` for compatibility with browser EventSource. The project determines the channel; current membership and editor/owner permission are required. Do not send an arbitrary account query parameter.
 
-Each chunk during generation (chunk text is JSON-stringified):
-```
-data: "chunk text here"\n\n
-```
+A successful connection uses `Content-Type: text/event-stream`. Text arrives as JSON strings in ordinary data events:
 
-Stream end signal:
-```
-data: [DONE]\n\n
+```text
+data: "script text chunk"
+
+data: [DONE]
 ```
 
-### Side Effects on Completion
-- Script document saved to `scripts` collection under its own `randomUUID` id (reused via `project.scriptId` on regenerate), with `ideaId` + `videoProjectId` FKs
-- Idea document updated: `isScriptGenerated: true`
-- Script linked to the project (`linkResource`) and the Script step completed (`completeStep`)
+Failure can arrive as a named event. A failure uses `event: generation_error` with JSON containing `message` and optional `code`/`detail`, followed by `[DONE]`. Errors before streaming begins use ordinary JSON and their HTTP status. Do not interpret `[DONE]` or connection closure alone as a saved-script success.
 
-### Error Cases
+## Regeneration transport
 
-These fire **before** the stream starts (headers not yet flushed), so they return a JSON error via `sendError`:
+Regeneration normally returns JSON after saving. With `Accept: text/event-stream`, it emits named `progress`, `chunk` (`{ text }`), `result` (success envelope) or `generation_error` events. This opt-in POST stream is a different format from the initial GET stream. Heartbeats are comments, not generation progress.
 
-| Status | Condition |
-|---|---|
-| 401 | `token` query param missing |
-| 403 | Token invalid/expired, or project not owned by requesting user |
-| 404 | Video project not found, or its `ideaId` idea not found |
-| 500 | Gemini generation failed or Firestore write failed (before stream start) |
+An interrupted provider draft is not accepted as a completed replacement. Clients should retain existing saved work while displaying a failed attempt. See [shared streaming/error conventions](../../api-communication.md).
 
-### Notes
-- The project is loaded and ownership-checked before `flushHeaders()`, so 401/403/404 are returned as clean JSON responses.
-- If the stream has already started (`res.headersSent`) when an error occurs, the error cannot be sent as a JSON response — the stream ends abruptly.
-
----
-
-## GET `/v1/scripts`
-
-Returns all scripts owned by the authenticated user, ordered by `createdAt` descending.
-
-### Auth
-`Authorization: Bearer <token>` — required.
-
-### Response — `200`
-
-```json
-{
-  "success": true,
-  "message": "successfully retrieved scripts",
-  "data": [
-    {
-      "id": "string",
-      "title": "string",
-      "createdBy": "string",
-      "createdAt": "ISO timestamp",
-      "script": "string",
-      "ideaId": "string",
-      "videoProjectId": "string"
-    }
-  ]
-}
-```
-
-### Error Cases
-
-| Status | Condition |
-|---|---|
-| 500 | Firestore read failed |
-
----
-
-## GET `/v1/scripts/:scriptId`
-
-Returns a single script document by ID.
-
-### Auth
-`Authorization: Bearer <token>` — required.
-
-Ownership enforced — `createdBy` must match the requesting user.
-
-### Path Parameters
-
-| Param | Type | Description |
-|---|---|---|
-| `scriptId` | `string` | Script document ID (its own `randomUUID`, not the ideaId) |
-
-### Response — `200`
-
-```json
-{
-  "success": true,
-  "message": "successfully retrieved script",
-  "data": {
-    "id": "string",
-    "title": "string",
-    "createdBy": "string",
-    "createdAt": "ISO timestamp",
-    "script": "string",
-    "ideaId": "string",
-    "videoProjectId": "string"
-  }
-}
-```
-
-### Error Cases
-
-| Status | Condition |
-|---|---|
-| 404 | Script not found |
-| 500 | Firestore read failed |
-
----
-
-## PATCH `/v1/scripts/edit/:scriptId`
-
-Merges provided fields onto the script document. Manual edit only — not AI-assisted.
-
-### Auth
-`Authorization: Bearer <token>` — required.
-
-Ownership enforced — `createdBy` must match the requesting user.
-
-### Path Parameters
-
-| Param | Type | Description |
-|---|---|---|
-| `scriptId` | `string` | Script document ID to update |
-
-### Request Body
-
-Any subset of script fields to update. The update uses `{ merge: true }` — only provided fields are overwritten.
-
-```json
-{
-  "script": "Updated full script text"
-}
-```
-
-### Response — `200`
-
-```json
-{
-  "success": true,
-  "message": "Title updated successfully",
-  "data": {
-    "script": "Updated full script text",
-    "scriptId": "string"
-  }
-}
-```
-
-### Error Cases
-
-| Status | Condition |
-|---|---|
-| 500 | Firestore write failed |
-
----
-
-## Script Document Schema
-
-Stored in the `scripts` Firestore collection. Document ID is the script's own `randomUUID`; `ideaId` and `videoProjectId` link back to the source idea and owning project.
-
-| Field | Type | Description |
-|---|---|---|
-| `id` | `string` | Document ID — own `randomUUID`, NOT the ideaId |
-| `title` | `string` | Title of the idea this script was generated for |
-| `createdBy` | `string` | `userId` of the owner |
-| `createdAt` | `Timestamp` | Server-side Firestore timestamp |
-| `script` | `string` | Full script text |
-| `ideaId` | `string` | FK → source idea |
-| `videoProjectId` | `string` | FK → owning video project |
-
----
-
-## POST `/v1/scripts/:scriptId/regenerate`
-
-Regenerates the script for a idea without SSE. Returns the full script in the response body once generation is complete.
-
-### Auth
-`Authorization: Bearer <token>` — required. Ownership enforced — `createdBy` must match the requesting user.
-
-### Path Parameters
-
-| Param | Type | Description |
-|---|---|---|
-| `scriptId` | `string` | Script document ID (its own `randomUUID`, not the ideaId) |
-
-### Response — `200`
-
-```json
-{
-  "success": true,
-  "message": "Script regenerated successfully",
-  "data": {
-    "id": "string",
-    "title": "string",
-    "script": "string"
-  }
-}
-```
-
-### Side Effects on Completion
-- `scripts` document updated with new `script` text
-- If the script is linked to a video project, `pipeline.hooks` and `pipeline.packaging` are marked stale (fire-and-forget)
-
-### Error Cases
-
-| Status | Condition |
-|---|---|
-| 403 | Script not owned by requesting user |
-| 404 | Script not found |
-| 500 | Gemini generation failed or Firestore write failed |
-
----
-
-## GET `/v1/scripts/:scriptId/export`
-
-Returns the script as a plain-text formatted string suitable for copy-paste or download.
-
-### Auth
-`Authorization: Bearer <token>` — required. Ownership enforced.
-
-### Path Parameters
-
-| Param | Type | Description |
-|---|---|---|
-| `scriptId` | `string` | Script document ID |
-
-### Response — `200`
-
-```json
-{
-  "success": true,
-  "data": {
-    "title": "string",
-    "text": "full script text"
-  }
-}
-```
-
-### Error Cases
-
-| Status | Condition |
-|---|---|
-| 403 | Script not owned by requesting user |
-| 404 | Script not found |
-
----
-
-## Related Documentation
-
-- [Script Feature Spec](./spec.md)
-- [Research API Reference](../research/api.md)
-- [Pipeline Spec](../../product/pipeline-spec.md)
+[Creator flow](./spec.md) · [Pipeline flow](../../product/pipeline-spec.md)

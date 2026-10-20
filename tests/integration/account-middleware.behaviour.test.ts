@@ -1,6 +1,6 @@
 // Phase 05's trust boundary, end to end through a real Express app.
 //
-// Contract: docs/multi-account/phase-05-account-context-api.md.
+// Contract: docs/multi-account/README.md.
 //
 // `X-Account-Id` is a client-supplied header and therefore forgeable. Every bit
 // of safety here is the membership check, and the check has to be unconditional —

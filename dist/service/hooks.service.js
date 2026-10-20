@@ -72,14 +72,8 @@ class HooksService {
                     hooks: parsed.hooks,
                     hookFeedback: {},
                 }, ...(charge ? [charge] : []));
-                if (project.hooksId) {
-                    // Replacing a missing batch invalidates the old selection just like
-                    // regeneration. Finish the fenced cascade before linking new hooks.
-                    await this.videoProjectService.clearSelectedHook(videoProjectId, owner, ...(charge ? [charge] : []));
-                    await this.videoProjectService.markStale(videoProjectId, "hooks", ...(charge ? [charge] : []));
-                    await this.videoProjectService.markPackagingDocumentStale(videoProjectId, "hooks_regenerated", ...(charge ? [charge] : []));
-                }
-                await this.videoProjectService.linkResource(videoProjectId, "hooks", saved.id, owner, ...(charge ? [charge] : []));
+                // Selection, resource link and downstream invalidation commit with the
+                // batch. Repeating them here could clear a selection made after commit.
                 return saved;
             });
             return hooksBatch;
@@ -145,14 +139,6 @@ class HooksService {
                 const parsed = await collectJson(result, "hooks");
                 assertHooks(parsed);
                 await this.repo.update(hooksId, { hooks: parsed.hooks, hookFeedback: {} }, ...(charge ? [charge] : []));
-                try {
-                    await this.videoProjectService.clearSelectedHook(hooksBatch.videoProjectId, owner, ...(charge ? [charge] : []));
-                    await this.videoProjectService.markStale(hooksBatch.videoProjectId, "hooks", ...(charge ? [charge] : []));
-                    await this.videoProjectService.markPackagingDocumentStale(hooksBatch.videoProjectId, "hooks_regenerated", ...(charge ? [charge] : []));
-                }
-                catch (cascadeError) {
-                    console.error(JSON.stringify({ event: "stale_cascade_failed", from: "hooks", projectId: hooksBatch.videoProjectId, userId, message: cascadeError?.message }));
-                }
                 return { id: hooksId, hooks: parsed.hooks, hookFeedback: {} };
             });
         };

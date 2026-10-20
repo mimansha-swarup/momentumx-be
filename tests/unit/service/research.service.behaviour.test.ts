@@ -6,11 +6,9 @@
 // Contract from docs/features/research/api.md and the /v1/research section of
 // .claude/rules/api-design.md.
 
-import { fakeAccountRepo, testOwner } from "../../helpers/account";
+import { testOwner } from "../../helpers/account";
 import ResearchService from "../../../src/service/research.service";
 import ResearchRepository from "../../../src/repository/research.repository";
-import UserRepository from "../../../src/repository/user.repository";
-import { DEFAULT_NICHE } from "../../../src/constants/research";
 
 const makeService = (
   user: Record<string, unknown> | null,
@@ -19,6 +17,7 @@ const makeService = (
   const repo = {
     getTrendingVideos: jest.fn().mockResolvedValue([]),
     getChannelTopVideos: jest.fn().mockResolvedValue([]),
+    getChannelTitle: jest.fn().mockResolvedValue("Channel name"),
     getKeywordSignals: jest.fn().mockResolvedValue([]),
     ...repoOverrides,
   } as unknown as jest.Mocked<ResearchRepository>;
@@ -48,31 +47,29 @@ const channelRepo = () => accountRepo as never;
 
 describe("getTrending — research is scoped to the creator's own niche", () => {
   it("searches the user's niche", async () => {
-    const { service, repo } = makeService({ niche: "AI tools" });
+    const { service, repo, accounts } = makeService({ niche: "AI tools" });
 
-    await service.getTrending(testOwner("user-1"));
+    await service.getTrending({ userId: "user-1", accountId: "finance-channel" });
 
+    expect((accounts as { getContext: jest.Mock }).getContext).toHaveBeenCalledWith("finance-channel");
     expect(repo.getTrendingVideos).toHaveBeenCalledWith("AI tools");
   });
 
-  it("falls back to a default niche rather than searching for nothing", async () => {
-    // A URL-only onboarding can leave `niche` unset. The fallback keeps the
-    // panel populated — but it is someone else's niche shown unlabelled as
-    // theirs, which is filed as an open FE/UX defect, not fixed here.
-    const { service, repo } = makeService({ niche: "" });
-
+  it("trims a configured niche before searching", async () => {
+    const { service, repo } = makeService({ niche: "  AI tools  " });
     await service.getTrending(testOwner("user-1"));
-
-    expect(repo.getTrendingVideos).toHaveBeenCalledWith(DEFAULT_NICHE);
+    expect(repo.getTrendingVideos).toHaveBeenCalledWith("AI tools");
   });
 
-  it("falls back when the user record is missing entirely", async () => {
-    const { service, repo } = makeService(null);
+  it.each([null, {}, { niche: "" }, { niche: "   " }])(
+    "requires a configured niche instead of showing unrelated defaults: %p",
+    async (context) => {
+      const { service, repo } = makeService(context);
+      await expect(service.getTrending(testOwner("user-1"))).rejects.toMatchObject({ statusCode: 400 });
+      expect(repo.getTrendingVideos).not.toHaveBeenCalled();
+    }
+  );
 
-    await service.getTrending(testOwner("user-1"));
-
-    expect(repo.getTrendingVideos).toHaveBeenCalledWith(DEFAULT_NICHE);
-  });
 });
 
 describe("getCompetitorInsights — one slow competitor must not lose the others", () => {
@@ -80,6 +77,29 @@ describe("getCompetitorInsights — one slow competitor must not lose the others
     { id: "chan-1", url: "youtube.com/@one" },
     { id: "chan-2", url: "youtube.com/@two" },
   ];
+
+  it("uses provider channel names even when the channel has no videos", async () => {
+    const { service, repo } = makeService({ competitors: COMPETITORS }, {
+      getChannelTitle: jest.fn().mockResolvedValueOnce("First creator").mockResolvedValueOnce("Second creator"),
+    });
+    expect(await service.getCompetitorInsights(testOwner("user-1"))).toEqual([
+      { channelTitle: "First creator", titles: [] },
+      { channelTitle: "Second creator", titles: [] },
+    ]);
+    expect(repo.getChannelTitle).toHaveBeenNthCalledWith(1, "chan-1");
+    expect(repo.getChannelTitle).toHaveBeenNthCalledWith(2, "chan-2");
+  });
+
+  it("keeps video results when channel names are unavailable without labelling URLs as names", async () => {
+    const { service } = makeService({ competitors: COMPETITORS }, {
+      getChannelTitle: jest.fn().mockRejectedValueOnce(new Error("quota exceeded")).mockResolvedValueOnce(null),
+      getChannelTopVideos: jest.fn().mockResolvedValue(["Video A"]),
+    });
+    expect(await service.getCompetitorInsights(testOwner("user-1"))).toEqual([
+      { channelTitle: "Unknown channel", titles: ["Video A"] },
+      { channelTitle: "Unknown channel", titles: ["Video A"] },
+    ]);
+  });
 
   it("returns a row per competitor with its videos", async () => {
     const { service } = makeService(
@@ -90,8 +110,8 @@ describe("getCompetitorInsights — one slow competitor must not lose the others
     const result = await service.getCompetitorInsights(testOwner("user-1"));
 
     expect(result).toEqual([
-      { channelTitle: "youtube.com/@one", titles: ["Video A"] },
-      { channelTitle: "youtube.com/@two", titles: ["Video A"] },
+      { channelTitle: "Channel name", titles: ["Video A"] },
+      { channelTitle: "Channel name", titles: ["Video A"] },
     ]);
   });
 
@@ -111,8 +131,8 @@ describe("getCompetitorInsights — one slow competitor must not lose the others
     // Promise.allSettled, not Promise.all: one quota error must not blank the
     // whole competitors panel.
     expect(result).toEqual([
-      { channelTitle: "youtube.com/@one", titles: [] },
-      { channelTitle: "youtube.com/@two", titles: ["Video B"] },
+      { channelTitle: "Channel name", titles: [] },
+      { channelTitle: "Channel name", titles: ["Video B"] },
     ]);
   });
 

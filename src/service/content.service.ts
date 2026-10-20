@@ -404,15 +404,21 @@ class ContentService {
           owner,
         );
         await this.repo.saveScript(scriptId, formattedData, ...(charge ? [charge] as const : []));
-        await this.repo.updateIdea(project.ideaId, {
-          isScriptGenerated: true,
-        }, ...(charge ? [charge] as const : []));
+        try {
+          await this.repo.updateIdea(project.ideaId, {
+            isScriptGenerated: true,
+          }, ...(charge ? [charge] as const : []));
+        } catch (error) {
+          console.error(JSON.stringify({ event: "script_idea_sync_failed", projectId, scriptId, userId, message: (error as Error)?.message }));
+        }
 
         // Pipeline transition (script saved -> mark step complete). Awaited so it
         // actually runs — fire-and-forget after res.end() can be dropped on serverless —
         // and logged with context instead of silently swallowed.
-        await vps.linkResource(projectId, "script", scriptId, owner, ...(charge ? [charge] as const : []));
         try {
+          // The script write already linked scriptId atomically. This refreshes
+          // derived pipeline metadata, which must not hide the saved script.
+          await vps.linkResource(projectId, "script", scriptId, owner, ...(charge ? [charge] as const : []));
           await vps.completeStep(projectId, "script", owner, ...(charge ? [charge] as const : []));
         } catch (pipelineError) {
           console.error(JSON.stringify({ event: "pipeline_transition_failed", step: "script", projectId, scriptId, userId, message: (pipelineError as Error)?.message }));
@@ -477,20 +483,19 @@ class ContentService {
     // Before the archive below — this method destroys the previous batch, so an
     // owner problem must surface while there is still something to lose.
     assertOwner(owner.userId);
-    const activeIdeas = await this.repo.getActiveBatch(owner.accountId);
-
     return this.steps.run({ actor: owner, kind: "ideas" }, async (charge) => {
       const ideas = await this.buildIdeas(owner, true, undefined, progress);
       const formatted = await this.formatIdeas(ideas, owner, progress);
       progress?.("saving", "Saving the replacement ideas.");
 
+      // Read after acquiring the account's ideas lock: a preceding generation
+      // may have delivered more ideas while this request waited to reserve.
+      const activeIdeas = await this.repo.getActiveBatch(owner.accountId);
+      const saved = await this.repo.batchSaveIdeas(formatted, charge, owner.accountId);
+      // A failed replacement leaves both the old ideas and their projects current.
       for (const idea of activeIdeas) {
         await this.cascadeIdeaStale(idea.id, owner, ...(charge ? [charge] as const : []));
       }
-
-      // Persist replacements before archiving, excluding the new batch.
-      const saved = await this.saveBatchIdeas(formatted, ...(charge ? [charge] as const : []));
-      await this.repo.archiveUserIdeas(owner.accountId, formatted[0].batchId as string, ...(charge ? [charge] as const : []));
       return saved;
     });
   };

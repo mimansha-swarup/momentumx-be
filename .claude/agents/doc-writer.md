@@ -19,73 +19,24 @@ Only documents what has been decided or built — never aspirational content. Be
 docs/
 └── product/
     ├── overview.md   — product positioning, pipeline, who it's for
-    └── roadmap.md    — current build state, phases, gaps, open decisions (source of truth)
+    └── roadmap.md    — current build state, gaps, open decisions (source of truth)
 ```
 
 New API reference docs go under `docs/` as they're created.
 
 ## Documentation Standard
 
-Every file must have YAML frontmatter:
+Start with the user goal and system flow, then link to narrower API/operator references.
+Preserve existing useful formats; do not require new frontmatter or duplicate schema and
+route inventories. Document current behavior, limitations and open decisions without phase
+history or implementation tutorials. Setup commands, actual API contracts and operational
+safety procedures may retain necessary technical detail.
 
-```yaml
----
-title: "Document Title"
-description: "One-line description"
-date: YYYY-MM-DD          # original creation date
-last_updated: YYYY-MM-DD  # update every time you edit
-status: "draft" | "final"
-tags: ["tag1", "tag2"]
----
-```
-
-**Formatting rules:**
-- Heading hierarchy H1 → H2 → H3, never skip levels
-- Tables for structured data (endpoints, schema fields, status comparisons)
-- Code blocks always with language tags
-- Status indicators: ✅ built, ❌ not built, 🚧 in progress
-- Related Documentation section at the bottom of every file
-- Direct, no filler — say what was decided and why
-
-## After Every Feature Ships
-
-**1. Update roadmap.md** — find the item, flip its status, update the build-status note and `last_updated`. Verify against the code that the endpoints/behavior actually exist before marking ✅.
-
-**2. Update or create the API reference.** Endpoint entries must match the actual implementation (check the route file and controller) and the response-shape conventions in `.claude/rules/api-design.md`. When documenting endpoints or schemas, the `api-design` and `firestore-operations` skills (invoke via the Skill tool) carry the current contracts and document shapes:
-
-```markdown
-### PATCH /v1/topics/:topicId/feedback
-
-**Auth:** Bearer token
-**Description:** Record a like or dislike signal on a generated topic.
-
-**Request body:**
-| Field | Type | Required | Description |
-|---|---|---|---|
-| feedback | `"like" \| "dislike" \| null` | Yes | Feedback signal (`null` clears) |
-
-**Response:**
-\```json
-{ "success": true, "data": { "topicId": "string", "userFeedback": "like" } }
-\```
-
-**Error cases:**
-- 400 — invalid feedback value
-- 403 — unauthorized
-- 404 — topic not found or not owned by user
-```
-
-**3. Capture architectural decisions** made during the build:
-
-```markdown
-## Architectural Decision: [short title]
-**Date:** YYYY-MM-DD
-**Decision:** [what was decided]
-**Reason:** [why this approach]
-**Alternatives considered:** [what else was considered and why rejected]
-```
-
-**4. Resolve open decisions** — move any resolved item out of the roadmap's Open Decisions table into a resolved-decisions section, with the resolution and date.
+After behavior changes, update the relevant product/spec/API docs together. Verify exact
+routes, request fields, roles, status codes and response shapes in source. Use shared
+`docs/api-communication.md` and channel/readiness docs for cross-cutting rules instead of
+copying them into every feature. Local tests establish neither deployment nor live
+provider quality. Keep links valid and remove obsolete instructions when features change.
 
 ## Writing Style
 

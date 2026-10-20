@@ -1,4 +1,4 @@
-import { HttpError } from "../utlils/errors.js";
+import { HttpError, ServiceUnavailable } from "../utlils/errors.js";
 class StepRunner {
     // Narrowed to the two methods this actually calls. Nothing here needs the whole
     // repository, and the wide type is what forced every test double to be laundered
@@ -30,17 +30,22 @@ class StepRunner {
                 console.error(JSON.stringify({ event: "generation_failed", kind: spec.kind, projectId: spec.projectId, userId: spec.actor.userId, message: error?.message }));
                 throw error;
             }
-            // Content is saved, so THIS is where the credits are taken. A failure here
-            // leaves the user with content they were not charged for — a far smaller
-            // window than the old debit-up-front shape, which risked the opposite, and
-            // the friendlier direction to err in.
-            // `false` here (not a rejection) means this run was superseded and moved no
-            // money — with the Fix 1 guard in place the save above is already refused
-            // for a debited charge, so this is defence in depth, not the primary guard.
-            await this.billing.settle(charge, false)
-                .then(settled => { if (!settled)
-                console.error(JSON.stringify({ event: "generation_settle_superseded", kind: spec.kind, projectId: spec.projectId, userId: spec.actor.userId })); })
-                .catch(error => console.error(JSON.stringify({ event: "generation_release_failed", kind: spec.kind, message: error?.message })));
+            // Saved artifacts own accounting atomically. A failed lock release must not
+            // hide saved output. Stateless paid output instead requires accounting to
+            // succeed before it is returned, since there is no saved artifact to recover.
+            try {
+                const settled = await this.billing.settle(charge, false);
+                if (!settled) {
+                    if (charge?.debited && !charge.outputPersisted)
+                        throw ServiceUnavailable("Generation could not be completed. Please try again.");
+                    console.error(JSON.stringify({ event: "generation_settle_superseded", kind: spec.kind, projectId: spec.projectId, userId: spec.actor.userId }));
+                }
+            }
+            catch (error) {
+                console.error(JSON.stringify({ event: "generation_release_failed", kind: spec.kind, message: error?.message }));
+                if (charge?.debited && !charge.outputPersisted)
+                    throw ServiceUnavailable("Generation could not be completed. Please try again.");
+            }
             return out;
         };
     }

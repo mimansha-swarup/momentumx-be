@@ -45,28 +45,29 @@ it("replaces a missing batch, invalidates index zero and downstream outputs, the
   expect(balance().consumed).toBe(1);
 });
 
-it.each(["clearSelectedHook", "markStale", "markPackagingDocumentStale", "linkResource"] as const)("failure at %s leaves no charge or visible replacement and a retry succeeds", async method => {
-  const failure = jest.spyOn(projects, method).mockRejectedValueOnce(new Error("injected persistence failure"));
-  await expect(service.generate(actor, "p", "script")).rejects.toMatchObject({ detail: { charged: false } });
-  expect(state().hooksId).toBe("missing");
-  expect(balance()).toMatchObject({ consumed: 0, pendingCharges: {}, generationLocks: {} });
-  expect(db.col("accounts/a/usage").size).toBe(0);
-  failure.mockRestore();
-  const recovered = await service.generate(actor, "p", "script");
-  expect(state()).toMatchObject({ hooksId: recovered.id, selectedHookIndex: null, pipeline: { hooks: { status: "in_progress" }, title: { status: "stale" }, packaging: { status: "stale" } } });
-  expect(balance().consumed).toBe(1);
+it.each(["clearSelectedHook", "markStale", "markPackagingDocumentStale", "linkResource"] as const)("%s is not replayed after the atomic saved, charged and invalidated replacement", async method => {
+  const redundant = jest.spyOn(projects, method).mockRejectedValue(new Error("metadata unavailable"));
+  const result = await service.generate(actor, "p", "script");
+  expect(state()).toMatchObject({ hooksId: result.id, selectedHookIndex: null, pipeline: { hooks: { status: "in_progress" }, title: { status: "stale" }, packaging: { status: "stale" } } });
+  expect(db.col("packaging").get("pkg")).toMatchObject({ isStale: true, itemStatuses: { title: "stale", description: "stale", thumbnail: "stale", shorts: "stale" } });
+  expect(balance()).toMatchObject({ consumed: 1, pendingCharges: {}, generationLocks: {} });
+  expect(db.col("accounts/a/usage").get("2026-09")).toMatchObject({ hooks: 1, credits: 1 });
+  expect(await service.generate(actor, "p", "script")).toMatchObject({ id: result.id });
+  expect(generateStreamingContent).toHaveBeenCalledTimes(1);
+  expect(redundant).not.toHaveBeenCalled();
 });
 
-it("revoked editor access after saving refuses the remaining cascade and charge", async () => {
+it("role revocation after authorized atomic delivery preserves saved output and accounting", async () => {
   const save = hooks.save;
   jest.spyOn(hooks, "save").mockImplementation(async (...args) => {
     const saved = await save(...args);
     db.seed("accounts", [{ id: "a", billingOwnerUid: "payer", members: { editor: { role: "viewer" } } }]);
     return saved;
   });
-  await expect(service.generate(actor, "p", "script")).rejects.toMatchObject({ statusCode: 403, detail: { charged: false } });
-  expect(state()).toMatchObject({ hooksId: "missing", selectedHookIndex: 0 });
-  expect(balance().consumed).toBe(0);
+  const result = await service.generate(actor, "p", "script");
+  expect(state()).toMatchObject({ hooksId: result.id, selectedHookIndex: null, pipeline: { title: { status: "stale" }, packaging: { status: "stale" } } });
+  expect(db.col("packaging").get("pkg")).toMatchObject({ isStale: true });
+  expect(balance().consumed).toBe(1);
 });
 
 it("a concurrent recovery cannot enter the provider while the first reservation is live", async () => {
@@ -93,4 +94,17 @@ it("an exhausted account cannot create an orphan or invalidate previous choices"
   expect(generateStreamingContent).not.toHaveBeenCalled();
   expect(db.col("hooks").size).toBe(0);
   expect(state()).toMatchObject({ hooksId: "missing", selectedHookIndex: 0, pipeline: { hooks: { status: "completed" } } });
+});
+
+
+it("preserves a hook selection made immediately after the delivery transaction commits", async () => {
+  const save = hooks.save;
+  jest.spyOn(hooks, "save").mockImplementation(async (...args) => {
+    const saved = await save(...args);
+    await service.select(actor, saved.id, 0);
+    return saved;
+  });
+  const result = await service.generate(actor, "p", "script");
+  expect(state()).toMatchObject({ hooksId: result.id, selectedHookIndex: 0, pipeline: { hooks: { status: "completed" }, title: { status: "stale" }, packaging: { status: "stale" } } });
+  expect(balance().consumed).toBe(1);
 });

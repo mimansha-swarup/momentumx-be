@@ -1,6 +1,6 @@
 // Every user gets exactly one channel, minted on first use.
 //
-// Contract from docs/multi-account/phase-03-dual-write-account-tag.md. The single
+// Contract from docs/multi-account/README.md. The single
 // invariant everything else in the migration rests on: `accountId` is a UUID v4
 // and NEVER the uid. The old design reused the uid, and the reason it was dropped
 // is that a `userId` passed where an `accountId` belongs still isolated

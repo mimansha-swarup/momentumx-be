@@ -2,6 +2,7 @@ import { IDEA_PUBLIC_FIELDS } from "../utlils/public-response.js";
 import { generationWrite } from "./generation-guard.js";
 import { isDocumentId } from "../utlils/firestore-id.js";
 import { db, firebase } from "../config/firebase.js";
+import { ServiceUnavailable } from "../utlils/errors.js";
 class ContentRepository {
     constructor() {
         this.getIdea = async (ideaId) => {
@@ -125,7 +126,7 @@ class ContentRepository {
             data.createdAt = data.createdAt?.toDate();
             return data;
         };
-        this.batchSaveIdeas = async (dataList, charge) => {
+        this.batchSaveIdeas = async (dataList, charge, replaceAccountId) => {
             const batch = db.batch();
             const collectionRef = db.collection(this.collection);
             const updatedDataList = (dataList ?? []).map((data) => {
@@ -140,8 +141,27 @@ class ContentRepository {
                 return dataWithId;
             });
             try {
+                if (replaceAccountId && (!updatedDataList.length || updatedDataList.some(data => data.accountId !== replaceAccountId) || (charge && charge.accountId !== replaceAccountId))) {
+                    throw new Error("Replacement ideas must belong to the channel being replaced");
+                }
+                const write = async (tx) => {
+                    // Archive and deliver in one commit so every active-list reader sees
+                    // either the previous slate or its replacement, even after a crash.
+                    const previous = replaceAccountId ? await tx.get(collectionRef
+                        .where("accountId", "==", replaceAccountId).where("archived", "==", false)
+                        .select("archived").limit(451)) : undefined;
+                    // Application bound, not a provider limit: keep the atomic operation
+                    // finite without chunking it into partially visible replacements.
+                    if (previous && previous.size + updatedDataList.length > 450) {
+                        throw ServiceUnavailable("Too many active ideas to replace at once. Your existing ideas are unchanged.");
+                    }
+                    previous?.docs.forEach(doc => tx.update(doc.ref, { archived: true }));
+                    updatedDataList.forEach(data => tx.set(collectionRef.doc(data.id), data));
+                };
                 if (charge)
-                    await generationWrite(charge, tx => updatedDataList.forEach(data => tx.set(collectionRef.doc(data.id), data)));
+                    await generationWrite(charge, write, updatedDataList.length > 0);
+                else if (replaceAccountId)
+                    await this.db.runTransaction(write);
                 else
                     await batch.commit();
                 return updatedDataList;
@@ -215,21 +235,25 @@ class ContentRepository {
         this.updateIdea = async (ideaId, data, charge) => {
             const ref = this.db.collection(this.collection).doc(ideaId);
             if (charge)
-                await generationWrite(charge, tx => tx.set(ref, data, { merge: true }));
+                await generationWrite(charge, tx => tx.set(ref, data, { merge: true }), charge.kind === "ideas");
             else
                 await ref.set(data, { merge: true });
         };
         this.editScript = async (scriptId, data, charge) => {
             const ref = this.db.collection(this.script_collection).doc(scriptId);
             if (charge)
-                await generationWrite(charge, tx => tx.set(ref, data, { merge: true }));
+                await generationWrite(charge, tx => tx.set(ref, data, { merge: true }), true);
             else
                 await ref.set(data, { merge: true });
         };
         this.saveScript = async (scriptId, data, charge) => {
             const ref = this.db.collection(this.script_collection).doc(scriptId);
             if (charge)
-                await generationWrite(charge, tx => tx.set(ref, data, { merge: true }));
+                await generationWrite(charge, tx => {
+                    tx.set(ref, data, { merge: true });
+                    if (charge.projectId)
+                        tx.update(this.db.collection("videoProjects" /* COLLECTIONS.VIDEO_PROJECTS */).doc(charge.projectId), { scriptId });
+                }, true);
             else
                 await ref.set(data, { merge: true });
         };

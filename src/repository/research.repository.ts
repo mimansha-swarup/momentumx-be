@@ -36,6 +36,23 @@ export interface KeywordSignal {
 }
 
 class ResearchRepository {
+  getChannelTitle = async (channelId: string): Promise<string | null> => {
+    const url = `https://www.googleapis.com/youtube/v3/channels` +
+      `?part=snippet&id=${encodeURIComponent(channelId)}&key=${API_KEY}`;
+    try {
+      const data = await youtubeJson<{ items?: { snippet?: { title?: string } }[] }>(url);
+      const title = data?.items?.[0]?.snippet?.title;
+      return typeof title === "string" ? decodeEntities(title).trim() || null : null;
+    } catch (error) {
+      console.error(JSON.stringify({
+        event: "youtube_fetch_failed",
+        detail: "YouTube API unavailable — failed to fetch channel name",
+        reason: safeReason(error),
+      }));
+      throw new Error("YouTube API unavailable — failed to fetch channel name");
+    }
+  };
+
   getTrendingVideos = async (niche: string): Promise<TrendingVideo[]> => {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);

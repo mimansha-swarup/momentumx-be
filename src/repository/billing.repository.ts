@@ -24,6 +24,8 @@ export interface CreditReservation {
   kind: GenerationKind;
   step?: StepName;
   prior?: StepState;
+  /** Local response hint, set only after an artifact transaction commits. Accounting lives in Firestore. */
+  outputPersisted?: boolean;
 }
 
 const month = () => new Date().toISOString().slice(0, 7);
@@ -47,7 +49,7 @@ const lockAge = (startedAt: unknown): number => {
 const lockStamp = () => firebase.firestore.FieldValue.serverTimestamp();
 const resetsAt = (period: string) => new Date(Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5)), 1)).toISOString();
 const DISABLED = /^(unlimited|none|off)$/i;
-const consumedCredits = (value: unknown): number => {
+export const consumedCredits = (value: unknown): number => {
   const amount = typeof value === "string" && /^\d+$/.test(value.trim()) ? Number(value.trim()) : value;
   if (typeof amount !== "number" || !Number.isSafeInteger(amount) || amount < 0) throw ServiceUnavailable("Stored credit consumption is invalid");
   return amount;
@@ -70,20 +72,9 @@ const freshBalance = (stored: FirebaseFirestore.DocumentData | undefined, period
     process.env.MONTHLY_CREDIT_ALLOWANCE;
 
   /**
-   * Metering off is a real, supported mode, and ABSENT CONFIG IS ONE OF ITS FORMS.
-   *
-   * This block used to throw ServiceUnavailable when nothing was configured, on the
-   * reasoning that a dropped env var is indistinguishable from a deliberate choice and
-   * should fail closed. That reasoning is defensible — and it is not the decision on
-   * record. `docs/multi-account/phase-08-credits-and-metering.md` (see "Implementation
-   * decisions", and lines 39-40) states the chosen behaviour explicitly: "The user chose
-   * enforcement disabled until configured", and "No configured allowance means
-   * enabled:false, allowance:null, remaining:null: generation remains available".
-   *
-   * Throwing here took down every balance read, every generation, and free prefill —
-   * for an unconfigured install, which is the DEFAULT state. The asymmetry the old
-   * comment complained about is the documented intent: absent -> disabled, INVALID ->
-   * fail closed. A missing value is still not silent; it is logged once below.
+   * Absent allowance configuration disables enforcement; invalid values fail closed.
+   * Explicit zero enables enforcement with no paid allowance. This is the maintained
+   * contract in docs/multi-account/README.md, and missing configuration is logged.
    */
   const disabled =
     configured === undefined ||
@@ -239,29 +230,10 @@ class BillingRepository {
       }
       const debited = balance.enabled && cost > 0;
 
-      /**
-       * Credits are RESERVED here and charged in `settle` once content exists.
-       *
-       * Debiting here instead was the shape that lost users' money. `settle` only
-       * ever runs in the same invocation, so anything that killed the process
-       * between the debit and the save — and on Vercel's default function budget,
-       * against a 120s model call, that is the ordinary case for idea generation —
-       * took the credits and produced nothing, with no path to get them back
-       * before the monthly reset. It also made every failure a REFUND, and a
-       * refund cannot tell "the model never answered" from "the script is saved
-       * and the second write failed", so a fully delivered script was handed back
-       * for free.
-       *
-       * A reservation has neither problem: a crash charges nothing, and only the
-       * success path moves money.
-       *
-       * Concurrency still cannot overspend, because a reservation counts against
-       * the balance exactly like a debit for as long as its lock is live. The
-       * receipt is keyed by token and the lock carries that same token, so
-       * liveness needs no second timestamp — and an abandoned reservation stops
-       * counting the moment its lock expires, which is also what lets a retry
-       * through.
-       */
+      // Reserve capacity without taking credits. Artifact writes record the charge
+      // and usage in their own transaction; settlement then releases these locks.
+      // Stateless generation settles before returning its unsaved result. An
+      // expired, undelivered reservation can be swept without losing any charge.
       const live = new Set(
         Object.values(stored?.generationLocks ?? {})
           .filter((lock) => lockAge((lock as { startedAt: unknown }).startedAt) < STEP_LOCK_MS)
@@ -286,7 +258,7 @@ class BillingRepository {
       // not consume the new month's headroom.
       const reserved = Object.values(pending).reduce<number>(
         (total, receipt) =>
-          (receipt as { periodStart?: string }).periodStart === periodStart
+          !(receipt as { delivered?: boolean }).delivered && (receipt as { periodStart?: string }).periodStart === periodStart
             ? total + ((receipt as { cost?: number }).cost ?? 0)
             : total,
         0
@@ -324,13 +296,9 @@ class BillingRepository {
     });
   };
 
-  /**
-   * Release the reservation, and CHARGE it only if content was produced.
-   *
-   * This is where money moves. A failure moves none — there is nothing to refund,
-   * because `reserve` took nothing. That is the whole reason the old
-   * "debit-then-refund" shape is gone: a refund had to guess whether the run left
-   * anything durable behind, and it guessed wrong in both directions.
+  /** Release locks/receipts. Saved output is already accounted atomically;
+   * stateless output records its accounting here before being returned.
+   * `false` on failure means cleanup cannot establish that no charge occurred.
    */
   settle = async (charge: CreditReservation | null, failed: boolean): Promise<boolean> => {
     if (!charge) return true;
@@ -345,15 +313,13 @@ class BillingRepository {
       const ownsProjectLock = project?.generationLocks?.[charge.kind]?.token === charge.token;
       const ownsLock = billing?.generationLocks?.[charge.lockKey]?.token === charge.token;
       const receipt = billing?.pendingCharges?.[charge.token];
+      const delivered = receipt?.delivered || billing?.usageReceipts?.[charge.token]?.delivered || (ownsLock && billing?.generationLocks?.[charge.lockKey]?.delivered);
       // Only the CHARGING path has to happen exactly once: the receipt is the
       // token that permits a charge, and it is consumed below, so a retried
       // settle cannot bill twice.
       //
-      // A failed run is deliberately not gated this way. It moves no money, so
-      // there is nothing to double, and its receipt may already have been swept
-      // by a successor that took over the expired lock. Refusing then would mean
-      // a superseded run could not report "you were not charged" — which is the
-      // one thing it always knows to be true.
+      // Failure cleanup is still allowed after expiry, but a missing paid
+      // receipt cannot establish whether an earlier delivery already charged it.
       if (!failed && (charge.debited ? !receipt : !billing?.usageReceipts?.[charge.token] && !ownsLock)) return false;
       const updates: Record<string, unknown> = {};
       if (ownsLock) updates[`generationLocks.${charge.lockKey}`] = firebase.firestore.FieldValue.delete();
@@ -362,7 +328,7 @@ class BillingRepository {
       // The charge itself. Skipped across a period boundary: the rollover already
       // zeroed `consumed`, and billing a September run against October's allowance
       // would take credits the user did not spend this month.
-      const chargeable = !failed && charge.debited && billing?.periodStart === charge.periodStart;
+      const chargeable = !failed && !delivered && charge.debited && billing?.periodStart === charge.periodStart;
       if (chargeable) {
         const current = consumedCredits(billing?.consumed === undefined ? 0 : billing.consumed);
         updates.consumed = consumedCredits(current + charge.cost); // Also reject integer overflow.
@@ -371,20 +337,21 @@ class BillingRepository {
       // an update with no fields.
       if (Object.keys(updates).length) txn.update(ref, updates);
       if (projectRef && ownsProjectLock) txn.update(projectRef, { [`generationLocks.${charge.kind}`]: firebase.firestore.FieldValue.delete() });
-      if (!failed) {
-        // Per-channel usage counts what was DELIVERED, so it is written here
-        // rather than at reserve — a crashed run now inflates neither the credits
-        // spent nor the action count.
+      if (!failed && !delivered) {
+        // Stateless responses have no artifact transaction. Record their usage
+        // before returning; saved artifacts have already recorded it.
         txn.set(usageRef, { credits: (usage?.credits ?? 0) + charge.cost, [charge.counter]: (usage?.[charge.counter] ?? 0) + 1 }, { merge: true });
       }
-      if (failed && ownsLock && ownsProjectLock && charge.projectId && charge.step && charge.prior && project?.pipeline?.[charge.step]?.status === "in_progress") {
+      if (failed && !delivered && ownsLock && ownsProjectLock && charge.projectId && charge.step && charge.prior && project?.pipeline?.[charge.step]?.status === "in_progress") {
         txn.update(db.collection(COLLECTIONS.VIDEO_PROJECTS).doc(charge.projectId), {
           [`pipeline.${charge.step}.status`]: charge.prior.status,
           [`pipeline.${charge.step}.startedAt`]: charge.prior.startedAt ?? null,
           [`pipeline.${charge.step}.staleReason`]: charge.prior.staleReason ?? null,
         });
       }
-      return true;
+      // Without the paid receipt, cleanup cannot prove this attempt was never
+      // delivered: another instance may already have charged and pruned it.
+      return !(failed && (delivered || (charge.debited && !receipt)));
     });
   };
 }

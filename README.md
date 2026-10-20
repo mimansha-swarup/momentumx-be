@@ -1,5 +1,15 @@
 # Momentum-X backend
 
+Momentum-X helps creators move from channel setup and research through ideas, scripts,
+hooks and publishing assets. This service owns authenticated channel access, saved content,
+generation progress and optional credit allowances. The frontend presents that workflow;
+separate Auth functions reconcile signups and account deletion.
+
+Start with the [product overview](docs/product/overview.md), then the
+[pipeline model](docs/product/pipeline-spec.md). Setup and runtime guidance follows.
+
+## Local setup
+
 The API is tested on **Node 22, 24, and 26**. Node 24 is the recommended default
 (see `.nvmrc`); an existing Node 26 installation can run `npm ci` and `npm run dev`
 directly. The startup check rejects versions older than 22 and warns, rather than
@@ -80,7 +90,18 @@ upgrade/deploy. Render uses `.nvmrc` (24) unless its `NODE_VERSION` setting or a
 `.node-version` overrides it. Check existing host settings before deployment.
 The separate `functions/package.json` targets Node 24 and second-generation Auth
 triggers, with its own Node 24 CI install/build job. The Auth lifecycle triggers
-are labeled **Preview** in the Auth guide but GA in SDK 7.4.0 release notes. Read [the Functions migration runbook](functions/README.md)
+are labeled **Preview** in the Auth guide but GA in SDK 7.4.0 release notes. Read [the Functions rollout runbook](functions/README.md)
 before deployment; the new function names require a controlled handover from gen1.
 API compatibility with Node 26 does not imply Firebase Functions or Vercel deployment
 support. No hosting settings are changed by local testing.
+
+
+## Documentation
+
+- [Product overview](docs/product/overview.md) — audience, positioning and intended business model
+- [Roadmap](docs/product/roadmap.md) — local implementation and open product work
+- [Pipeline model](docs/product/pipeline-spec.md) — steps, completion and stale state
+- [API communication](docs/api-communication.md) — request/response and client contracts
+- [Accounts and sharing](docs/multi-account/README.md) — tenancy, permissions and credit contracts
+- [Operational readiness](docs/multi-account/operational-readiness.md) — rollout and maintenance gates
+- [Functions runbook](functions/README.md) — Auth lifecycle deployment and recovery

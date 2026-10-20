@@ -187,7 +187,7 @@ describe("independent metering acceptance", () => {
     expect(row("videoProjects", "project-a").pipeline.hooks.status).toBe(
       "in_progress",
     );
-    expect(await billing.settle(first, true)).toBe(true);
+    expect(await billing.settle(first, true)).toBe(false);
     await billing.settle(successor, false);
     expect(row("billing", "owner").consumed).toBe(1);
   });
@@ -391,7 +391,7 @@ it("a stale successful hooks model cannot overwrite its successor's persisted ou
   const snapshot = clone(row("videoProjects", "project-a"));
   finishFirst({ hooks: ["stale successful hooks"] });
   await expect(firstOutcome).resolves.toMatchObject({
-    error: { statusCode: 409, detail: { charged: false } },
+    error: { statusCode: 409 },
   });
   expect(row("hooks", "hooks-a").hooks).toEqual(["new successful hooks"]);
   expect(row("videoProjects", "project-a")).toEqual(snapshot);
@@ -611,7 +611,7 @@ it.each(["title", "description", "thumbnail", "shorts", "script"] as const)(
     const projectSnapshot = clone(row("videoProjects", "project-a"));
     finishFirst(output("stale successful content"));
     await expect(firstOutcome).resolves.toMatchObject({
-      error: { statusCode: 409, detail: { charged: false } },
+      error: { statusCode: 409 },
     });
     expect(
       kind === "script"

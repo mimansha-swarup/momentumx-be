@@ -10,16 +10,9 @@ import { AccountForbidden, Gone, NotFound } from "../utlils/errors.js";
 import { isDocumentId } from "../utlils/firestore-id.js";
 
 /**
- * Phase 05 — which channel is this request acting in, and is the caller allowed?
- *
- * Runs immediately after `authMiddleware`, on every protected router. This is the
- * plan's most security-sensitive plumbing: get it wrong and one person reads
- * another's channel by editing a value in their browser. The header is forgeable
- * by design — all of the safety is in the unconditional membership check below.
- *
- * Nothing READS `req.accountId` yet. Queries still filter `createdBy` and
- * permission checks still compare `req.userId` until Phase 06. This phase only
- * makes the context available, so Phase 06 is a small reviewable diff.
+ * Resolve the requested channel after authentication and verify live membership.
+ * The header is client-controlled; repository queries and permission checks use
+ * the verified request context. See docs/multi-account/README.md.
  */
 
 export const ACCOUNT_HEADER = "x-account-id";
@@ -27,7 +20,7 @@ export const ACCOUNT_HEADER = "x-account-id";
 /**
  * Whether a request with no `X-Account-Id` may still mutate.
  *
- * FLIPPED IN PHASE 07 (was `true` through Phases 05–06b). The frontend now
+ * The current frontend
  * sends `X-Account-Id` on every call — one axios request interceptor
  * (`momentumx-fe/src/utils/network.ts`) reading a module-level value hydrated
  * from `localStorage` at sign-in — so a header-less write is no longer a client
@@ -36,7 +29,7 @@ export const ACCOUNT_HEADER = "x-account-id";
  *
  * The rule this protects is "the user believes they are in channel B while
  * every write lands in channel A". That became reachable the moment Phase 06a
- * shipped `POST /v1/accounts`, and is now routine: the switcher is live.
+ * shipped `POST /v1/accounts`, and is supported by the local switcher implementation.
  *
  * READS still fall back, deliberately. A cold tab and an already-open tab that
  * predates the deploy both have a legitimate reason to send nothing, and
@@ -261,7 +254,7 @@ export const resolveAccountFromProject = (
     // Phase 03 stamps `accountId` on every project at creation, so this is the
     // only source. There was a fallback here that minted an account for
     // `project.createdBy` when the field was missing, to cover projects written
-    // before Phase 03 — it is gone along with those documents.
+    // before Phase 03 — that fallback is removed; this does not establish live-data migration.
     //
     // Losing it is a gain, not a compromise: it wrote an account document and a
     // `lastActiveAccountId` onto a THIRD PARTY's user record, reachable by

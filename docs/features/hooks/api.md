@@ -1,256 +1,27 @@
----
-title: "Hooks API Reference"
-description: "Endpoint reference for the Hooks step — hook generation and selection"
-date: 2026-02-27
-last_updated: 2026-07-12
-status: "implemented"
-tags: ["api", "hooks"]
----
+# Hooks API
 
-# Hooks API Reference
+All calls require `Authorization: Bearer <Firebase ID token>` and selected-channel membership. Writes require `X-Account-Id` and editor/owner role; reads and exports allow viewers and retain the documented headerless read fallback. Access follows channel membership, not authorship. See [shared API conventions](../../api-communication.md) for envelopes, channel selection, errors and credits.
 
-Hooks is a standalone pipeline step with its own `/v1/hooks` endpoints. The old stateless
-`POST /v1/packaging/generate-hooks` route has been **removed** — `/v1/hooks/generate` is the only
-hook-generation path.
+JSON successes use `{ success: true, message, data }`. Common failures include 400 invalid input, 401 invalid/missing authentication, 403 insufficient access, 404 missing/unavailable resource, 409 generation conflict, 402 insufficient credits when enforcement applies, and 503 provider unavailability. See shared conventions for machine-readable codes and retry behavior.
 
----
+Base: `/v1/hooks`.
 
-## Endpoints Summary
-
-| Method | URL | Status | Description |
-|---|---|---|---|
-| `POST` | `/v1/hooks/generate` | ✅ Built | Generate a 5-hook batch tied to a video project |
-| `GET` | `/v1/hooks/:hooksId` | ✅ Built | Read a saved hooks batch |
-| `POST` | `/v1/hooks/:hooksId/select` | ✅ Built | Select a hook index, stores it on the video project |
-| `POST` | `/v1/hooks/:hooksId/regenerate` | ✅ Built | Regenerate hooks for the same video project |
-| `GET` | `/v1/hooks/:hooksId/export` | ✅ Built | Export hooks as plain text |
-
----
-
-## POST `/v1/hooks/generate` ✅ Built
-
-Generates 5 hook variations from a script. Saves the batch to the `hooks` Firestore collection and links it to the video project.
-
-### Auth
-`Authorization: Bearer <token>` — required.
-
-### Request Body
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `videoProjectId` | `string` | Yes | ID of the video project |
-| `script` | `string` | **No** | Full video script text. Omit it — the server resolves the script from the project. |
-
-> `script` was previously documented as required. It is optional and has been for a
-> while: the controller resolves the script server-side from the project when the
-> field is absent. Sending it is unnecessary, and sending a *stale* copy is worse
-> than sending nothing — the stored script is the source of truth. Same principle as
-> the `videoProjectId` note on `/select` below.
-
-### Response — `200`
-
-```json
-{
-  "success": true,
-  "message": "Hooks generated successfully",
-  "data": {
-    "id": "firestore-auto-id",
-    "videoProjectId": "string",
-    "createdBy": "uid_abc123",
-    "hooks": [
-      "What if everything you knew about growing on YouTube was completely wrong?",
-      "Most creators waste their first 100 videos — here's exactly why.",
-      "Three months ago I had 200 subscribers. Last week I hit 50K.",
-      "Everyone says consistency is the key. They're missing the real reason.",
-      "Stop. Before you post another video, you need to hear this."
-    ],
-    "hookFeedback": {},
-    "createdAt": "<timestamp>"
-  }
-}
-```
-
-### Error Cases
-
-| Status | Condition |
-|---|---|
-| 400 | `videoProjectId` or `script` missing |
-| 403 | Video project not owned by user |
-| 404 | Video project not found |
-| 500 | Gemini generation failed or JSON parse error |
-
----
-
-## GET `/v1/hooks/:hooksId` ✅ Built
-
-Returns a saved hooks batch. Ownership enforced (`createdBy` must match).
-
-Without this the batch existed only in the client's memory: after a refresh a creator could
-see "Hook 3 was selected" but never the hook itself, and had no way to change the pick.
-
-### Response — `200`
-
-```json
-{
-  "success": true,
-  "message": "Hooks retrieved successfully",
-  "data": {
-    "id": "hooks-batch-id",
-    "videoProjectId": "string",
-    "createdBy": "uid_abc123",
-    "hooks": ["hook one", "hook two", "hook three", "hook four", "hook five"],
-    "hookFeedback": {},
-    "createdAt": "<timestamp>"
-  }
-}
-```
-
-### Error Cases
-
-| Status | Condition |
-|---|---|
-| 403 | Hooks batch not owned by user |
-| 404 | Hooks batch not found |
-
----
-
-## POST `/v1/hooks/:hooksId/select` ✅ Built
-
-Marks a specific hook index as selected. Stores `hooksId` and `selectedHookIndex` on the video project document.
-
-### Auth
-`Authorization: Bearer <token>` — required.
-
-### Path Parameters
-
-| Param | Type | Description |
+| Method/path | Request | Success `data` |
 |---|---|---|
-| `hooksId` | `string` | ID of the hooks batch document to select from |
+| `POST /generate` | `{ videoProjectId, script? }` | Saved hooks batch |
+| `GET /:hooksId` | No body | Saved hooks batch |
+| `POST /:hooksId/select` | `{ hookIndex }` | `{ id: projectId, hooksId, selectedHookIndex }` |
+| `POST /:hooksId/regenerate` | `{ script? }` or empty body | `{ id: hooksId, hooks }` |
+| `GET /:hooksId/export` | No body | `{ text, count }` |
 
-### Request Body
+A batch includes `id`, `videoProjectId`, `accountId`, `createdBy`, `hooks: string[]` and timestamps. Generation targets five hooks; clients should render the returned array and select within its actual bounds.
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `hookIndex` | `number` | Yes | Zero-based index (0–4) of the selected hook within the `hooks` array |
+A project with a completed Script step is required for new generation. Omit `script` to use its saved text; a supplied non-empty script overrides it for the request. Supplied text is capped at 100,000 characters. Generation returns the existing linked batch when present; use regenerate for new alternatives.
 
-> **No `videoProjectId` in the body.** The server resolves the target project from the stored hooks batch (`hooksBatch.videoProjectId`) — it is never taken from the client. This prevents binding a batch to a project it wasn't generated for. (First-time `POST /generate` still takes `videoProjectId`, because the batch doesn't exist yet.)
+`hookIndex` is a non-negative integer and must be within the saved hooks array. Selection completes Hooks. The project is inferred from the saved batch for select/regenerate: do not send `videoProjectId` to redirect these operations.
 
-### Response — `200`
+Regeneration replaces the batch and clears the project selection. Changed hooks or a changed selection can make downstream Title and Packaging need review. Read and export remain available without generating again.
 
-```json
-{
-  "success": true,
-  "message": "Hook selected successfully",
-  "data": {
-    "id": "video-project-id",
-    "hooksId": "hooks-batch-id",
-    "selectedHookIndex": 2
-  }
-}
-```
+These endpoints use ordinary JSON, not the optional progress-stream protocol used by ideas and script regeneration. A missing script or invalid selection returns 400; unmet generation prerequisites or an in-flight run can return 409. Provider output failures return a retryable error rather than a usable batch.
 
-> `id` is the video project ID. `selectedHookIndex` is the index stored on the project.
-
-### Error Cases
-
-| Status | Condition |
-|---|---|
-| 400 | `hookIndex` missing or out of range (0–4), or the stored batch has no linked video project |
-| 403 | Hooks batch not owned by user |
-| 404 | Hooks batch not found |
-
----
-
-## POST `/v1/hooks/:hooksId/regenerate` ✅ Built
-
-Regenerates hooks for the same video project, overwriting the existing batch in place. Marks the downstream packaging document stale (fire-and-forget).
-
-### Auth
-`Authorization: Bearer <token>` — required. Ownership enforced — `createdBy` must match requesting user.
-
-### Path Parameters
-
-| Param | Type | Description |
-|---|---|---|
-| `hooksId` | `string` | ID of the hooks batch document to regenerate |
-
-### Request Body
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `script` | `string` | Yes | Full video script text (may be updated since first generation) |
-
-### Response — `200`
-
-```json
-{
-  "success": true,
-  "message": "Hooks regenerated successfully",
-  "data": {
-    "id": "hooks-batch-id",
-    "hooks": [
-      "hook variation 1",
-      "hook variation 2",
-      "hook variation 3",
-      "hook variation 4",
-      "hook variation 5"
-    ]
-  }
-}
-```
-
-### Side Effects on Completion
-- Existing hooks batch overwritten in place (`hooks` and `hookFeedback` reset)
-- If linked packaging exists, `pipeline.packaging.status` is set to `"stale"` on the video project (fire-and-forget)
-
-### Error Cases
-
-| Status | Condition |
-|---|---|
-| 400 | `script` missing |
-| 403 | Hooks batch not owned by user |
-| 404 | Hooks batch not found |
-| 500 | Gemini generation failed or Firestore write failed |
-
----
-
-## GET `/v1/hooks/:hooksId/export` ✅ Built
-
-Returns all hooks in the batch as a plain-text formatted string suitable for copy-paste or download.
-
-### Auth
-`Authorization: Bearer <token>` — required. Ownership enforced.
-
-### Path Parameters
-
-| Param | Type | Description |
-|---|---|---|
-| `hooksId` | `string` | ID of the hooks batch document |
-
-### Response — `200`
-
-```json
-{
-  "success": true,
-  "data": {
-    "text": "Hooks — March 8, 2026\n──────────────────────────────────\n1. hook one\n2. hook two\n3. hook three\n4. hook four\n5. hook five",
-    "count": 5
-  }
-}
-```
-
-### Error Cases
-
-| Status | Condition |
-|---|---|
-| 403 | Hooks batch not owned by user |
-| 404 | Hooks batch not found |
-
----
-
-## Related Documentation
-
-- [Hooks Feature Spec](./spec.md)
-- [Packaging API Reference](../packaging/api.md)
-- [Pipeline Spec](../../product/pipeline-spec.md)
-- [Product Roadmap](../../product/roadmap.md)
+[Creator flow](./spec.md) · [Title and packaging API](../packaging/api.md)

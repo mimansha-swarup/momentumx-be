@@ -1,208 +1,22 @@
----
-title: "Research — Feature Spec"
-description: "User flow, states, regeneration behavior, and edge cases for the Research step"
-status: "implemented"
-last_updated: 2026-07-12
-tags: ["feature", "research", "ideas", "spec"]
----
+# Research and ideas
 
-# Research — Feature Spec
+Research helps a creator decide what video to make. Ideas are working concepts with a title, angle, format and available evidence; the publishing headline is chosen later in Title.
 
-The Research step is the entry point of the MomentumX pipeline. The creator uses it to discover what video to make next — generating AI-powered video ideas personalized to their channel, niche, and competitive landscape.
+## Creator flow
 
----
+1. Generate ideas using the selected channel context, or use reviewed onboarding suggestions for a first batch.
+2. Compare the concepts and their evidence. Trending videos, competitor videos and keyword signals can inform the choice.
+3. Edit a working title, replace one idea, or generate a fresh batch.
+4. Choose an idea to start a video project, or export the active ideas for use elsewhere.
 
-## Overview
+Choosing another idea starts another project; it does not replace the idea inside an existing project. Creators can also start a project from their own title.
 
-| | |
-|---|---|
-| **Pipeline position** | Step 1 of 4 |
-| **Input** | User's onboarding data (channel, competitors, website, niche, audience) |
-| **Output** | A selected idea that unlocks the Script step |
-| **Blocks** | All downstream steps (Script → Hooks → Packaging) depend on a selected idea |
+## Iteration and limits
 
----
+Replacing one idea keeps its slot; replacing the batch archives the previous ideas. Either operation can make existing downstream project work need review. Existing projects remain available.
 
-## User Flow
+Repetition avoidance considers a bounded set of active ideas in the selected channel. Archived batches are retained separately and are not used for that comparison. This reduces repetition without guaranteeing unique ideas.
 
-### First-time (no existing ideas)
+Research uses public YouTube data that may be cached or unavailable. Trending requires a channel niche. Competitor research needs resolved competitor channels; unavailable names appear as “Unknown channel”. Evidence is context for judgment, not proof of likely views.
 
-1. Creator opens the Research step.
-2. System shows an empty state with a **Generate Ideas** CTA.
-3. Creator clicks Generate Ideas.
-4. System generates 10 video ideas using the creator's channel and competitor context.
-5. Ideas are displayed as cards — status transitions to `in_review`.
-6. Creator reviews the 10 ideas.
-7. Creator selects one → a **video project** is created, status transitions to `completed`.
-8. Creator is taken to the Script step with the selected idea pre-loaded.
-
-### Returning (ideas already exist)
-
-1. Creator opens the Research step.
-2. System loads the most recent active batch of idea cards.
-3. If an idea is already selected (step is `completed`), the selected card is highlighted.
-4. Creator can select a different idea from the current batch (replaces current selection).
-5. Creator can regenerate the full batch (Regenerate All).
-6. Creator can replace a single card (Regenerate One).
-
----
-
-## States & Transitions
-
-The Research step follows this state machine on the video project.
-
-```
-not_started → generating → in_review → completed
-```
-
-| Status | Meaning | What the UI shows |
-|---|---|---|
-| `not_started` | No generation has run | Empty state, Generate Ideas CTA |
-| `generating` | AI is generating ideas | Loading state, "Generating your ideas..." |
-| `in_review` | Generation complete, awaiting selection | 10 idea cards, all selectable |
-| `completed` | Creator has selected an idea | Selected card highlighted, proceed to Script unlocked |
-
-**Transition triggers:**
-
-| Action | From | To |
-|---|---|---|
-| Creator clicks Generate Ideas | `not_started` | `generating` |
-| Generation completes | `generating` | `in_review` |
-| Creator selects an idea | `in_review` | `completed` |
-| Creator clicks Regenerate All | `in_review` | `generating` |
-| Creator clicks Regenerate All | `completed` | `generating` |
-| Creator clicks Regenerate One (single slot) | any | that slot regenerates; step status unchanged |
-
-**Stale note:** Research is never marked stale by downstream changes. Research is upstream — regenerating a script or hooks does not change the idea selection.
-
----
-
-## Personalization Context
-
-Every generation uses the creator's onboarding data:
-
-| Context used | Where it comes from |
-|---|---|
-| Brand name, niche, target audience | Onboarding form |
-| Creator's own top-performing titles | YouTube Data API (fetched at onboarding) |
-| Competitor top titles | YouTube Data API (fetched at onboarding) |
-| Website brand voice | Scraped at onboarding |
-
-**Known gap:** Competitor data is fetched once at onboarding and never refreshed. If a competitor publishes a viral video after onboarding, MomentumX will not surface it. See roadmap for the data refresh plan.
-
----
-
-## Repetition Avoidance (KMeans)
-
-To prevent the AI from suggesting ideas it has suggested before, MomentumX runs KMeans clustering on all previously generated ideas for the user before each generation.
-
-- All past idea titles (including archived batches) are fetched.
-- Titles are clustered by semantic similarity using their vector embeddings.
-- Representative titles from each cluster are passed to the AI prompt as "Avoid these."
-- This ensures each generation explores new idea space.
-
-**Why archived batches are included:** Archived batches are kept forever and included in the clustering data. More historical data = better coverage of already-explored ideas = less repetition over time. See [batch retention policy](../../product/pipeline-spec.md#batch-retention-policy).
-
----
-
-## Regeneration Behavior
-
-### Regenerate All
-
-Creates a completely fresh batch of 10 video ideas. Old batch is archived, not deleted.
-
-- Old ideas: `archived: true` on all documents in the old batch.
-- New ideas get a new `batchId`.
-- KMeans clustering includes the newly archived batch for the next generation.
-- **Stale cascade:** For each archived idea, the cascade fans out to **all** video projects backed by that idea (looked up via `getProjectsByIdea` → `findByIdeaId`) — the Script, Hooks, and Packaging steps on every such project are marked `stale: true`. The projects are not deleted — the stale warning prompts the creator to take action.
-
-### Regenerate One
-
-Replaces a single idea card in the current batch. The slot position is preserved.
-
-- Only that one document is replaced.
-- `batchId` stays the same.
-- No stale cascade — the step-level status is unaffected.
-- If the replaced card was the selected idea, the selection is cleared and step reverts to `in_review`.
-
----
-
-## Output: Idea Document Shape
-
-Each generated idea is saved to Firestore with:
-
-```
-{
-  id: string                   // UUID
-  title: string                // AI-generated working title
-  concept: string              // AI-generated video concept/theme
-  ideaType: string             // "evergreen" | "trendy" | etc.
-  evidence: string             // Grounding from research signals
-  accountId: string          // active channel tenancy key
-  createdBy: string            // userId
-  createdAt: Timestamp         // server-side
-  embedding: number[]          // vector embedding (gemini-embedding-001) for KMeans
-  batchId: string              // identifies the generation batch
-  archived: boolean            // true if this idea was superseded by Regenerate All
-  videoProjectId: string | null // set when this idea is linked to a video project
-}
-```
-
----
-
-## Edge Cases & Error States
-
-| Scenario | Behavior |
-|---|---|
-| Generation fails (Gemini error) | Error response returned. Status stays `not_started` or `in_review`. Creator can retry. |
-| All generated ideas fail embedding | Ideas where embedding fails are silently dropped from the batch. If zero succeed, a "Unable to generate at the moment" error is returned. |
-| Creator has no onboarding data | Generation will produce generic output. No explicit error — this is a product gap to address with onboarding enforcement. |
-| Creator regenerates while video projects exist on active ideas | Old batch is archived; the stale cascade fans out to all projects backed by each archived idea, marking their downstream steps (Script, Hooks, Packaging) stale. Creator is warned. |
-| Creator selects an idea from an archived batch | Not currently prevented. Will need a guard once video project model ships. |
-
----
-
-## Out of Scope (Current Build)
-
-These are planned for future phases but explicitly not part of the current Research build:
-
-| Feature | Notes |
-|---|---|
-| Idea refinement via follow-up prompt | "Make these more aggressive" style iteration. Not built. |
-| Live competitor data refresh | Refreshing competitor channel data beyond onboarding. Not built. |
-
----
-
-## Build Status
-
-| Capability | Status | Notes |
-|---|---|---|
-| Generate 10 video ideas | ✅ Built | `POST /v1/ideas/generate` |
-| Save ideas to Firestore | ✅ Built | Batch write with embeddings |
-| Paginated idea list | ✅ Built | `GET /v1/ideas` |
-| Edit an idea title | ✅ Built | `PATCH /v1/ideas/edit/:ideaId` |
-| KMeans repetition avoidance | ✅ Built | Runs before every generation |
-| Regenerate All | ✅ Built | `POST /v1/ideas/regenerate-all` |
-| Regenerate One (slot-replace) | ✅ Built | `POST /v1/ideas/:ideaId/regenerate` |
-| Export ideas | ✅ Built | `GET /v1/ideas/export` |
-| `archived` + `batchId` fields on ideas | ✅ Built | Set on generation |
-| Stale cascade on Regenerate All | ✅ Built | Marks downstream video project steps stale |
-| Implicit signal capture (export, regenerate) | ✅ Built | Events recorded in `events` collection |
-| Trend discovery | ✅ Built | `GET /v1/research/trending` |
-| Competitor performance analysis | ✅ Built | `GET /v1/research/competitors` |
-| Keyword / SEO data | ✅ Built | `GET /v1/research/keywords` |
-| Video project creation on idea selection | ✅ Built — handled by the video projects module (`POST /v1/video-projects`) |
-
----
-
-## Related Documentation
-
-- [Pipeline Status Model](../../product/pipeline-spec.md) — Full state machine spec and Firestore schema
-- [Research API Contract](./api.md) — Endpoint reference
-- [Product Roadmap](../../product/roadmap.md) — Phase timeline
-
-## Channel tenancy and roles
-
-Content is scoped by `accountId`, resolved from verified channel membership.
-`createdBy` records authorship only. Owners and editors may mutate/generate; viewers
-may read and export. Member management and channel deletion require owner.
+See the [API reference](./api.md), [project flow](../video-project/spec.md) and [pipeline model](../../product/pipeline-spec.md). These are local capabilities, not confirmation of production release.

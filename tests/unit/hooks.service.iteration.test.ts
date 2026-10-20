@@ -96,7 +96,7 @@ describe("HooksService — regenerate", () => {
     expect(err.statusCode).toBe(400);
   });
 
-  it("happy path: calls AI, updates repo, clears selected hook, marks stale, returns new hooks", async () => {
+  it("happy path: calls AI, delegates atomic persistence to repo, returns new hooks", async () => {
     mockRepo.findById = jest.fn().mockResolvedValue(mockBatch);
     mockRepo.update = jest.fn().mockResolvedValue(undefined);
     mockVpService.clearSelectedHook = jest.fn().mockResolvedValue(undefined);
@@ -109,9 +109,9 @@ describe("HooksService — regenerate", () => {
       hooks: ["h1", "h2", "h3", "h4", "h5"],
       hookFeedback: {},
     });
-    expect(mockVpService.clearSelectedHook).toHaveBeenCalledWith("proj-1", testOwner("user-1"));
-    expect(mockVpService.markStale).toHaveBeenCalledWith("proj-1", "hooks");
-    expect(mockVpService.markPackagingDocumentStale).toHaveBeenCalledWith("proj-1", "hooks_regenerated");
+    expect(mockVpService.clearSelectedHook).not.toHaveBeenCalled();
+    expect(mockVpService.markStale).not.toHaveBeenCalled();
+    expect(mockVpService.markPackagingDocumentStale).not.toHaveBeenCalled();
     expect(result).toEqual({ id: "hooks-1", hooks: ["h1", "h2", "h3", "h4", "h5"], hookFeedback: {} });
   });
 });
@@ -351,17 +351,17 @@ describe("HooksService — generate (idempotency, lock, rollback)", () => {
     } as never, fakeAccountRepo());
     await service.generate(testOwner("user-1"), "proj-1", "saved script");
     expect(mockRepo.save).toHaveBeenCalledWith(expect.any(Object), reservation);
-    expect(mockVpService.clearSelectedHook).toHaveBeenCalledWith("proj-1", testOwner("user-1"), reservation);
-    expect(mockVpService.markStale).toHaveBeenCalledWith("proj-1", "hooks", reservation);
-    expect(mockVpService.markPackagingDocumentStale).toHaveBeenCalledWith("proj-1", "hooks_regenerated", reservation);
-    expect(mockVpService.linkResource).toHaveBeenCalledWith("proj-1", "hooks", "hooks-1", testOwner("user-1"), reservation);
+    expect(mockVpService.clearSelectedHook).not.toHaveBeenCalled();
+    expect(mockVpService.markStale).not.toHaveBeenCalled();
+    expect(mockVpService.markPackagingDocumentStale).not.toHaveBeenCalled();
+    expect(mockVpService.linkResource).not.toHaveBeenCalled();
   });
 
-  it("does not link replacement hooks when the downstream invalidation fails", async () => {
+  it("returns the saved replacement when redundant metadata synchronization fails", async () => {
     mockVpService.getById.mockResolvedValue(makeProj({ hooksId: "missing" }) as never);
     mockRepo.findById.mockResolvedValue(null);
     mockVpService.markPackagingDocumentStale.mockRejectedValue(new Error("Storage unavailable"));
-    await expect(service.generate(testOwner("user-1"), "proj-1", "saved script")).rejects.toThrow("Storage unavailable");
+    await expect(service.generate(testOwner("user-1"), "proj-1", "saved script")).resolves.toMatchObject({ id: "hooks-1" });
     expect(mockVpService.linkResource).not.toHaveBeenCalled();
   });
 

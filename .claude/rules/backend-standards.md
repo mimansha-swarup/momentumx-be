@@ -101,7 +101,7 @@ res.json({ success: true, data })
 res.status(500).json({ error: 'something failed' })
 ```
 
-Both helpers are attached by `src/middleware/response_formatter.ts` (typed via `sendSuccessProps` / `sendErrorProps` in `src/types/customTypes.ts`).
+Both helpers are attached by `src/middleware/response_formatter.ts` (typed via `sendSuccessProps` / `sendErrorProps` in `src/types/customTypes.d.ts`).
 
 ---
 
@@ -111,7 +111,7 @@ Both helpers are attached by `src/middleware/response_formatter.ts` (typed via `
 // ✅ Services throw — errors propagate up
 async getUser(userId: string) {
   const user = await this.userRepo.get(userId);
-  if (!user) throw new Error('User not found');
+  if (!user) throw NotFound('User not found');
   return user;
 }
 
@@ -150,7 +150,7 @@ router.get('/profile', controller.getProfile);
 app.use(authMiddleware);
 ```
 
-`authMiddleware` and `sseAuthMiddleware` both live in `src/middleware/auth.ts`. SSE routes use `sseAuthMiddleware` per-route (see api-design.md); everything else uses `router.use(authMiddleware)`. Never leave a router unprotected, even temporarily.
+`authMiddleware` and `sseAuthMiddleware` both live in `src/middleware/auth.ts`. Initial script SSE uses `sseAuthMiddleware` per-route (see api-design.md); standard protected routes use `authMiddleware`. Preserve explicitly public health/invite-preview routes and discovery/account-context exceptions; never introduce an unreviewed public route.
 
 ---
 

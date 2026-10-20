@@ -134,10 +134,10 @@ it("does not let an expired runner roll back a successor's lock or charge", asyn
   const second = await repo.reserve(spec);
   // The successor's reserve already swept the abandoned reservation (it held no
   // money and must not hold a balance slot). Releasing the expired run is then a
-  // no-op that still reports truthfully — it was never charged — and stays safe
-  // however many times it is retried, because a release moves no money.
-  expect(await repo.settle(first, true)).toBe(true);
-  expect(await repo.settle(first, true)).toBe(true);
+  // no-op. A missing receipt cannot establish whether it was already delivered,
+  // so it cannot promise charged:false; retries still move no money.
+  expect(await repo.settle(first, true)).toBe(false);
+  expect(await repo.settle(first, true)).toBe(false);
   expect(balance().consumed).toBe(0);
   expect(balance().generationLocks[second!.lockKey].token).toBe(second!.token);
   // The successor is still chargeable, and charged exactly once.
@@ -309,17 +309,8 @@ it("treats a cleared owner override as no override, loudly, rather than bricking
 });
 
 it("leaves generation available, with enforcement OFF, when no allowance is configured", async () => {
-  // THIS TEST USED TO ASSERT THE OPPOSITE (503 on both calls), on the reasoning that an
-  // absent env var is indistinguishable from a dropped one and should fail closed. That
-  // reasoning is defensible but it is not the decision on record:
-  // docs/multi-account/phase-08-credits-and-metering.md says "The user chose enforcement
-  // disabled until configured" and "No configured allowance means enabled:false,
-  // allowance:null, remaining:null: generation remains available".
-  //
-  // It matters because unconfigured is the DEFAULT state of an install: throwing broke
-  // every balance read, every generation, and free prefill. The documented asymmetry is
-  // kept — absent disables, INVALID still fails closed (asserted separately below) — and
-  // absent is logged so it is not silent.
+  // docs/multi-account/README.md: absent configuration disables enforcement,
+  // while invalid configuration fails closed. Unconfigured installs stay usable.
   const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
   delete process.env.MONTHLY_CREDIT_ALLOWANCE;
 

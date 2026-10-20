@@ -23,18 +23,18 @@ Follows [Conventional Commits v1.0.0](https://www.conventionalcommits.org/en/v1.
 **Types:** `feat` | `fix` | `refactor` | `chore` | `docs` | `test` | `perf` | `ci` | `build` | `style` | `revert`
 **Scopes:** `user` | `content` | `packaging` | `hooks` | `video-project` | `research` | `ai` | `db` | `deploy` | `config`
 
-Breaking changes use `!` after the type/scope: `feat(content)!: redesign topic response shape`
+Breaking changes use `!` after the type/scope: `feat(content)!: redesign idea response shape`
 
 **Examples:**
 
 ```
-feat(content): add trending topics endpoint
+feat(content): add trending ideas endpoint
 fix(ai): handle malformed JSON from Gemini
 refactor(packaging): extract generation into separate service methods
-test(content): add unit tests for topic service
+test(content): add unit tests for idea service
 docs(api): update packaging endpoint reference
 chore(db): add scriptId field to packaging collection
-perf(content): cap KMeans clustering at 200 topics
+perf(content): cap KMeans clustering at 200 ideas
 ```
 
 ---
@@ -52,7 +52,7 @@ Follows [Conventional Branch](https://conventional-branch.github.io/).
 **Examples:**
 
 ```
-feature/add-trending-topics-endpoint
+feature/add-trending-ideas-endpoint
 feature/sse-script-streaming
 bugfix/fix-stale-cascade
 bugfix/malformed-json-handling
@@ -96,6 +96,6 @@ npm run build    # compiles src/ → dist/
 ## Before Pushing
 
 - `npm run build` passes with no TypeScript errors
-- No `console.log` left in production code paths
+- No temporary debug logging or credential-bearing logs in production paths; preserve intentional request/progress logging
 - No uncommitted changes to `.env`
 - `dist/` is up to date with the latest source changes

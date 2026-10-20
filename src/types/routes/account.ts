@@ -3,12 +3,8 @@ import { Timestamp } from "firebase-admin/firestore";
 /**
  * Multi-account schema shared by repositories, request context and the API.
  *
- * The reasoning behind this shape — why the context is a subcollection, why
- * membership is three fields, why ids are UUID v4 — lives in
- * `docs/multi-account/phase-02-accounts-schema-and-indexes.md`. It is NOT
- * repeated here; two copies of an argument drift, and the doc is the one Phase
- * 05/06b are written from. What stays below is only what a caller can get wrong
- * at the point of use.
+ * Current storage and permission contracts: docs/multi-account/README.md.
+ * Comments below describe constraints a caller can get wrong at the point of use.
  */
 
 export type AccountRole = "owner" | "editor" | "viewer";
@@ -52,7 +48,7 @@ export interface IAccount {
   updatedAt: Timestamp;
 }
 
-/** One row of the switcher (Phase 06a). */
+/** One row of the channel switcher. */
 export interface IAccountSummary {
   id: string;
   name: string;
@@ -66,7 +62,7 @@ export interface IAccountSummary {
    */
   projectCount: number;
   completeness: { score: number; missing: string[] } | null;
-  /** Phase 08. Null for everyone until then, and null unless I am the billing owner. */
+  /** Reserved summary field; currently returned as null. Use the billing endpoint. */
   credits: { remaining: number; resetsAt: string } | null;
 }
 

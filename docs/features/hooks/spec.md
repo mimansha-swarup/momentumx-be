@@ -1,142 +1,18 @@
----
-title: "Hooks Feature Spec"
-description: "How the Hooks step works — hook generation, selection mechanic, and state machine behavior"
-date: 2026-02-27
-last_updated: 2026-07-12
-status: "implemented"
-tags: ["feature", "hooks", "spec"]
----
+# Hooks
 
-# Hooks Feature Spec
+Hooks helps the creator choose an opening for a video after its script is ready. A batch offers five alternatives based on the script and channel context.
 
-## Overview
+## Creator flow
 
-Hooks is Step 3 of the MomentumX content pipeline. It generates 5 hook variations from an approved script and title. The creator selects one hook, which completes the Hooks step and feeds into Packaging as context.
+1. Open Hooks on a project with a completed Script step.
+2. Generate and compare the openings.
+3. Select one to complete Hooks and carry that choice into later work.
+4. Regenerate the alternatives if needed, or export the batch.
 
-Hooks has its own dedicated endpoints, Firestore collection, and state tracking. The standalone `POST /v1/hooks/generate` and `POST /v1/hooks/:hooksId/select` endpoints are live. The legacy `POST /v1/packaging/generate-hooks` endpoint has been **removed**.
+A saved batch can be reopened to review or change the selection. Regeneration replaces the batch and clears its selection; the creator chooses again. Existing title and packaging work may then need review. A changed script can similarly make hooks outdated.
 
----
+## Scope and limits
 
-## Pipeline Position
+Hooks is part of the project workflow rather than an independent no-script tool. The alternatives are creative drafts, not claims about tested performance. Editors and owners generate and select; viewers read and export.
 
-| Attribute | Value |
-|---|---|
-| Step | 3 of 4 |
-| Requires | Completed script from the Script step |
-| Unlocks | Packaging step |
-| Completion mechanic | Creator selects one hook → `selectedHookIndex` stored on video project → Hooks step = `completed` |
-
----
-
-## What Gets Built During This Step
-
-When Hooks completes:
-1. Gemini generates 5 hook variations from the script
-2. Hooks batch is saved to the `hooks` Firestore collection
-3. Resource is linked to the video project (`linkResource` fire-and-forget)
-4. The creator selects one hook → `selectedHookIndex` stored on the video project → `completeStep` fires
-5. Packaging step becomes available
-
----
-
-## AI Generation
-
-| Attribute | Value |
-|---|---|
-| Model | `gemini-3.8-flash` |
-| Prompt | `GENERATE_HOOKS_PROMPT` in `src/constants/prompt.ts` |
-| Generation config | `GENERATION_CONFIG_HOOKS` (responseSchema-enforced `{ hooks: string[] }`, exactly 5) |
-| Output | JSON object with `hooks` array — 5 strings |
-| Delivery | Standard JSON response (not SSE) |
-
-### Prompt Variables
-
-| Variable | Source |
-|---|---|
-| `{script}` | Script text passed in request body |
-
-### Hook Styles
-
-Each of the 5 hooks uses a distinct style:
-
-| Style | Description |
-|---|---|
-| Question | Opens with a question that creates curiosity or tension |
-| Shock | States a surprising or counterintuitive fact |
-| Story | Teases a story or outcome without revealing it |
-| Challenge | Frames the video as addressing a challenge the viewer faces |
-| Promise | States a concrete outcome the viewer will get |
-
----
-
-## State Machine
-
-```
-not_started → in_progress → completed
-                  ↑
-            (stale resets here)
-```
-
-| State | Meaning |
-|---|---|
-| `not_started` | Hooks haven't been triggered for this video project |
-| `in_progress` | Hooks generated, creator reviewing or iterating |
-| `completed` | Creator selected one hook — `selectedHookIndex` set on video project |
-
-### Stale Behavior
-
-Hooks becomes stale when the script is regenerated. When `stale: true`, the hooks were generated from an older version of the script. The creator must re-generate or explicitly acknowledge before the step counts as done.
-
-If hooks are regenerated while a packaging document exists downstream, Packaging is marked `stale: true`.
-
----
-
-## Batch Model
-
-Hooks are generated in batches. Each batch produces 5 variations saved as a single Firestore document. When the creator regenerates, the hooks and hookFeedback are overwritten in place on the same document (no archive).
-
-### `hooks` Collection Document Shape
-
-| Field | Type | Description |
-|---|---|---|
-| `id` | `string` | Firestore auto-generated ID |
-| `videoProjectId` | `string` | Foreign key to the video project |
-| `accountId` | `string` | Active channel tenancy key |
-| `createdBy` | `string` | Authenticated author uid; never the permission key |
-| `hooks` | `string[]` | Array of 5 hook strings |
-| `hookFeedback` | `Record<string, "like" \| "dislike" \| null>` | Per-hook feedback keyed by index |
-| `createdAt` | `Timestamp` | Server-side timestamp |
-
----
-
-## Build Status
-
-| Component | Status |
-|---|---|
-| Hook generation via Gemini | ✅ Built |
-| `POST /v1/hooks/generate` — standalone endpoint | ✅ Built |
-| `hooks` Firestore collection | ✅ Built |
-| Hook batch save to Firestore | ✅ Built |
-| Hook selection endpoint (`POST /v1/hooks/:hooksId/select`) | ✅ Built |
-| `selectedHookIndex` on video project | ✅ Built |
-| Hooks step state tracking on video project | ✅ Built |
-| Regenerate hooks (`POST /v1/hooks/:hooksId/regenerate`) | ✅ Built |
-| Export hooks (`GET /v1/hooks/:hooksId/export`) | ✅ Built |
-| Implicit signal capture on select/regenerate | ✅ Built (P6A: `HOOK_SELECTED`, `REGENERATE` events) |
-| Stale flag: script change → hooks `stale: true` | ✅ Built |
-| Stale cascade: hooks regenerated → packaging `stale: true` | ✅ Built |
-
----
-
-## Related Documentation
-
-- [Hooks API Reference](./api.md)
-- [Packaging Feature Spec](../packaging/spec.md)
-- [Pipeline Spec](../../product/pipeline-spec.md)
-- [Product Roadmap](../../product/roadmap.md)
-
-## Channel tenancy and roles
-
-Content is scoped by `accountId`, resolved from verified channel membership.
-`createdBy` records authorship only. Owners and editors may mutate/generate; viewers
-may read and export. Member management and channel deletion require owner.
+See the [API reference](./api.md) for the request contract and the [pipeline model](../../product/pipeline-spec.md) for completion and review state. This describes local capability, not a release announcement.

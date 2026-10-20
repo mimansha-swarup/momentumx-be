@@ -2,11 +2,12 @@ import { IDEA_PUBLIC_FIELDS } from "../utlils/public-response.js";
 import type { CreditReservation } from "./billing.repository.js";
 import { generationWrite } from "./generation-guard.js";
 import { isDocumentId } from "../utlils/firestore-id.js";
-import { Firestore } from "firebase-admin/firestore";
+import { Firestore, Transaction } from "firebase-admin/firestore";
 import { COLLECTIONS } from "../constants/collection.js";
 import { db, firebase } from "../config/firebase.js";
 import { IGetIdeaQueryArgs } from "../types/repository/content.js";
 import { IIdea, IScript } from "../types/routes/content.js";
+import { ServiceUnavailable } from "../utlils/errors.js";
 
 class ContentRepository {
   private collection: `${COLLECTIONS}`;
@@ -160,7 +161,7 @@ class ContentRepository {
     return data as IScript;
   };
 
-  batchSaveIdeas = async (dataList: unknown[], charge?: CreditReservation | null) => {
+  batchSaveIdeas = async (dataList: unknown[], charge?: CreditReservation | null, replaceAccountId?: string) => {
     const batch = db.batch();
     const collectionRef = db.collection(this.collection);
 
@@ -172,12 +173,30 @@ class ContentRepository {
         typeof idea.id === "string" && idea.id
           ? idea.id
           : collectionRef.doc().id;
-      const dataWithId = { ...idea, id: docId };
+      const dataWithId: Record<string, unknown> & { id: string } = { ...idea, id: docId };
       batch.set(collectionRef.doc(docId), dataWithId);
       return dataWithId;
     });
     try {
-      if (charge) await generationWrite(charge, tx => updatedDataList.forEach(data => tx.set(collectionRef.doc(data.id), data)));
+      if (replaceAccountId && (!updatedDataList.length || updatedDataList.some(data => data.accountId !== replaceAccountId) || (charge && charge.accountId !== replaceAccountId))) {
+        throw new Error("Replacement ideas must belong to the channel being replaced");
+      }
+      const write = async (tx: Transaction) => {
+        // Archive and deliver in one commit so every active-list reader sees
+        // either the previous slate or its replacement, even after a crash.
+        const previous = replaceAccountId ? await tx.get(collectionRef
+          .where("accountId", "==", replaceAccountId).where("archived", "==", false)
+          .select("archived").limit(451)) : undefined;
+        // Application bound, not a provider limit: keep the atomic operation
+        // finite without chunking it into partially visible replacements.
+        if (previous && previous.size + updatedDataList.length > 450) {
+          throw ServiceUnavailable("Too many active ideas to replace at once. Your existing ideas are unchanged.");
+        }
+        previous?.docs.forEach(doc => tx.update(doc.ref, { archived: true }));
+        updatedDataList.forEach(data => tx.set(collectionRef.doc(data.id), data));
+      };
+      if (charge) await generationWrite(charge, write, updatedDataList.length > 0);
+      else if (replaceAccountId) await this.db.runTransaction(write);
       else await batch.commit();
       return updatedDataList;
     } catch (err) {
@@ -259,19 +278,22 @@ class ContentRepository {
 
   updateIdea = async (ideaId: string, data: Record<string, unknown>, charge?: CreditReservation | null) => {
     const ref = this.db.collection(this.collection).doc(ideaId);
-    if (charge) await generationWrite(charge, tx => tx.set(ref, data, { merge: true }));
+    if (charge) await generationWrite(charge, tx => tx.set(ref, data, { merge: true }), charge.kind === "ideas");
     else await ref.set(data, { merge: true });
   };
 
   editScript = async (scriptId: string, data: Record<string, unknown>, charge?: CreditReservation | null) => {
     const ref = this.db.collection(this.script_collection).doc(scriptId);
-    if (charge) await generationWrite(charge, tx => tx.set(ref, data, { merge: true }));
+    if (charge) await generationWrite(charge, tx => tx.set(ref, data, { merge: true }), true);
     else await ref.set(data, { merge: true });
   };
 
   saveScript = async (scriptId: string, data: Record<string, unknown>, charge?: CreditReservation | null) => {
     const ref = this.db.collection(this.script_collection).doc(scriptId);
-    if (charge) await generationWrite(charge, tx => tx.set(ref, data, { merge: true }));
+    if (charge) await generationWrite(charge, tx => {
+      tx.set(ref, data, { merge: true });
+      if (charge.projectId) tx.update(this.db.collection(COLLECTIONS.VIDEO_PROJECTS).doc(charge.projectId), { scriptId });
+    }, true);
     else await ref.set(data, { merge: true });
   };
 }

@@ -105,14 +105,8 @@ class HooksService {
           hooks: parsed.hooks,
           hookFeedback: {},
         }, ...(charge ? [charge] as const : []));
-        if (project.hooksId) {
-          // Replacing a missing batch invalidates the old selection just like
-          // regeneration. Finish the fenced cascade before linking new hooks.
-          await this.videoProjectService.clearSelectedHook(videoProjectId, owner, ...(charge ? [charge] as const : []));
-          await this.videoProjectService.markStale(videoProjectId, "hooks", ...(charge ? [charge] as const : []));
-          await this.videoProjectService.markPackagingDocumentStale(videoProjectId, "hooks_regenerated", ...(charge ? [charge] as const : []));
-        }
-        await this.videoProjectService.linkResource(videoProjectId, "hooks", saved.id, owner, ...(charge ? [charge] as const : []));
+        // Selection, resource link and downstream invalidation commit with the
+        // batch. Repeating them here could clear a selection made after commit.
         return saved;
       }
     );
@@ -200,13 +194,6 @@ class HooksService {
         const parsed = await collectJson<{ hooks: string[] }>(result, "hooks");
         assertHooks(parsed);
         await this.repo.update(hooksId, { hooks: parsed.hooks, hookFeedback: {} }, ...(charge ? [charge] as const : []));
-        try {
-          await this.videoProjectService.clearSelectedHook(hooksBatch.videoProjectId, owner, ...(charge ? [charge] as const : []));
-          await this.videoProjectService.markStale(hooksBatch.videoProjectId, "hooks", ...(charge ? [charge] as const : []));
-          await this.videoProjectService.markPackagingDocumentStale(hooksBatch.videoProjectId, "hooks_regenerated", ...(charge ? [charge] as const : []));
-        } catch (cascadeError) {
-          console.error(JSON.stringify({ event: "stale_cascade_failed", from: "hooks", projectId: hooksBatch.videoProjectId, userId, message: (cascadeError as Error)?.message }));
-        }
 
         return { id: hooksId, hooks: parsed.hooks, hookFeedback: {} };
       }

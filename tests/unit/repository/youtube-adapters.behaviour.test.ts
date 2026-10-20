@@ -92,6 +92,35 @@ beforeEach(() => {
   youtubeJson.mockReset();
 });
 
+describe("competitor channel names", () => {
+  it("requests channel metadata by escaped id and decodes the display name", async () => {
+    youtubeJson.mockResolvedValue({ items: [{ snippet: { title: "  Food &amp; Travel  " } }] });
+    await expect(research.getChannelTitle("UC1&part=statistics")).resolves.toBe("Food & Travel");
+    expect(lastUrl().pathname).toBe("/youtube/v3/channels");
+    expect(lastUrl().searchParams.get("id")).toBe("UC1&part=statistics");
+    expect(lastUrl().searchParams.getAll("part")).toEqual(["snippet"]);
+  });
+
+  it.each([null, {}, { items: [] }, { items: [{ snippet: {} }] }, { items: [{ snippet: { title: "   " } }] }])(
+    "reports no name for missing channel metadata: %p", async (body) => {
+      youtubeJson.mockResolvedValue(body);
+      await expect(research.getChannelTitle("UC1")).resolves.toBeNull();
+    }
+  );
+
+  it("sanitizes a failed name lookup before logging or rejecting", async () => {
+    const log = jest.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      youtubeJson.mockRejectedValue(new Error("failed?key=secret"));
+      await expect(research.getChannelTitle("UC1")).rejects.toThrow("YouTube API unavailable — failed to fetch channel name");
+      expect(log).toHaveBeenCalledWith(expect.stringContaining("key=[redacted]"));
+      expect(log).not.toHaveBeenCalledWith(expect.stringContaining("secret"));
+    } finally {
+      log.mockRestore();
+    }
+  });
+});
+
 // ---------------------------------------------------------------------------
 // 1. Degradation
 // ---------------------------------------------------------------------------

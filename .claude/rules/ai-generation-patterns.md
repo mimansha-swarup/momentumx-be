@@ -12,7 +12,7 @@ Rules for working with Gemini, prompts, SSE streaming, and embeddings. Ensures A
 ## Two Models — Use the Right One
 
 ```
-gemini-3.8-flash      → all text/content generation
+GENERATION_MODEL     → text generation (default gemini-3.8-flash)
 gemini-embedding-001  → embeddings only (ideas for KMeans)
 ```
 
@@ -37,7 +37,7 @@ GENERATION_CONFIG_SHORTS            → {segments, totalDuration} (responseSchem
 
 **Every JSON config defines a `responseSchema`** (see `GENERATION_CONFIG_IDEAS` for the pattern) — schema-enforced structured output is the strongest guarantee against malformed JSON, and there are no schema-less JSON configs left. Bound array lengths (`minItems`/`maxItems`) wherever the prompt fixes the count, so a short generation fails at the model instead of persisting a partial slate — but never invent a bound the prompt doesn't state; an over-tight schema turns graceful degradation into a hard failure.
 
-**Drain and parse every JSON generation with `collectJson`** (`src/utlils/ai.ts`), never an inline `JSON.parse`. It handles the three real failure modes — blocked stream, empty body, unparseable body — as a 503 the client can retry, with a structured log naming which one it was. A raw `JSON.parse` throws a `SyntaxError` that the error handler masks as "Something went wrong".
+**Drain and parse every JSON generation with `collectJson`** (`src/utlils/ai.ts`), never an inline `JSON.parse`. It handles the three real failure modes — blocked stream, empty body, unparseable body — as a 503 with a safe failure message, with a structured log naming which one it was. A raw `JSON.parse` throws a `SyntaxError` that the error handler masks as "Something went wrong".
 
 Configs are in `src/constants/firebase.ts`. Only AI Engineer modifies this file.
 
@@ -79,18 +79,19 @@ const result = JSON.parse(accumulatedRes);
 ```
 
 `collectJson` (`src/utlils/ai.ts`) handles the three real failure modes — blocked
-stream, empty body, unparseable body — as a **503 the client can retry**, with a
+stream, empty body, unparseable body — as a **503 with a safe failure message**, with a
 structured log naming which one it was. A raw `JSON.parse` throws a `SyntaxError`
 that the error handler masks as "Something went wrong". No service does an inline
 parse today; this section described a practice the codebase had already retired.
 
-If the parse fails, the prompt or config is misconfigured — fix the prompt/config,
+A parse failure can also reflect interrupted or malformed provider output. Inspect the
+response and prompt/config before changing them;
 do not swallow the error and do not add "repair" heuristics on top of malformed
 output.
 
 ---
 
-## Research-Grounded Generation (phase 2)
+## Research-Grounded Generation
 
 `ResearchContextService` (`research-context.service.ts`) is the shared research engine: it fetches trending + keyword-ranked videos from YouTube, cleans the pool (drops Shorts/livestream junk, dedupes, caps 2 titles per channel), and annotates titles with real view counts.
 
@@ -98,65 +99,26 @@ output.
 - **Title step (post-script)** injects `getTitleSignals(workingTitle)` into `GENERATE_TITLE_PROMPT` and returns scored variations via `GENERATION_CONFIG_TITLE_VARIATIONS`.
 - **Degradation contract (non-negotiable):** research is an enhancer, never a gate — every signal fetch failure resolves to an empty block and generation proceeds on channel context alone. Never let a YouTube error propagate out of `ResearchContextService`.
 
-(The former standalone `/v1/title-intelligence` pipelines were retired in phase 2; their machinery was absorbed into the above.)
 
 ---
 
-## SSE Streaming — Exact Pattern, No Deviations
+## SSE Streaming
 
-```typescript
-// 1. Set headers and flush FIRST
-res.setHeader('Content-Type', 'text/event-stream');
-res.setHeader('Cache-Control', 'no-cache');
-res.setHeader('Connection', 'keep-alive');
-res.flushHeaders();
-
-// 2. Stream chunks with error recovery.
-//    JSON.stringify each chunk so embedded newlines can't break SSE framing
-//    (a raw multi-line chunk would be split into multiple SSE events).
-//    The client must JSON.parse each `data:` line (except the [DONE] sentinel).
-try {
-  for await (const chunk of result.stream) {
-    const text = chunk.text();
-    if (text) res.write('data: ' + JSON.stringify(text) + '\n\n');
-  }
-} catch (streamError) {
-  console.error("SSE stream error", streamError);
-} finally {
-  // 3. End stream — always fires, even on error
-  res.write('data: [DONE]\n\n');
-  res.end();
-}
-
-// 4. Post-stream work (save to DB) in separate try/catch
-try {
-  await saveScript(...);
-} catch (saveError) {
-  console.error("Post-stream save error", saveError);
-}
-```
-
-Non-negotiable:
-- `res.flushHeaders()` must be called before the streaming loop
-- `res.write('data: [DONE]\n\n')` and `res.end()` must be in a `finally` block
-- Stream errors must NOT leave the client hanging — `finally` guarantees termination
-- Post-stream saves (Firestore writes) must be in a separate try/catch — a save failure must not affect the already-completed stream
-- Every text chunk is **JSON-encoded**: `data: ${JSON.stringify(text)}\n\n` (NOT raw `data: <text>`). This keeps multi-line content (scripts) from corrupting the SSE frame. The `[DONE]` terminator is the one exception — sent raw. Clients `JSON.parse` each `data:` line and stop on the literal `[DONE]`.
+Match the endpoint's actual protocol in `docs/api-communication.md` and the script API
+reference. Initial script GET uses JSON-encoded chunks plus raw `[DONE]`; opt-in POST
+streams use named events and no `[DONE]`. Initial SSE auth accepts Bearer with query-token
+compatibility and derives channel membership from the project. Validate before flushing
+headers; close an opened stream on every outcome. Persistence and accounting precede
+final success; never prescribe saving after signaling a completed result. Interrupted
+output must preserve the previous manuscript. A client disconnect is an unknown outcome,
+not authorization to replay generation.
 
 ---
 
 ## KMeans — Guards and Preprocessing
 
-**The guards span two layers.** Earlier versions of this rule showed all of them as
-in-memory steps inside `getClusteredTitles` and stated that all KMeans logic lives
-in that one file. It does not, and looking only there will miss two of the four.
-
-**This block used to show `.where("createdBy", "==", userId)`.** Phase 06 moved
-tenancy from the author to the channel, and this file was not updated with the
-others — so a clustering-adjacent query written from this rule would have been
-correctly indexed, correctly shaped and **wrongly scoped**, which is the exact
-failure that phase exists to prevent. `accountId` is the permission field;
-`createdBy` is authorship only. See `firestore-conventions.md`.
+The repository filters archived channel ideas and bounds the pool; the utility
+calculates and guards clustering. `accountId` scopes access, not `createdBy`.
 
 ```typescript
 // 1+2. Filter archived and cap at 200 — IN THE QUERY, not in memory.

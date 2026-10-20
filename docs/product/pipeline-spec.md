@@ -1,356 +1,38 @@
----
-title: "Pipeline Status Model"
-description: "Finalized spec for video project status tracking, step state machines, regeneration behavior, stale cascade, and Firestore schema"
-date: 2026-02-27
-status: "final"
-tags: ["product", "pipeline", "status", "schema", "video-project"]
----
+# How the video workflow works
 
-# Pipeline Status Model
+A video project brings one idea and its production assets together. The idea guides the
+script; the edited script guides hooks, titles and publishing assets. The suggested path is:
 
-Finalized spec for how status is tracked across the MomentumX pipeline. All decisions here are locked — do not change without a product discussion.
-
----
-
-## The Pipeline
-
-```
-Research → Script → Hooks → Packaging
+```text
+Research → Script → Hooks → Title → Packaging
 ```
 
-**Strictly sequential.** Each step depends on the data output of the previous:
+The flow is guided and jumpable. Creators can revisit earlier work or enter through a later tool when they have the needed inputs. Hooks needs a completed script; Title and Shorts need script content; a description or thumbnail concept can start from a title.
 
-- Script requires: selected idea
-- Hooks requires: script
-- Packaging requires: script + title + selectedHook
+## Decisions along the way
 
-There is no shortcut path from Research to Packaging — the data dependencies enforce the order.
+| Stage | Creator decision | Result |
+|---|---|---|
+| Research | Choose an idea or bring a working title | A project for the video |
+| Script | Review and revise the draft | A saved script |
+| Hooks | Choose the opening | A selected hook |
+| Title | Choose the publishing headline | A selected title and updated project name |
+| Packaging | Prepare description, thumbnail concepts and Shorts | Supporting assets ready to export |
 
----
+Generating alternatives is different from selecting one. Hooks and Title remain unfinished until the creator makes a choice. Packaging covers the three supporting assets; it does not complete Title on the creator’s behalf.
 
-## 3-Level Status Tracking
+## Returning and revising
 
-Status exists at three levels simultaneously:
+Projects show progress and suggest the next unfinished or outdated step. A creator who jumps ahead can still return to the gaps.
 
-```
-Level 1: Dashboard          — all video projects at a glance
-Level 2: Per-video tracker  — which step the video is currently at, overall progress
-Level 3: Per-step status    — what's happening inside the current step
-```
+Changing an idea, script, hook or title can make dependent work outdated. The original assets remain available with a review warning. The creator can regenerate them or explicitly keep them as-is. A save of ordinary edits does not by itself acknowledge that warning.
 
-### Level 1 — Dashboard
+Several projects can start from the same idea while keeping independent scripts. Replacing that idea can affect all projects based on it. Replacing one idea keeps its slot; replacing the batch archives prior ideas. Repetition avoidance considers active ideas only, not archived batches.
 
-Shows all of the creator's video projects. Each row shows:
-- Video working title
-- Current pipeline step (Research / Script / Hooks / Packaging)
-- Top-level status (In Progress / Needs Review / Done)
+Deleting a project removes it from the active workspace without deleting other projects using the same idea.
 
-### Level 2 — Per-video Tracker
+## Boundaries
 
-Inside a single video project. Shows the four pipeline steps as a progress indicator. Each step shows whether it's completed, in progress, or not started.
+Completion means the preparation steps are complete; it does not publish a video. Thumbnail output is a text concept, not an image. Scheduling, published-video tracking and private analytics are outside this flow.
 
-The creator can navigate back to any completed step to review or regenerate content.
-
-### Level 3 — Per-step Status
-
-What's happening inside an individual step. State machine per step — see schemas below.
-
----
-
-## Step State Machines
-
-### Research Step
-
-| Status | Meaning |
-|---|---|
-| `not_started` | No generation has run |
-| `in_progress` | AI generating or awaiting creator selection |
-| `completed` | Creator has selected a idea |
-| `stale` | Downstream change invalidated context |
-
-**Trigger table:**
-
-| Action | Transition |
-|---|---|
-| Creator initiates idea generation | `not_started` → `in_progress` |
-| Creator selects a idea | `in_progress` → `completed` |
-| Creator regenerates (Regenerate All) | `completed` → `in_progress` |
-| Creator regenerates (Regenerate All) | `in_progress` → `in_progress` |
-
-**Note on stale:** If Script is regenerated, Research step itself is NOT marked stale. Research is upstream — Script being redone doesn't change the idea decision.
-
----
-
-### Script Step
-
-| Status | Meaning |
-|---|---|
-| `not_started` | No script generated yet |
-| `in_progress` | Script generating or awaiting creator approval |
-| `completed` | Creator has marked the script done |
-| `stale` | Downstream change invalidated context |
-
-**Trigger table:**
-
-| Action | Transition |
-|---|---|
-| Creator initiates script generation | `not_started` → `in_progress` |
-| Generated script is saved (stream completes) | `in_progress` → `completed` (automatic, server-side) |
-| Creator regenerates | any → `in_progress` |
-
-**Stale:** If script is regenerated while Hooks or Packaging exist downstream, those steps have `status` set to `"stale"`.
-
----
-
-### Hooks Step
-
-| Status | Meaning |
-|---|---|
-| `not_started` | No hooks generated yet |
-| `in_progress` | Hooks generating or awaiting creator selection |
-| `completed` | Creator has selected a hook |
-| `stale` | Upstream script was regenerated |
-
-**Trigger table:**
-
-| Action | Transition |
-|---|---|
-| Creator triggers hook generation | `not_started` → `in_progress` |
-| Creator selects a hook | `in_progress` → `completed` |
-| Creator regenerates | any → `in_progress` |
-| Script is regenerated upstream | any → `stale` |
-
-**Completion mechanic:** Selecting a hook = completing the hooks step. The selected hook index is stored on the video project as `selectedHookIndex`. This feeds the Packaging step.
-
-**Stale:** If hooks are regenerated while Packaging exists downstream, Packaging has `status` set to `"stale"`.
-
----
-
-### Packaging Step
-
-The packaging pipeline step uses `StepState` like all other steps. Per-item status is tracked on the **packaging document itself** (not on the video project), using `itemStatuses`.
-
-**Packaging items:**
-- Title variations
-- Description
-- Thumbnail brief
-- Shorts script
-
-**Per-item status (on packaging document):**
-
-| Status | Meaning |
-|---|---|
-| `not_started` | Not yet generated |
-| `completed` | Item has been generated (via save or regenerate) |
-| `stale` | Upstream script or hooks were regenerated — item is out of date |
-
-**Status auto-advances to `completed`** when content is saved or regenerated. Three states only — no `in_progress` at the item level.
-
-**Trigger table (per item):**
-
-| Action | Transition |
-|---|---|
-| `savePackaging` with item content present | `not_started` → `completed` |
-| `regenerateItem` succeeds | any → `completed` |
-| Upstream script regenerated | `completed` → `stale` (skips `not_started`) |
-| Upstream hooks regenerated | `completed` → `stale` (skips `not_started`) |
-
-**Document-level stale fields:**
-
-| Field | Purpose |
-|---|---|
-| `isStale: boolean` | `true` if any item is `"stale"` |
-| `staleReason: "script_regenerated" \| "hooks_regenerated" \| null` | What caused the stale cascade |
-| `staleSince: Timestamp \| null` | When the cascade happened |
-
-When the last stale item is regenerated, `isStale`, `staleReason`, and `staleSince` are all cleared on the packaging document. The same regeneration also clears the **project's** stale packaging step: `pipeline.packaging.status` flips `stale → completed` and `overallStatus` is recomputed (it stays `"stale"` if Script or Hooks are still stale), so the dashboard "needs update" badge clears. This project sync is best-effort — a failure is logged and never fails the already-saved regeneration.
-
----
-
-## Stale Model
-
-Stale is represented as a **status value**, not a separate boolean field. A stale step has:
-
-```
-step.status = "stale"
-```
-
-This means `status` can be `"not_started" | "in_progress" | "completed" | "stale"`. There is no separate `stale: boolean` field — the stale state replaces the status value.
-
-### Stale Cascade Rules
-
-| What changes | What goes stale |
-|---|---|
-| Script regenerated | Hooks step, Packaging step |
-| Hook selection changes | Packaging step |
-| Research idea changes (Regenerate All) | Script step, Hooks step, Packaging step |
-
-### Stale Resolution
-
-When a creator visits a stale step, the UI warns them:
-- "This was generated with an older version of your script. Regenerate to update."
-
-Creator options:
-- Regenerate (clears stale, re-runs generation with new context)
-- Keep as-is (stale flag cleared — creator acknowledged and accepted the content)
-
----
-
-## Regeneration Behavior
-
-### Regenerate All
-
-Replaces the entire current batch of generated items. Old batch is **archived** (not deleted). Used when the creator wants a completely fresh set of ideas.
-
-- Triggers: `any status` → `generating`
-- Old items: `archived: true` on all documents in the old batch
-- New batch gets a new `batchId`
-- Stale cascade fires on downstream steps of **every** project backed by each archived idea (looked up via `getProjectsByIdea` → `findByIdeaId`), not just a single linked project
-
-### Regenerate One
-
-Replaces a single item in the current batch (slot-replace). The slot position is preserved — the new item appears in the same position as the one being replaced.
-
-- Triggers: that item's status → `generating`
-- Other items in batch: unaffected
-- No batch ID change
-- Stale cascade: does NOT fire (same step, same item slot)
-
----
-
-## Batch Retention Policy
-
-**Decision: Keep archived batches forever (no cleanup in Phase 0).**
-
-Rationale:
-1. **KMeans clustering actively benefits from archived batches.** `getAllIdeaTitles()` queries all idea documents for a user — including archived ones. More historical titles = better clustering = less repetitive suggestions in future generations.
-2. **No users yet.** Storage cost is not a real concern at current scale.
-3. **No cleanup logic needed.** Anything beyond "keep forever" requires TTLs, batch counters, or Cloud Functions — all out of scope for Phase 0.
-4. **Easily revisited.** Add `expiresAt` or a cleanup job when it becomes a real problem (thousands of users, tens of thousands of archived ideas per user).
-
----
-
-## Concurrent Video Projects
-
-A creator can have multiple video projects active simultaneously, **including multiple projects on the same idea** — each project owns its own script document (via the script's decoupled UUID id), so they never collide. Each video project is independent — status transitions on one do not affect any other. There is no cross-project KMeans context — clustering is scoped to the active channel.
-
-When the source idea is regenerated (Regenerate All), the stale cascade fans out to **all** projects backed by that idea, not just one.
-
----
-
-## Firestore Schema
-
-### New Collection: `videoProjects`
-
-```
-videoProjects/{videoProjectId}
-  id: string                  // Firestore auto-generated doc ID
-  userId: string              // owner — always filter by this first
-  title: string               // working title (from selected idea)
-  ideaId: string             // ref to ideas collection
-  scriptId: string | null     // ref to scripts collection
-  hooksId: string | null      // ref to hooks collection
-  packagingId: string | null  // ref to packaging collection
-  selectedHookIndex: number | null  // index into the hooks array on the linked hooks batch
-
-  pipeline: {
-    research: {
-      status: "not_started" | "in_progress" | "completed" | "stale"
-    }
-    script: {
-      status: "not_started" | "in_progress" | "completed" | "stale"
-    }
-    hooks: {
-      status: "not_started" | "in_progress" | "completed" | "stale"
-    }
-    packaging: {
-      status: "not_started" | "in_progress" | "completed" | "stale"
-    }
-  }
-
-  overallStatus: "in_progress" | "completed" | "stale"
-  currentStep: "research" | "script" | "hooks" | "title" | "packaging"
-  createdAt: Timestamp       // server-side
-  updatedAt: Timestamp       // server-side
-```
-
-### New Collection: `hooks`
-
-```
-hooks/{hookId}
-  id: string                 // Firestore auto-generated ID
-  videoProjectId: string
-  accountId: string          // active channel tenancy key
-  createdBy: string          // author uid, never the permission key
-  hooks: string[]            // 5 hook variations
-  hookFeedback: Record<string, "like" | "dislike" | null>
-  createdAt: Timestamp
-```
-
-### Updated: `ideas`
-
-Add to existing idea documents:
-```
-  archived: boolean          // true when batch superseded by Regenerate All
-  batchId: string            // groups ideas from the same generation run
-  videoProjectId: string | null  // set when creator selects this idea
-```
-
-### Updated: `scripts`
-
-A script document now has its **own** `randomUUID` document ID — it is no longer the source idea's ID. The script links back to its idea and project via foreign-key fields:
-
-```
-scripts/{scriptId}
-  id: string                 // own randomUUID — NOT the ideaId
-  title: string              // title of the source idea
-  accountId: string          // active channel tenancy key
-  createdBy: string          // author uid, never the permission key
-  createdAt: Timestamp       // server-side
-  script: string             // full script text
-  ideaId: string            // FK → ideas collection (source idea)
-  videoProjectId: string     // FK → videoProjects collection (owning project)
-```
-
-Because each project mints its own script doc, multiple projects can share one idea while each owns an independent script.
-
-### Updated: `packaging`
-
-Add to existing packaging documents:
-```
-  videoProjectId: string | null
-  itemStatuses: {
-    title:       "not_started" | "completed" | "stale"
-    description: "not_started" | "completed" | "stale"
-    thumbnail:   "not_started" | "completed" | "stale"
-    shorts:      "not_started" | "completed" | "stale"
-  }
-  isStale: boolean                                          // true if ANY item is "stale"
-  staleReason: "script_regenerated" | "hooks_regenerated" | null
-  staleSince: Timestamp | null
-```
-
----
-
-## Backend Implementation — Phase 0 Complete
-
-All Phase 0 infrastructure is built and live:
-
-1. ✅ `videoProjects` collection + `Collection.VIDEO_PROJECTS` enum
-2. ✅ `hooks` collection + `Collection.HOOKS` enum
-3. ✅ `VideoProjectRepository` — full CRUD for `videoProjects`
-4. ✅ `HooksRepository` — full CRUD for `hooks`
-5. ✅ `VideoProjectService` — status transitions, stale cascade, `startStep` / `completeStep` / `linkResource` / `markStale`
-6. ✅ `HooksService` — hook generation, selection, regeneration, feedback, export
-7. ✅ `videoProjectId`, `archived`, `batchId` fields on `ideas` and `scripts`
-8. ✅ `videoProjectId`, `itemStatuses`, `isStale`, `staleReason`, `staleSince` fields on `packaging`
-9. ✅ Routes registered: `/v1/video-projects`, `/v1/hooks`
-
-Pipeline auto-advancement is also wired: generating a script, selecting a hook, or saving packaging all trigger the appropriate `startStep` / `completeStep` / `linkResource` calls (fire-and-forget) on the linked video project.
-
----
-
-## Related Documentation
-
-- [Product Overview](./overview.md)
-- [Product Roadmap](./roadmap.md)
+This describes local product capability. See [current scope](./roadmap.md) for unresolved work and [operational readiness](../multi-account/operational-readiness.md) for release acceptance. Exact request/status contracts belong in the [project API](../features/video-project/api.md) and [packaging API](../features/packaging/api.md).

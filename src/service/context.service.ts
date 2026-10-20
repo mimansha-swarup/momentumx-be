@@ -38,8 +38,8 @@ const EMPTY_SESSION: ISessionContext = {
  * Best-available context assembler (GA §3 / phases 1A).
  *
  * Contract:
- * - channelContext always resolves (user doc, enriched/replaced by `overrides`
- *   for not-yet-persisted onboarding context). Missing user with no overrides
+ * - channelContext resolves from the channel context, enriched/replaced by `overrides`
+ *   for not-yet-persisted onboarding context. Missing channel context with no overrides
  *   is the only NotFound this service throws itself.
  * - sessionContext degrades: absent upstream content (no script yet, no hook
  *   selected, missing idea doc) yields null fields, never an error.

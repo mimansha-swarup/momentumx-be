@@ -1,406 +1,59 @@
----
-title: "Packaging API Reference"
-description: "Endpoint reference for packaging generation, save, list, and retrieval."
-date: 2026-02-27
-last_updated: 2026-07-12
-status: "implemented"
-tags: ["api", "packaging"]
----
+# Title and packaging API
 
-# Packaging API Reference
+All calls require `Authorization: Bearer <Firebase ID token>` and selected-channel membership. Writes require `X-Account-Id` and editor/owner role; reads and exports allow viewers and retain the documented headerless read fallback. Access follows channel membership, not authorship. See [shared API conventions](../../api-communication.md) for envelopes, channel selection, errors and credits.
 
-All endpoints require `Authorization: Bearer <token>`.
+JSON successes use `{ success: true, message, data }`. Common failures include 400 invalid input, 401 invalid/missing authentication, 403 insufficient access, 404 missing/unavailable resource, 409 generation conflict, 402 insufficient credits when enforcement applies, and 503 provider unavailability. See shared conventions for machine-readable codes and retry behavior.
 
-Base path: `/v1/packaging`
+Base: `/v1/packaging`. These generation endpoints return JSON.
 
----
+## Generate
 
-## Endpoints Summary
+All four calls accept optional `videoProjectId` and `script`. A non-empty supplied script takes precedence over saved project text. With a project, generated output is saved and the response adds `packagingId`. Without one, generation returns a preview; use save to retain it.
 
-| Method | URL | Purpose | Status |
-|---|---|---|---|
-| `POST` | `/v1/packaging/generate-title` | Generate 3 title variations | ✅ Built |
-| `POST` | `/v1/packaging/generate-description` | Generate SEO description | ✅ Built |
-| `POST` | `/v1/packaging/generate-thumbnail` | Generate 3 thumbnail briefs | ✅ Built |
-| `POST` | `/v1/packaging/generate-shorts` | Generate Shorts script | ✅ Built |
-| `POST` | `/v1/packaging/save` | Save packaging to Firestore | ✅ Built |
-| `GET` | `/v1/packaging/list` | List user's packaging | ✅ Built |
-| `GET` | `/v1/packaging/:packagingId` | Get single packaging | ✅ Built |
-| `POST` | `/v1/packaging/:packagingId/regenerate/:item` | Regenerate a specific packaging item | ✅ Built |
-| `POST` | `/v1/packaging/:packagingId/select-title` | Finalize a title, update project display title | ✅ Built |
-| `GET` | `/v1/packaging/:packagingId/export` | Export packaging as plain text | ✅ Built |
-
----
-
-## POST `/v1/packaging/generate-title`
-
-Generate 3 alternative title variations. Titles are 50–70 characters, search-optimized, using different emotional angles.
-
-### Request Body
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `script` | `string` | Yes | Full script text |
-| `videoProjectId` | `string` | No | If provided, the server resolves the project's selected hook (`hooksId` + `selectedHookIndex`) and injects it as context. The hook is never sent by the client. |
-
-### Response — `200`
-```json
-{
-  "success": true,
-  "data": {
-    "titles": [
-      { "title": "Why Your Morning Routine Is KILLING Your Productivity", "characterCount": 62 },
-      { "title": "I Tried 10 Morning Hacks for 30 Days — Here's What Actually Works", "characterCount": 62 },
-      { "title": "10 Productivity Hacks That Will Transform Your Morning Routine", "characterCount": 62 }
-    ]
-  }
-}
-```
-
-### Error Cases
-- `500` — Gemini generation failed or JSON parse error
-
----
-
-## POST `/v1/packaging/generate-description`
-
-Generate an SEO-optimized YouTube description. Hook before "Show More", keywords woven naturally, timestamp placeholders, CTA. Target: 200–400 words.
-
-### Request Body
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `script` | `string` | Yes | Full script text |
-| `title` | `string` | Yes | Video title |
-| `videoProjectId` | `string` | No | If provided, the server resolves the project's selected hook and injects it as context. The hook is never sent by the client. |
-
-### Response — `200`
-```json
-{
-  "success": true,
-  "data": {
-    "description": "full description text here"
-  }
-}
-```
-
-### Error Cases
-- `500` — Gemini generation failed or JSON parse error
-
----
-
-## POST `/v1/packaging/generate-thumbnail`
-
-Generate 3 thumbnail design concepts. Each is a design brief (not a rendered image) with text overlay, visual layout description, and psychological hook.
-
-### Request Body
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `script` | `string` | Yes | Full script text |
-| `title` | `string` | Yes | Video title |
-| `videoProjectId` | `string` | No | If provided, the server resolves the project's selected hook and injects it as context. The hook is never sent by the client. |
-
-### Response — `200`
-```json
-{
-  "success": true,
-  "data": {
-    "descriptions": [
-      "Split composition with bold red 'PRODUCTIVITY HACKS' text on left, person looking shocked on right, bright yellow background",
-      "Minimalist design with large '10X' text in center, dark blue gradient with white text overlay",
-      "Before/after split screen showing messy vs organized workspace, 'TRANSFORM' text in bold orange"
-    ]
-  }
-}
-```
-
-### Error Cases
-- `500` — Gemini generation failed or JSON parse error
-
----
-
-## POST `/v1/packaging/generate-shorts`
-
-Generate a YouTube Shorts script. Structured as hook / body / CTA, written to fit the specified duration.
-
-### Request Body
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `script` | `string` | Yes | Full script text |
-| `duration` | `number` | Yes | Target duration in seconds (e.g. `60`) |
-| `videoProjectId` | `string` | No | If provided, the server resolves the project's selected hook (`hooksId` + `selectedHookIndex`) and injects it as context. The hook is never sent by the client. |
-
-### Response — `200`
-```json
-{
-  "success": true,
-  "data": {
-    "segments": [
-      { "startTime": "0:00", "endTime": "0:05", "content": "Hook text here.", "type": "hook" },
-      { "startTime": "0:05", "endTime": "0:40", "content": "Main point content.", "type": "point" },
-      { "startTime": "0:40", "endTime": "0:55", "content": "Transition content.", "type": "transition" },
-      { "startTime": "0:55", "endTime": "1:00", "content": "Follow for more.", "type": "cta" }
-    ],
-    "totalDuration": "1:00"
-  }
-}
-```
-
-### Error Cases
-- `500` — Gemini generation failed or JSON parse error
-
----
-
-## POST `/v1/packaging/save`
-
-Save a packaging document to Firestore. If `videoProjectId` is provided and a packaging document already exists for that project, the existing document is **updated** (upsert). Otherwise a new document is created with Firestore auto-ID.
-
-Server automatically sets `createdBy`, `createdAt`, `itemStatuses` (derived from which content fields are present), and stale tracking fields (`isStale: false`, `staleReason: null`, `staleSince: null`) — **on create only**. On update the server writes the submitted edits and nothing else: recomputing `itemStatuses` would rewrite a `"stale"` item back to `"completed"`, and auto-save fires on every committed edit.
-
-**Empty content fields are ignored.** A `description: ""`, `thumbnail: []`, or `shorts` with no segments is dropped rather than written — an unhydrated client posting its blank initial state must not wipe generated content. There is no "clear this field" operation.
-
-If `videoProjectId` is provided, the server verifies ownership of the video project before saving, then calls `linkResource` to record the `packagingId` on the project (awaited, best-effort — failures are logged as `pipeline_transition_failed`, never returned).
-
-**Pipeline transitions are conditional.** `startStep`/`completeStep` for the packaging step run only when description, thumbnail *and* shorts are all present, and never when the stored document is stale. Saving an edit is not step completion — the Title screen auto-saves through this same endpoint.
-
-### Request Body
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `videoProjectId` | `string` | No | If provided, links this packaging to the video project (upserts if already linked) |
-| `titles` | `Array<{title, characterCount}>` \| `{titles:[...]}` | No | Title variations. The generate-title response (`{titles:[...]}`) may be sent as-is; the server unwraps it. |
-| `description` | `string` \| `{description}` | No | SEO description. The generate-description response may be sent as-is. |
-| `thumbnail` | `string[]` \| `{descriptions:[...]}` | No | Thumbnail design briefs. **Send the generate-thumbnail response (`{descriptions:[...]}`) under the `thumbnail` key** — the server unwraps `descriptions` into the stored `thumbnail` array. |
-| `shorts` | `{segments, totalDuration}` | No | Shorts script — the generate-shorts response, sent as-is. |
-| *(other fields)* | `unknown` | No | Passed through and persisted as-is |
-
-> **Canonical stored shape.** The four content fields are normalized server-side to one canonical shape before persisting: `titles: [{title, characterCount}]`, `description: string`, `thumbnail: string[]`, `shorts: {segments, totalDuration}`. You may send either the raw generate-endpoint response (wrapper) or the already-unwrapped value under each field key — the server coerces both. Malformed shapes are rejected with `400`. The same normalization applies on `regenerate/:item`, so saved and regenerated content always have identical shapes.
-
-### Server-Set Fields (create only — see above)
-
-| Field | Value |
-|---|---|
-| `itemStatuses.title` | `"completed"` if `titles` field present and non-empty, else `"not_started"` |
-| `itemStatuses.description` | `"completed"` if `description` field present and non-empty, else `"not_started"` |
-| `itemStatuses.thumbnail` | `"completed"` if `thumbnail` field present and non-empty, else `"not_started"` |
-| `itemStatuses.shorts` | `"completed"` if `shorts` field present and non-empty, else `"not_started"` |
-| `isStale` | `false` |
-| `staleReason` | `null` |
-| `staleSince` | `null` |
-
-### Response — `200`
-```json
-{
-  "success": true,
-  "message": "Packaging saved successfully",
-  "data": {
-    "id": "firestore-auto-id"
-  }
-}
-```
-
-### Error Cases
-
-| Status | Condition |
-|---|---|
-| 403 | `videoProjectId` provided but not owned by requesting user |
-| 404 | `videoProjectId` provided but project not found |
-| 500 | Firestore write failed |
-
----
-
-## GET `/v1/packaging/list`
-
-List all packaging documents for the authenticated user, ordered by `createdAt` descending.
-
-### Response — `200`
-```json
-{
-  "success": true,
-  "data": [
-    {
-      "id": "string",
-      "createdBy": "string",
-      "createdAt": "<timestamp>"
-    }
-  ]
-}
-```
-
-Additional fields per document depend on what was passed to `/save`. No fixed schema enforced on read.
-
-### Error Cases
-- `500` — Firestore read failed
-
----
-
-## GET `/v1/packaging/:packagingId`
-
-Get a single packaging document. Ownership is enforced — `createdBy` must match the requesting user.
-
-### Path Parameters
-| Param | Type | Description |
+| Method/path | Additional input | Success `data` |
 |---|---|---|
-| `packagingId` | `string` | Firestore auto-generated document ID |
+| `POST /generate-title` | Script must be supplied or available from the project | `{ titles: [{ title, characterCount, score, reason }], packagingId? }` |
+| `POST /generate-description` | Required `title` | `{ description, packagingId? }` |
+| `POST /generate-thumbnail` | Required `title` | `{ descriptions: string[], packagingId? }` |
+| `POST /generate-shorts` | Required integer `duration` (seconds, 1–600); script supplied or available from project | `{ segments, totalDuration, packagingId? }` |
 
-### Response — `200`
-```json
-{
-  "success": true,
-  "data": {
-    "id": "string",
-    "createdBy": "string",
-    "createdAt": "<timestamp>"
-  }
-}
-```
+Title targets three alternatives; editorial `score` (1–10) and `reason` express fit to the supplied material, not predicted performance. Legacy saved titles may omit these fields. Thumbnail generation targets three **text concepts**, not image URLs. A Shorts segment can contain `startTime`, `endTime`, `type` and `content`; `totalDuration` is human-readable text.
 
-### Error Cases
+Scripts are capped at 100,000 characters and titles at 300. Unknown request keys are stripped. Selected hooks are obtained from the linked project; clients do not send them.
 
-| Status | Condition |
+## Save edits
+
+`POST /save` accepts only:
+
+| Field | Accepted value |
 |---|---|
-| 403 | Document not owned by requesting user |
-| 404 | Document not found |
-| 500 | Firestore read failed |
+| `videoProjectId` | Optional existing project ID; omit to create a project for this work |
+| `titles` | Title-object array or `{ titles: [...] }` |
+| `description` | String or `{ description: "..." }` |
+| `thumbnail` | String array or `{ descriptions: [...] }` |
+| `shorts` | `{ segments: [...], totalDuration? }` |
+| `selectedTitleIndex`, `selectedThumbnailIndex` | Non-negative integer within the relevant array, or null to clear |
 
----
+Send the fields being edited. Generated output linked to a project is already saved; do not resend an old snapshot. Unknown keys, including client-supplied status/ownership fields, are stripped. Malformed content or selection returns 400. Empty content values are ignored; this is not a clear-content operation.
 
----
+The response is the saved packaging record in `data`, including its `id` and `videoProjectId`. Saving edits preserves existing review warnings. Editing a selected title also updates the project name, but only title selection completes the Title step.
 
-## POST `/v1/packaging/:packagingId/regenerate/:item`
+## Read, select, regenerate and export
 
-Regenerates a single packaging item and overwrites it on the existing document. Ownership enforced. Content and `itemStatuses.<item>: "completed"` are written atomically in a single Firestore call. If this was the last stale item, `isStale` is cleared. On AI generation failure, item status is rolled back to its previous value.
-
-### Path Parameters
-
-| Param | Type | Description |
+| Method/path | Request | Success `data` |
 |---|---|---|
-| `packagingId` | `string` | Packaging document ID |
-| `item` | `string` | One of: `title`, `description`, `thumbnail`, `shorts` |
+| `GET /list` | No body | Packaging record array |
+| `GET /:packagingId` | No body | Packaging record |
+| `POST /:packagingId/select-title` | `{ index }` | `{ id, selectedTitleIndex, title }` |
+| `POST /:packagingId/regenerate/:item` | `{ script?, title?, duration? }` | `{ id, item, data: replacementValue }` |
+| `GET /:packagingId/export` | No body | `{ text }` |
 
-### Request Body
+A record includes content as `titles: object[]`, `description: string`, `thumbnail: string[]`, and `shorts: { segments, totalDuration? } | null`, plus selections, project/channel/authorship and status metadata. Treat its ID as opaque.
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `script` | `string` | Yes | Full script text |
-| `title` | `string` | No | Required when `item` is `description` or `thumbnail` |
-| `duration` | `number` | No | Required when `item` is `shorts` |
+Select a title using a non-negative integer within the returned array. The selection updates the linked project name and completes Title. Regeneration may clear selections because it replaces the alternatives.
 
-> **No `videoProjectId` in the body.** On regenerate the server reads the `videoProjectId` already stored on the packaging document and resolves the project's selected hook from it. The client never sends `videoProjectId` (or the hook) here — sending one is ignored. (First-time generation via `/generate-title|description|thumbnail` still accepts `videoProjectId` in the body, because no packaging document exists yet.)
+Regeneration `item` is `title`, `description`, `thumbnail` or `shorts`. It uses the project already attached to the record; no replacement `videoProjectId` is accepted. Script may be omitted when stored on that project. Title/Shorts require script content; description/thumbnail require a title; Shorts regeneration defaults to 60 seconds when duration is omitted. The replacement value is the canonical bare value (title array, description string, thumbnail string array or Shorts object), not the generation wrapper.
 
-### Response — `200`
+`itemStatuses` uses `not_started | completed | stale`. Packaging review metadata includes `isStale`, `staleReason` and `staleSince`. Refreshing the last outdated packaging-owned asset can clear its warning; Title is tracked separately. Saving edits alone does not acknowledge stale work.
 
-```json
-{
-  "success": true,
-  "message": "Packaging item regenerated successfully",
-  "data": {
-    "id": "string",
-    "item": "title",
-    "data": [{ "title": "string", "characterCount": 0 }]
-  }
-}
-```
-
-The inner `data` is the **bare** value for the item, not an object wrapping it:
-
-| `item` | inner `data` |
-|---|---|
-| `title` | `Array<{title, characterCount}>` |
-| `description` | `string` |
-| `thumbnail` | `string[]` |
-| `shorts` | `{segments, totalDuration}` |
-
-> **`data` is the canonical persisted shape** — identical to what a subsequent `GET /packaging/:id` returns for that field (e.g. `titles: [{title, characterCount}]`, `description: string`, `thumbnail: string[]`, `shorts: {segments, totalDuration}`). It is **not** the raw generator wrapper, so the FE can treat a regenerate response the same as reading the stored item.
-
-### Error Cases
-
-| Status | Condition |
-|---|---|
-| 400 | `script` missing, `item` not in allowed list, or required conditional field missing |
-| 403 | Not owned by requesting user |
-| 404 | Packaging document not found |
-
----
-
-## POST `/v1/packaging/:packagingId/select-title`
-
-Finalize a title selection. Persists `selectedTitleIndex` on the packaging document and updates the linked video project's display title to the selected title.
-
-### Path Parameters
-
-| Param | Type | Description |
-|---|---|---|
-| `packagingId` | `string` | Packaging document ID |
-
-### Request Body
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `index` | `number` | Yes | Array index of the selected title in the `titles` array (0–2) |
-
-### Response — `200`
-
-```json
-{
-  "success": true,
-  "message": "Title selected successfully",
-  "data": {
-    "id": "string",
-    "selectedTitleIndex": 1,
-    "updatedAt": "<timestamp>"
-  }
-}
-```
-
-### Error Cases
-
-| Status | Condition |
-|---|---|
-| `400` | `index` missing or out of bounds |
-| `403` | Not owned by requesting user |
-| `404` | Packaging document not found |
-| `500` | Failed to update video project |
-
----
-
-## GET `/v1/packaging/:packagingId/export`
-
-Returns the packaging document formatted as a human-readable plain-text string.
-
-### Auth
-`Authorization: Bearer <token>` — required. Ownership enforced.
-
-### Path Parameters
-
-| Param | Type | Description |
-|---|---|---|
-| `packagingId` | `string` | Packaging document ID |
-
-### Response — `200`
-
-```json
-{
-  "success": true,
-  "message": "Packaging exported successfully",
-  "data": {
-    "text": "Video Package — March 8, 2026\n══...\n\nTITLES\n..."
-  }
-}
-```
-
-The `text` field is a multi-section plain-text document containing titles, description, thumbnail brief, and shorts script.
-
-### Error Cases
-
-| Status | Condition |
-|---|---|
-| 403 | Not owned by requesting user |
-| 404 | Packaging document not found |
-
----
-
-## Related Documentation
-
-- [Packaging Feature Spec](./spec.md)
-- [Hooks Feature Spec](../hooks/spec.md)
-- [Pipeline Spec](../../product/pipeline-spec.md)
-- [Product Roadmap](../../product/roadmap.md)
+[Creator flow](./spec.md) · [Pipeline model](../../product/pipeline-spec.md)

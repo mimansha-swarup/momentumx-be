@@ -14,17 +14,13 @@ triggers. This repository has only been validated locally: project permissions,
 Eventarc provider availability and real delivery require a staging deployment.
 No deployment is performed by the local checks.
 
-Dependency-security follow-up remains a production readiness item: the independent
-2026-10-18 `npm audit --omit=dev` review found 17 production vulnerability entries,
-including 4 critical, also present in the pre-migration dependency baseline.
-This migration does not resolve those existing advisories. Review and remediate
-that inventory before production rollout; do not treat a passing build as a
-security clearance.
+Before production rollout, check the current production dependency vulnerability inventory
+and remediate or explicitly assess unresolved advisories. A passing build does not establish
+dependency security.
 
-Creation now atomically creates a missing profile and ignores only Firestore
-`ALREADY_EXISTS` (code 6). An existing profile is preserved, including its stats,
-name and original creation time. Existing partial profiles remain the API's
-self-healing responsibility. Deletion retains the transactional membership
+On signup, the handler creates a profile only when one is missing. Duplicate events
+preserve existing names, counters and creation dates. The API fills missing profile
+fields when necessary. Deletion retains the transactional membership
 removal, membership-change marker, deterministic payer reassignment and orphan
 freeze; it never deletes channel content. Repeated deletion skips an already
 removed member. These are lifecycle handlers, not blocking Auth functions.
@@ -56,50 +52,16 @@ instead of the gen1 App Engine default; verify least-privilege Firestore access,
 Eventarc invocation permissions, required APIs and billing. Do not blindly grant
 Editor. Confirm provider support status and whether Preview limitations apply before production.
 
-The following creates an isolated legacy artifact from the reviewed current
-source without changing the working tree. Run it from the repository root:
+Prepare an isolated, reviewed Node 22 legacy artifact before rollout. It must retain the
+existing deployed names and regions, preserve existing profiles on duplicate creation,
+and retain the membership and billing recovery behavior of deletion. Build and verify it
+separately without changing the current Node 24 artifact. Keep that guarded artifact as
+the rollback target. Do not generate a deployment artifact by blindly rewriting source text.
 
-```sh
-set -e
-STAGE_DIR=$(mktemp -d /tmp/momentum-auth-legacy.XXXXXX)
-export STAGE_DIR
-mkdir "$STAGE_DIR/functions"
-cp -R functions/src "$STAGE_DIR/functions/src"
-cp functions/package.json functions/package-lock.json functions/tsconfig.json "$STAGE_DIR/functions/"
-python3 - <<'PY'
-import json, os
-from pathlib import Path
-root = Path(os.environ['STAGE_DIR'])
-p = root / 'functions/src/index.ts'
-s = p.read_text().replace(
-    'import { IS_NOT_TENANT, onUserCreated, onUserDeleted } from "firebase-functions/v2/identity";',
-    'import { user } from "firebase-functions/v1/auth";')
-s = '\n'.join(line for line in s.split('\n') if not line.startswith('const authOptions ='))
-s = s.replace('onCreateUserV2 = onUserCreated(authOptions, async ({ data: user }) =>',
-              'onCreateUser = user().onCreate(async (user: UserRecord) =>')
-s = s.replace('onDeleteUserV2 = onUserDeleted(authOptions, async ({ data: deleted }) =>',
-              'onDeleteUser = user().onDelete(async (deleted: UserRecord) =>')
-p.write_text(s)
-for filename in ['package.json', 'package-lock.json']:
-    p = root / 'functions' / filename
-    data = json.loads(p.read_text())
-    target = data if filename == 'package.json' else data['packages']['']
-    target['engines']['node'] = '22'
-    p.write_text(json.dumps(data, indent=2) + '\n')
-(root / 'firebase.json').write_text(json.dumps({'functions': [{
-    'source': 'functions', 'codebase': 'default',
-    'predeploy': ['npm --prefix "$RESOURCE_DIR" run build']
-}]}))
-PY
-npm exec --yes --package=node@22 --package=npm@10 -- npm ci --prefix "$STAGE_DIR/functions"
-npm exec --yes --package=node@22 --package=npm@10 -- npm run build --prefix "$STAGE_DIR/functions"
-```
+Supply an explicit project ID in every deployment; never rely on a cached alias. The
+commands below describe operator steps and have not been executed by local verification.
 
-Review the generated source and build before proceeding. Supply an explicit
-project ID in every deployment; never rely on a cached project alias. The CLI
-commands below are operational steps, not authorization to run them:
-
-1. With Node 22, from `$STAGE_DIR`, deploy only the guarded legacy functions using
+1. With Node 22, from the prepared legacy artifact directory, deploy only the guarded legacy functions using
    Firebase CLI 15.34.0:
    `firebase deploy --project PROJECT_ID --only functions:onCreateUser,functions:onDeleteUser`.
    Verify the updated handlers are serving, old revisions have drained, and

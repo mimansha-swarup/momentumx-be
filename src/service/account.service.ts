@@ -344,8 +344,7 @@ class AccountService {
           isOnboarded: isChannelOnboarded(context),
           projectCount,
           completeness: computeProfileCompleteness(context ?? {}),
-          // Phase 08. Null rather than absent, and null for everyone until then,
-          // so the client renders one shape instead of branching on a missing key.
+          // Reserved summary field; balance reads use the billing endpoint.
           credits: null,
         };
       })

@@ -4,7 +4,7 @@ import { unmeteredSteps } from "../../helpers/step-runner";
 //
 // Contract taken from docs/product/pipeline-spec.md and .claude/rules/api-design.md:
 //   - POST /v1/ideas/generate      is ADDITIVE. It must NOT archive.
-//   - POST /v1/ideas/regenerate-all archives the batch, then generates a new one.
+//   - POST /v1/ideas/regenerate-all atomically replaces the active batch after generation.
 //   - An idea can back MORE THAN ONE video project. When its content changes,
 //     every project built on it goes stale — via the project index, not
 //     idea.videoProjectId, which reaches only one of them.
@@ -157,18 +157,20 @@ describe("Regenerate All — the batch is replaced and every project built on it
     expect(vpService.markStale).toHaveBeenCalledWith("proj-1", "research");
   });
 
-  it("looks the projects up BEFORE archiving — afterwards the batch is gone", async () => {
+  it("invalidates projects only after the replacement has committed", async () => {
+    repo.batchSaveIdeas.mockImplementation(async ideas => { calls.push("save"); return ideas as never; });
     vpService.getProjectsByIdea = jest.fn(async () => { calls.push("lookup"); return [{ id: "p" }]; }) as never;
 
     await service.regenerateAll(testOwner("user-1"));
 
-    expect(calls.indexOf("archive")).toBeGreaterThan(calls.lastIndexOf("lookup"));
+    expect(calls.indexOf("save")).toBeLessThan(calls.indexOf("lookup"));
   });
 
   it("archives the old batch and saves a new one", async () => {
     const saved = await service.regenerateAll(testOwner("user-1"));
 
-    expect(repo.archiveUserIdeas).toHaveBeenCalledWith(TEST_ACCOUNT_ID, expect.any(String));
+    expect(repo.batchSaveIdeas).toHaveBeenCalledWith(expect.any(Array), undefined, TEST_ACCOUNT_ID);
+    expect(repo.archiveUserIdeas).not.toHaveBeenCalled();
     expect(saved).toHaveLength(2);
     expect(repo.batchSaveIdeas).toHaveBeenCalled();
   });
@@ -199,7 +201,7 @@ describe("Regenerate All — the batch is replaced and every project built on it
     const saved = await service.regenerateAll(testOwner("user-1"));
 
     expect(saved).toHaveLength(2);
-    expect(repo.archiveUserIdeas).toHaveBeenCalled();
+    expect(repo.batchSaveIdeas).toHaveBeenCalledWith(expect.any(Array), undefined, TEST_ACCOUNT_ID);
   });
 
   it("survives one project failing to stale and keeps cascading to the rest", async () => {
@@ -234,12 +236,35 @@ describe("Regenerate All — the batch is replaced and every project built on it
 
   // The contract "Generate More is additive" is non-negotiable in api-design.md —
   // the missing archive call there is deliberate and gets "fixed" by mistake.
-  it("is the ONLY idea path that archives — plain generation is additive", async () => {
+  it("replaces only on regenerate-all — plain generation is additive", async () => {
     await service.generateIdeas(testOwner("user-1"));
     expect(repo.archiveUserIdeas).not.toHaveBeenCalled();
+    expect(repo.batchSaveIdeas.mock.calls[0]).toHaveLength(1);
 
     await service.regenerateAll(testOwner("user-1"));
-    expect(repo.archiveUserIdeas).toHaveBeenCalledTimes(1);
+    expect(repo.batchSaveIdeas.mock.calls[1]).toEqual([expect.any(Array), undefined, TEST_ACCOUNT_ID]);
+    expect(repo.archiveUserIdeas).not.toHaveBeenCalled();
+  });
+
+  it("does not invalidate existing projects when replacement persistence fails", async () => {
+    repo.batchSaveIdeas.mockRejectedValueOnce(new Error("ABORTED"));
+    await expect(service.regenerateAll(testOwner("user-1"))).rejects.toThrow("ABORTED");
+    expect(vpService.getProjectsByIdea).not.toHaveBeenCalled();
+    expect(vpService.markStale).not.toHaveBeenCalled();
+    expect(repo.archiveUserIdeas).not.toHaveBeenCalled();
+  });
+
+  it("includes ideas delivered before lock acquisition in the downstream cascade", async () => {
+    let reserved = false;
+    repo.getActiveBatch.mockImplementation(async () => reserved ? [{ id: "just-delivered" }] as never : []);
+    const billing = {
+      reserve: jest.fn(async () => { reserved = true; return null; }),
+      settle: jest.fn().mockResolvedValue(true),
+    };
+    (service as any).steps = new StepRunner(billing);
+    await service.regenerateAll(testOwner("user-1"));
+    expect(vpService.getProjectsByIdea).toHaveBeenCalledWith("just-delivered", testOwner("user-1"));
+    expect(repo.getActiveBatch).toHaveBeenCalledTimes(1);
   });
 });
 

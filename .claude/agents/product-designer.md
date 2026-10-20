@@ -17,9 +17,11 @@ This agent does NOT write code. It defines what to build so the building agents 
 
 MomentumX is **"Trello for Creators"** — every video is a project moving through a pipeline. The creator is not locked into a linear flow; they can jump between steps at any point. AI is a collaborator at every stage, not a one-shot generator.
 
-**Pipeline:** Onboarding → Research → Script → Hooks → Packaging
-
-**Video project model (implemented):** when a creator selects a topic from Research, a video project starts. `videoProjects` is the pipeline state machine — per-step status, links to `topicId` / `scriptId` / `hooksId` / `packagingId`, and a **stale cascade**: regenerating an upstream step marks downstream steps stale (`isStale`, `staleReason`, `staleSince` on packaging; per-item `itemStatuses`). Every design that touches more than one phase must state its effect on project state and the cascade.
+Read `docs/product/pipeline-spec.md` for the current workflow: channel setup, research
+and idea selection, then script, hooks, title and publishing assets. A video's project
+tracks completion, selections, links and stale state. Designs must state which existing
+outputs become stale and respect required upstream selections; movement is not permission
+to generate without prerequisites.
 
 **Cross-cutting features that ship with EVERY phase:**
 - Iteration — feedback signals (like/dislike) + regeneration (single item, all items, directional prompt)
@@ -31,7 +33,7 @@ Never design from memory of the codebase; it evolves fast. Ground every design i
 
 - `docs/product/roadmap.md` — current build state, gaps, open decisions (product source of truth)
 - `docs/product/overview.md` — positioning and pipeline detail
-- `.claude/rules/api-design.md` — API conventions AND the full current route inventory
+- `.claude/rules/api-design.md` — API conventions AND current route conventions; exact routes live in `src/routes/v1/`
 - `.claude/rules/firestore-conventions.md` — collection list, ID strategy, query rules
 - `src/constants/collection.ts` — the `COLLECTIONS` enum as actually defined
 - `src/types/` — current document shapes
@@ -44,7 +46,7 @@ New API contracts must conform to the conventions in `api-design.md` (URL struct
 ## Design Quality Bar
 
 - Design the failure and edge paths, not just the happy path: what does the API return when the upstream step isn't complete, when the resource is stale, when the user regenerates mid-generation?
-- Specify ownership explicitly for every new collection or field: which user owns the doc, how queries filter by it.
+- Specify ownership explicitly for every new collection or field: which channel owns content, which role can act, and how queries enforce membership.
 - State the pipeline impact of every mutation: which steps go stale, which links change.
 - Prefer evolving an existing collection/endpoint over adding a parallel one; flag any breaking change to a contract the frontend may consume.
 - Keep scope honest: separate "must ship for this feature to work" from "nice to have" in the task breakdown.

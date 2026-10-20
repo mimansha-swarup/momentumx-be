@@ -264,109 +264,31 @@ describe("Hooks selection completes the Hooks step (real VideoProjectService)", 
   });
 });
 
-describe("Hooks regenerate — stale cascade matches the documented table (real VideoProjectService + PackagingRepository)", () => {
+describe("Hooks delivery delegates invariant writes to the artifact repository", () => {
   beforeEach(() => jest.clearAllMocks());
 
-  it.each(["regenerate", "recover missing batch"])("%s cascades stale to exactly title + packaging (never script or hooks itself) and records staleReason 'hooks_regenerated' on both the project AND the packaging document", async (operation) => {
-    let state = makeProject({
-      packagingId: "pkg-1",
-      hooksId: "hooks-1",
-      selectedHookIndex: 1,
-      pipeline: {
-        research: { status: "completed", startedAt: null, completedAt: null },
-        script: { status: "completed", startedAt: null, completedAt: null },
-        hooks: { status: "completed", startedAt: null, completedAt: null },
-        title: { status: "completed", startedAt: null, completedAt: null },
-        packaging: { status: "completed", startedAt: null, completedAt: null },
-      },
-    });
-
-    const vpRepo = {
-      findById: jest.fn(async () => state),
-      update: jest.fn(async (_id: string, patch: Record<string, unknown>) => {
-        state = applyDottedPatch(state, patch);
-      }),
-    } as unknown as jest.Mocked<VideoProjectRepository>;
-    const contentRepo = {} as unknown as jest.Mocked<ContentRepository>;
-    const packagingRepo = {
-      get: jest.fn(),
-      clearStale: jest.fn(),
-      markStale: jest.fn().mockResolvedValue(undefined),
-    } as unknown as jest.Mocked<PackagingRepository>;
-    const hooksRepoForVp = { findById: jest.fn().mockResolvedValue({ id: "replacement", accountId: TEST_ACCOUNT_ID }) } as unknown as jest.Mocked<HooksRepository>;
-    const vpService = new VideoProjectService(vpRepo, contentRepo, packagingRepo, hooksRepoForVp, fakeAccountRepo());
-
-    mockGenerate.mockResolvedValue(makeStream(HOOKS_JSON));
-    const hooksBatchRepo = {
+  it.each(["regenerate", "recover missing batch"])("%s does not replay selection or stale writes after the repository commits", async operation => {
+    const state = makeProject({ hooksId: "hooks-1", packagingId: "pkg-1", selectedHookIndex: 2 });
+    const vpService = {
+      getById: jest.fn().mockResolvedValue(state),
+      clearSelectedHook: jest.fn(), markStale: jest.fn(), markPackagingDocumentStale: jest.fn(), linkResource: jest.fn(),
+    } as unknown as jest.Mocked<VideoProjectService>;
+    const repository = {
       findById: jest.fn().mockResolvedValue({ id: "hooks-1", videoProjectId: "proj-1", createdBy: "user-1", accountId: TEST_ACCOUNT_ID, hooks: ["a", "b", "c", "d", "e"], hookFeedback: {} }),
+      save: jest.fn().mockResolvedValue({ id: "replacement", accountId: TEST_ACCOUNT_ID }),
       update: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<HooksRepository>;
-    const hooksService = new HooksService(hooksBatchRepo, vpService, undefined, seamFor(vpService), fakeAccountRepo());
-
-    if (operation === "regenerate") {
-      await hooksService.regenerate(testOwner("user-1"), "hooks-1", "an updated script");
-    } else {
-      hooksBatchRepo.findById.mockResolvedValue(null);
-      hooksBatchRepo.save = jest.fn().mockResolvedValue({ id: "replacement", accountId: TEST_ACCOUNT_ID });
-      await hooksService.generate(testOwner("user-1"), "proj-1", "an updated script");
-      expect(state.hooksId).toBe("replacement");
+    mockGenerate.mockResolvedValue(makeStream(HOOKS_JSON));
+    const service = new HooksService(repository, vpService, undefined, seamFor(vpService), fakeAccountRepo());
+    if (operation === "regenerate") await service.regenerate(testOwner("user-1"), "hooks-1", "script");
+    else {
+      repository.findById.mockResolvedValue(null);
+      await service.generate(testOwner("user-1"), "proj-1", "script");
     }
-
-    // Project-level cascade: title + packaging staled; script and hooks itself untouched.
-    expect(state.pipeline.title.status).toBe("stale");
-    expect(state.pipeline.title.staleReason).toBe("hooks_regenerated");
-    expect(state.pipeline.packaging.status).toBe("stale");
-    expect(state.pipeline.packaging.staleReason).toBe("hooks_regenerated");
-    expect(state.pipeline.script.status).toBe("completed"); // upstream of hooks — never touched
-    expect(state.overallStatus).toBe("stale");
-
-    // Selection is cleared (the picked hook no longer exists in the fresh batch)
-    // and the hooks step itself reopens rather than staying "completed".
-    expect(state.selectedHookIndex).toBeNull();
-    expect(state.pipeline.hooks.status).toBe("in_progress");
-
-    // Document-level cascade: the packaging document itself is flagged too.
-    expect(packagingRepo.markStale).toHaveBeenCalledWith("pkg-1", "hooks_regenerated", ...(operation === "recover missing batch"
-      ? [expect.objectContaining({ projectId: "proj-1", token: "test-token-hooks" })] : []));
-  });
-
-  it("does not cascade at all when nothing downstream was ever started (hooks step alone, no title/packaging yet)", async () => {
-    let state = makeProject({
-      hooksId: "hooks-1",
-      pipeline: {
-        research: { status: "completed", startedAt: null, completedAt: null },
-        script: { status: "completed", startedAt: null, completedAt: null },
-        hooks: { status: "completed", startedAt: null, completedAt: null },
-        title: { status: "not_started", startedAt: null, completedAt: null },
-        packaging: { status: "not_started", startedAt: null, completedAt: null },
-      },
-    });
-
-    const vpRepo = {
-      findById: jest.fn(async () => state),
-      update: jest.fn(async (_id: string, patch: Record<string, unknown>) => {
-        state = applyDottedPatch(state, patch);
-      }),
-    } as unknown as jest.Mocked<VideoProjectRepository>;
-    const contentRepo = {} as unknown as jest.Mocked<ContentRepository>;
-    const packagingRepo = { get: jest.fn(), clearStale: jest.fn(), markStale: jest.fn() } as unknown as jest.Mocked<PackagingRepository>;
-    const hooksRepoForVp = { findById: jest.fn() } as unknown as jest.Mocked<HooksRepository>;
-    const vpService = new VideoProjectService(vpRepo, contentRepo, packagingRepo, hooksRepoForVp, fakeAccountRepo());
-
-    mockGenerate.mockResolvedValue(makeStream(HOOKS_JSON));
-    const hooksBatchRepo = {
-      findById: jest.fn().mockResolvedValue({ id: "hooks-1", videoProjectId: "proj-1", createdBy: "user-1", accountId: TEST_ACCOUNT_ID, hooks: ["a", "b", "c", "d", "e"], hookFeedback: {} }),
-      update: jest.fn().mockResolvedValue(undefined),
-    } as unknown as jest.Mocked<HooksRepository>;
-    const hooksService = new HooksService(hooksBatchRepo, vpService, undefined, seamFor(vpService), fakeAccountRepo());
-
-    await hooksService.regenerate(testOwner("user-1"), "hooks-1", "an updated script");
-
-    expect(state.pipeline.title.status).toBe("not_started");
-    expect(state.pipeline.packaging.status).toBe("not_started");
-    // No project-level pipeline write happened for the (no-op) cascade — the
-    // only writes are the selection clear.
-    expect(state.overallStatus).not.toBe("stale");
+    expect(vpService.clearSelectedHook).not.toHaveBeenCalled();
+    expect(vpService.markStale).not.toHaveBeenCalled();
+    expect(vpService.markPackagingDocumentStale).not.toHaveBeenCalled();
+    expect(vpService.linkResource).not.toHaveBeenCalled();
   });
 });
 

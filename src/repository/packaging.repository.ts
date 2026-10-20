@@ -1,5 +1,5 @@
 import type { CreditReservation } from "./billing.repository.js";
-import { assertGeneration, generationWrite } from "./generation-guard.js";
+import { assertGeneration, generationWrite, prepareGenerationDelivery } from "./generation-guard.js";
 import { isDocumentId } from "../utlils/firestore-id.js";
 import { Firestore } from "firebase-admin/firestore";
 import { COLLECTIONS } from "../constants/collection.js";
@@ -85,7 +85,7 @@ class PackagingRepository {
   update = async (packagingId: string, data: Record<string, unknown>, charge?: CreditReservation | null) => {
     try {
       const ref = this.db.collection(this.collection).doc(packagingId);
-      if (charge) await generationWrite(charge, tx => tx.update(ref, data));
+      if (charge) await generationWrite(charge, tx => tx.update(ref, data), true);
       else await ref.update(data);
       return { id: packagingId, ...data };
     } catch (error) {
@@ -112,7 +112,7 @@ class PackagingRepository {
     canonical: unknown,
     charge?: CreditReservation | null
   ): Promise<{ packagingId: string; created: boolean; statuses: Record<string, string> }> => {
-    return this.db.runTransaction(async (txn) => {
+    const result = await this.db.runTransaction(async (txn) => {
       await assertGeneration(txn, charge);
       // A point read, because the id IS the videoProjectId. This used to be a
       // `where("videoProjectId", "==", ...)` query, which existed only to find
@@ -134,6 +134,8 @@ class PackagingRepository {
         [item]: "completed",
       };
 
+      const deliver = await prepareGenerationDelivery(txn, charge);
+      if (charge?.projectId) txn.update(this.db.collection(COLLECTIONS.VIDEO_PROJECTS).doc(charge.projectId), { packagingId: ref.id });
       if (!snap.exists) {
         txn.set(ref, {
           id: ref.id,
@@ -161,10 +163,13 @@ class PackagingRepository {
         });
       }
 
+      deliver();
       // Return the consistent in-transaction status snapshot; the service decides
       // step completion (packaging = its 3 items; title completes on select).
       return { packagingId: ref.id, created: !snap.exists, statuses };
     });
+    if (charge) charge.outputPersisted = true;
+    return result;
   };
 
 
