@@ -10,6 +10,7 @@
 
 import express from "express";
 import request from "supertest";
+import { useSharedServer } from "./shared-server";
 import { responseFormatter } from "../../src/middleware/response_formatter";
 import { errorHandler } from "../../src/middleware/error_handler";
 
@@ -74,6 +75,10 @@ const makeApp = (mw: express.RequestHandler, uid: string | undefined = "uid-me")
   return app;
 };
 
+// Keep each middleware app on one listening server for the suite.
+const memberServer = useSharedServer(makeApp(accountMiddleware));
+const projectServer = useSharedServer(makeApp(resolveAccountFromProject));
+
 beforeEach(() => {
   jest.clearAllMocks();
   findById.mockResolvedValue(account(OWNED));
@@ -85,7 +90,7 @@ describe("a caller cannot enter a channel they are not a member of", () => {
   it("403s with account_forbidden for someone else's account id", async () => {
     findById.mockResolvedValue(account(OTHER, { memberUids: ["uid-someone-else"] }));
 
-    const res = await request(makeApp(accountMiddleware))
+    const res = await request(memberServer())
       .get("/probe")
       .set("X-Account-Id", OTHER);
 
@@ -99,7 +104,7 @@ describe("a caller cannot enter a channel they are not a member of", () => {
     findById.mockResolvedValue(account(OTHER, { memberUids: ["uid-someone-else"] }));
     const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
 
-    await request(makeApp(accountMiddleware)).get("/probe").set("X-Account-Id", OTHER);
+    await request(memberServer()).get("/probe").set("X-Account-Id", OTHER);
 
     const logged = warn.mock.calls.map((c) => String(c[0])).find((l) => l.includes("account_mismatch"));
     expect(logged).toBeDefined();
@@ -115,7 +120,7 @@ describe("a caller cannot enter a channel they are not a member of", () => {
     // A 404 here would let anyone enumerate valid account ids.
     findById.mockResolvedValue(null);
 
-    const res = await request(makeApp(accountMiddleware))
+    const res = await request(memberServer())
       .get("/probe")
       .set("X-Account-Id", "acc-does-not-exist");
 
@@ -130,7 +135,7 @@ describe("a caller cannot enter a channel they are not a member of", () => {
       account(OWNED, { memberUids: [], members: { "uid-me": { role: "owner" } } })
     );
 
-    const res = await request(makeApp(accountMiddleware))
+    const res = await request(memberServer())
       .get("/probe")
       .set("X-Account-Id", OWNED);
 
@@ -140,7 +145,7 @@ describe("a caller cannot enter a channel they are not a member of", () => {
 
 describe("a member gets context", () => {
   it("sets accountId and role from the verified account", async () => {
-    const res = await request(makeApp(accountMiddleware))
+    const res = await request(memberServer())
       .get("/probe")
       .set("X-Account-Id", OWNED);
 
@@ -153,7 +158,7 @@ describe("a member gets context", () => {
     // request that user makes. Least privilege on drift, never most.
     findById.mockResolvedValue(account(OWNED, { members: {} }));
 
-    const res = await request(makeApp(accountMiddleware))
+    const res = await request(memberServer())
       .get("/probe")
       .set("X-Account-Id", OWNED);
 
@@ -169,7 +174,7 @@ describe("a header that is not a document id never reaches .doc()", () => {
     // This one RESOLVED: it read `accounts/<victim>/context/channel` — another
     // channel's niche, competitors and website scrape. Nothing was returned,
     // but only because that document has no memberUids for the check to pass.
-    const res = await request(makeApp(accountMiddleware))
+    const res = await request(memberServer())
       .get("/probe")
       .set("X-Account-Id", `${OTHER}/context/channel`);
 
@@ -180,7 +185,7 @@ describe("a header that is not a document id never reaches .doc()", () => {
   it("refuses a header addressing a collection, which used to be a 500", async () => {
     // An odd segment count makes `.doc()` throw a bare Error — no statusCode,
     // so the handler rendered "Something went wrong" on every protected route.
-    const res = await request(makeApp(accountMiddleware))
+    const res = await request(memberServer())
       .get("/probe")
       .set("X-Account-Id", "a/b");
 
@@ -193,7 +198,7 @@ describe("a header that is not a document id never reaches .doc()", () => {
     // caller may not enter. Collapsing them would tell a prober which ids exist.
     findById.mockResolvedValue(null);
 
-    const res = await request(makeApp(accountMiddleware))
+    const res = await request(memberServer())
       .get("/probe")
       .set("X-Account-Id", OTHER);
 
@@ -203,7 +208,7 @@ describe("a header that is not a document id never reaches .doc()", () => {
 
 describe("no header — the fallback that keeps already-loaded tabs working", () => {
   it("resolves an existing membership without minting anything", async () => {
-    const res = await request(makeApp(accountMiddleware)).get("/probe");
+    const res = await request(memberServer()).get("/probe");
 
     expect(res.status).toBe(200);
     expect(res.body.data.accountId).toBe(OWNED);
@@ -216,7 +221,7 @@ describe("no header — the fallback that keeps already-loaded tabs working", ()
   it("mints only when the user has no memberships at all", async () => {
     findByMember.mockResolvedValue([]);
 
-    const res = await request(makeApp(accountMiddleware)).get("/probe");
+    const res = await request(memberServer()).get("/probe");
 
     expect(res.status).toBe(200);
     expect(ensureDefaultAccount).toHaveBeenCalledWith("uid-me");
@@ -235,26 +240,31 @@ describe("no header — the fallback that keeps already-loaded tabs working", ()
     it("acts in the channel the user activated, not the first one found", async () => {
       resolveActiveAccountId.mockResolvedValue(OTHER);
 
-      const res = await request(makeApp(accountMiddleware)).get("/probe");
+      const res = await request(memberServer()).get("/probe");
 
       expect(res.status).toBe(200);
       expect(res.body.data.accountId).toBe(OTHER);
     });
 
-    it("writes land in the activated channel too, not just reads", async () => {
+    it("refuses a header-less write rather than guessing where it lands", async () => {
       // This is the data-destroying case: onboarding a newly created channel
-      // wrote its niche and audience over the first channel's.
+      // wrote its niche and audience over the first channel's. Phase 05 made
+      // the guess a good one by honouring `lastActiveAccountId`; Phase 07
+      // removes the guess from writes altogether, because a pointer is still
+      // only the server's best idea of where the user thinks they are.
+      //
+      // Reads keep the fallback — see the GET above, which still resolves OTHER.
       resolveActiveAccountId.mockResolvedValue(OTHER);
 
-      const res = await request(makeApp(accountMiddleware)).post("/probe");
+      const res = await request(memberServer()).post("/probe");
 
-      expect(res.body.data.accountId).toBe(OTHER);
+      expect(res.status).toBe(400);
     });
 
     it("uses the same resolver GET /v1/accounts reports activeAccountId from", async () => {
       resolveActiveAccountId.mockResolvedValue(OTHER);
 
-      await request(makeApp(accountMiddleware)).get("/probe");
+      await request(memberServer()).get("/probe");
 
       // Passed the live memberships, so a pointer at a tombstoned or departed
       // channel can never be selected here.
@@ -269,7 +279,7 @@ describe("no header — the fallback that keeps already-loaded tabs working", ()
       // lock the user out of channels that still work.
       resolveActiveAccountId.mockResolvedValue("acc-deleted-or-departed");
 
-      const res = await request(makeApp(accountMiddleware)).get("/probe");
+      const res = await request(memberServer()).get("/probe");
 
       expect(res.status).toBe(200);
       expect(res.body.data.accountId).toBe(OWNED);
@@ -278,7 +288,7 @@ describe("no header — the fallback that keeps already-loaded tabs working", ()
     it("never mints while any live membership exists", async () => {
       resolveActiveAccountId.mockResolvedValue(null);
 
-      await request(makeApp(accountMiddleware)).get("/probe");
+      await request(memberServer()).get("/probe");
 
       expect(ensureDefaultAccount).not.toHaveBeenCalled();
     });
@@ -287,7 +297,7 @@ describe("no header — the fallback that keeps already-loaded tabs working", ()
   it("does not read the user record to disambiguate a single channel", async () => {
     // The pointer read is skipped when there is nothing to choose between, so
     // single-channel users keep paying one document read per request.
-    await request(makeApp(accountMiddleware)).get("/probe");
+    await request(memberServer()).get("/probe");
 
     expect(resolveActiveAccountId).not.toHaveBeenCalled();
   });
@@ -296,17 +306,27 @@ describe("no header — the fallback that keeps already-loaded tabs working", ()
     // Adopting it would 410 every subsequent request with no way out.
     findByMember.mockResolvedValue([account(OWNED, { deletedAt: "2026-08-01" })]);
 
-    await request(makeApp(accountMiddleware)).get("/probe");
+    await request(memberServer()).get("/probe");
 
     expect(ensureDefaultAccount).toHaveBeenCalledWith("uid-me");
   });
 
-  // Phase 05 ships the fallback permissive because no client sends the header
-  // yet; Phase 07 flips FALLBACK_ALLOWS_WRITES to false in the commit that makes
-  // the frontend send it. Both settings are pinned so the flip is a one-line
-  // change with a test already waiting for it.
-  it("allows writes while FALLBACK_ALLOWS_WRITES is true (Phase 05)", async () => {
-    const res = await request(makeApp(accountMiddleware)).post("/probe");
+  // Phase 05 shipped this permissive because no client sent the header yet.
+  // Phase 07 flipped it: the frontend now sends `X-Account-Id` on every call,
+  // so a header-less write is a guess about which channel someone's work lands
+  // in, not a client catching up.
+  it("refuses a header-less write (Phase 07)", async () => {
+    const res = await request(memberServer()).post("/probe");
+
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+  });
+
+  // The other half, and the reason this is not simply "require the header":
+  // refusing to SHOW a cold tab anything is worse than showing it the channel
+  // the user last activated.
+  it("still serves a header-less read", async () => {
+    const res = await request(memberServer()).get("/probe");
 
     expect(res.status).toBe(200);
   });
@@ -336,7 +356,7 @@ describe("a tombstoned channel is gone, not missing", () => {
   it("returns 410 and clears the pointer so there is a way out", async () => {
     findById.mockResolvedValue(account(OWNED, { deletedAt: "2026-08-01" }));
 
-    const res = await request(makeApp(accountMiddleware))
+    const res = await request(memberServer())
       .get("/probe")
       .set("X-Account-Id", OWNED);
 
@@ -351,7 +371,7 @@ describe("the SSE route derives its account from the project, not the query stri
   it("sets accountId and role from the project's account", async () => {
     findByIdUnchecked.mockResolvedValue({ id: "proj-1", createdBy: "uid-me", accountId: OWNED });
 
-    const res = await request(makeApp(resolveAccountFromProject)).get("/stream/proj-1");
+    const res = await request(projectServer()).get("/stream/proj-1");
 
     expect(res.status).toBe(200);
     // req.role matters as much as accountId: Phase 09 puts requireRole("editor")
@@ -367,7 +387,7 @@ describe("the SSE route derives its account from the project, not the query stri
     findByIdUnchecked.mockResolvedValue({ id: "proj-1", createdBy: "uid-other", accountId: OTHER });
     findById.mockResolvedValue(account(OTHER, { memberUids: ["uid-other"] }));
 
-    const res = await request(makeApp(resolveAccountFromProject)).get("/stream/proj-1");
+    const res = await request(projectServer()).get("/stream/proj-1");
 
     expect(res.status).toBe(403);
     expect(res.body.code).toBe("account_forbidden");
@@ -376,7 +396,7 @@ describe("the SSE route derives its account from the project, not the query stri
   it("takes nothing account-related from the query string", async () => {
     findByIdUnchecked.mockResolvedValue({ id: "proj-1", createdBy: "uid-me", accountId: OWNED });
 
-    const res = await request(makeApp(resolveAccountFromProject))
+    const res = await request(projectServer())
       .get(`/stream/proj-1?accountId=${OTHER}&token=x`);
 
     expect(res.status).toBe(200);
@@ -386,7 +406,7 @@ describe("the SSE route derives its account from the project, not the query stri
   it("404s for a project that does not exist", async () => {
     findByIdUnchecked.mockResolvedValue(null);
 
-    const res = await request(makeApp(resolveAccountFromProject)).get("/stream/nope");
+    const res = await request(projectServer()).get("/stream/nope");
 
     expect(res.status).toBe(404);
   });
@@ -405,7 +425,7 @@ describe("the SSE route derives its account from the project, not the query stri
         createdBy: who === "the caller" ? "uid-me" : "uid-other",
       });
 
-      const res = await request(makeApp(resolveAccountFromProject)).get("/stream/proj-1");
+      const res = await request(projectServer()).get("/stream/proj-1");
 
       expect(res.status).toBe(403);
       expect(res.body.code).toBe("account_forbidden");

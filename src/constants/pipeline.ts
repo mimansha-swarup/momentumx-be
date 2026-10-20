@@ -39,17 +39,9 @@ export type GenerationKind =
   | "prefill";
 
 /**
- * Which kinds own a pipeline step. Owning a step means: locked while running,
- * preconditions enforced, rolled back on failure.
- *
- * Kinds ABSENT here are traced (and, from Phase 08, metered) but never locked.
- * That is a decision, not an omission: the packaging screen fans description,
- * thumbnail and shorts out CONCURRENTLY, and `packaging.repository.ts`'s
- * `upsertGeneratedItem` already runs create-or-update, the `itemStatuses`
- * read-modify-write and the "all four done?" check inside ONE transaction —
- * strictly stronger than a step lock. Locking them would refuse two of the three.
- *
- * `ideas` and `prefill` are absent because they have no project at all.
+ * Generation kinds that start a pipeline step. Every kind has its own genuine
+ * in-flight lock in BillingRepository; this map only selects step preconditions
+ * and rollback. Packaging items remain independent and can run concurrently.
  */
 export const KIND_STEP: Partial<Record<GenerationKind, StepName>> = {
   script: "script",

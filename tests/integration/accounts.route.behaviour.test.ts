@@ -1,17 +1,5 @@
-/**
- * /v1/accounts — and specifically the exemption.
- *
- * `GET /v1/accounts` and `POST /v1/accounts` are the only two routes in the API
- * that run without account context, so the assertion that carries this file is
- * that they work with NO `X-Account-Id` header at all. Lose that and a brand-new
- * user cannot reach their own channel list — the request falls into Phase 05's
- * header-less fallback, which mints a channel as a side effect of reading, and
- * once Phase 07 makes that fallback read-only it rejects the one call whose whole
- * purpose is producing the id the header needs.
- *
- * The REAL account middleware runs here, unmocked, because the exemption is a
- * property of the router's mount order — stubbing it out would test nothing.
- */
+/** Account discovery, creation and bootstrap remain authenticated without a
+ * channel header. The real account middleware verifies the router's ordering. */
 
 jest.mock("firebase-admin", () => ({
   apps: [],
@@ -48,6 +36,7 @@ const mockAccountService = {
   listAccounts: jest.fn(),
   resolveActiveAccountId: jest.fn(),
   createAccount: jest.fn(),
+  bootstrapAccount: jest.fn(),
   getAccount: jest.fn(),
   updateAccount: jest.fn(),
   activateAccount: jest.fn(),
@@ -73,6 +62,7 @@ jest.mock("../../src/container", () => ({
 
 import request from "supertest";
 import express from "express";
+import { useSharedServer } from "./shared-server";
 import { responseFormatter } from "../../src/middleware/response_formatter";
 import { errorHandler } from "../../src/middleware/error_handler";
 import accountRouter from "../../src/routes/v1/account.route";
@@ -80,7 +70,13 @@ import accountRouter from "../../src/routes/v1/account.route";
 const ACC = "acc-11111111-2222-4333-8444-555555555555";
 const AUTH_HEADER: [string, string] = ["Authorization", "Bearer token"];
 
-const server = () => {
+// Built ONCE and bound ONCE. This used to construct a fresh Express app on every
+// call, so `request(server())` made supertest bind and tear down an ephemeral port
+// per request — 14 of them in this file. That churn is the documented cause of the
+// intermittent connection-level failure (a bare 501 from Node with an empty body,
+// see ./shared-server.ts), and it is process-global: the victim was usually some
+// OTHER suite, which is why this file never reproduced it alone.
+const buildApp = () => {
   const app = express();
   app.use(express.json());
   app.use(responseFormatter);
@@ -88,6 +84,8 @@ const server = () => {
   app.use(errorHandler);
   return app;
 };
+
+const server = useSharedServer(buildApp());
 
 const membership = {
   id: ACC,
@@ -106,6 +104,36 @@ beforeEach(() => {
 });
 
 describe("the collection routes run without account context", () => {
+  it("bootstraps without a channel header but still requires authentication", async () => {
+    // A full multi-member roster, not `{ id: ACC }` — bootstrap can ADOPT an
+    // existing membership (including one where the caller is a viewer in a
+    // channel someone else owns), so it must withhold the roster exactly like
+    // `GET /v1/accounts/:id` does. The old `{ id: ACC }` fixture had no roster
+    // to leak, which is why a raw pass-through response went uncaught here.
+    mockAccountService.bootstrapAccount.mockResolvedValue({
+      id: ACC,
+      displayName: "Kitchen",
+      members: { "user-1": { role: "viewer" }, "someone-else": { role: "owner" } },
+      memberUids: ["user-1", "someone-else"],
+      ownerUids: ["someone-else"],
+      billingOwnerUid: "someone-else",
+    });
+    const res = await request(server()).post("/v1/accounts/bootstrap").set(...AUTH_HEADER).send({});
+    expect(res.status).toBe(200);
+    expect(res.body.data.account.id).toBe(ACC);
+    for (const leaked of ["members", "memberUids", "ownerUids", "billingOwnerUid"]) {
+      expect(res.body.data.account[leaked]).toBeUndefined();
+    }
+    expect(JSON.stringify(res.body)).not.toContain("someone-else");
+    expect(res.body.data.account).toMatchObject({
+      role: "viewer",
+      isBillingOwner: false,
+      memberCount: 2,
+    });
+    expect(mockAccountService.bootstrapAccount).toHaveBeenCalledWith("user-1");
+    expect((await request(server()).post("/v1/accounts/bootstrap").send({})).status).toBe(401);
+  });
+
   it("GET /v1/accounts works with no X-Account-Id header", async () => {
     mockAccountService.listAccounts.mockResolvedValue([{ id: ACC, name: "A" }]);
     mockAccountService.resolveActiveAccountId.mockResolvedValue(ACC);
@@ -117,12 +145,30 @@ describe("the collection routes run without account context", () => {
   });
 
   it("POST /v1/accounts works with no X-Account-Id header, and takes no body", async () => {
-    mockAccountService.createAccount.mockResolvedValue({ id: "acc-new" });
+    // `create` is now projected the same way as `getById`/`bootstrap` — a
+    // consistency fix, not a leak fix, since the caller is this channel's sole
+    // member. That still changes the response shape: `role`/`isBillingOwner`/
+    // `memberCount` are added and the raw roster fields are dropped, which is a
+    // visible frontend contract change.
+    mockAccountService.createAccount.mockResolvedValue({
+      id: "acc-new",
+      displayName: "Untitled channel",
+      members: { "user-1": { role: "owner" } },
+      memberUids: ["user-1"],
+      ownerUids: ["user-1"],
+      billingOwnerUid: "user-1",
+    });
 
     const res = await request(server()).post("/v1/accounts").set(...AUTH_HEADER).send({});
 
     expect(res.status).toBe(201);
-    expect(res.body.data.account).toEqual({ id: "acc-new" });
+    expect(res.body.data.account).toEqual({
+      id: "acc-new",
+      displayName: "Untitled channel",
+      role: "owner",
+      isBillingOwner: true,
+      memberCount: 1,
+    });
     // The uid comes from the token; nothing else is read.
     expect(mockAccountService.createAccount).toHaveBeenCalledWith("user-1");
   });
@@ -173,6 +219,60 @@ describe("everything addressed by :id keeps account context", () => {
     expect(res.status).toBe(403);
     expect(res.body.code).toBe("account_forbidden");
     expect(mockAccountService.getAccount).not.toHaveBeenCalled();
+  });
+
+  it("does not hand the membership roster to a member", async () => {
+    // `GET /:id/members` is owner-only AND re-checks ownership in its transaction.
+    // Shipping the stored document here gave every member — viewers included —
+    // each member's uid and role plus the payer's uid, so the owner gate withheld
+    // only the display names that endpoint adds on top.
+    mockAccountService.getAccount.mockResolvedValue({
+      id: ACC,
+      displayName: "Kitchen",
+      handle: "@kitchen",
+      members: { "user-1": { role: "viewer" }, "someone-else": { role: "owner" } },
+      memberUids: ["user-1", "someone-else"],
+      ownerUids: ["someone-else"],
+      billingOwnerUid: "someone-else",
+    });
+
+    const res = await request(server())
+      .get(`/v1/accounts/${ACC}`)
+      .set(...AUTH_HEADER)
+      .set("X-Account-Id", ACC);
+
+    expect(res.status).toBe(200);
+    for (const leaked of ["members", "memberUids", "ownerUids", "billingOwnerUid"]) {
+      expect(res.body.data.account[leaked]).toBeUndefined();
+    }
+    expect(JSON.stringify(res.body)).not.toContain("someone-else");
+    // What the settings screen actually needs still arrives.
+    expect(res.body.data.account).toMatchObject({
+      displayName: "Kitchen",
+      role: "viewer",
+      isBillingOwner: false,
+      memberCount: 2,
+    });
+  });
+
+  it("answers wrong_account — not role_forbidden — when :id is not the active channel", async () => {
+    // `requireRole` reads `req.role`, which the middleware resolved from the
+    // HEADER's channel, while these routes act on `params.id`. Unpinned, someone
+    // who owns B but is a viewer in the active channel A got `role_forbidden` for
+    // `PATCH /accounts/B` — and that code means "inline message, stay put", so the
+    // client never offered the switch that would have made the call work.
+    mockAccountService.getAccount.mockResolvedValue({ id: "other-channel", displayName: "Travel" });
+
+    const res = await request(server())
+      .patch(`/v1/accounts/other-channel`)
+      .set(...AUTH_HEADER)
+      .set("X-Account-Id", ACC)
+      .send({ displayName: "New" });
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("wrong_account");
+    expect(res.body.detail).toMatchObject({ accountId: "other-channel", displayName: "Travel" });
+    expect(mockAccountService.updateAccount).not.toHaveBeenCalled();
   });
 
   it("POST /:id/activate answers 204 with no body", async () => {

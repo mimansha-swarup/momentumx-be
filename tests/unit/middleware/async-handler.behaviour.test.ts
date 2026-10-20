@@ -13,6 +13,7 @@ import type { NextFunction, Request, Response } from "express";
 import express from "express";
 import request from "supertest";
 import { asyncHandler } from "../../../src/middleware/async_handler";
+import { useSharedServer } from "../../integration/shared-server";
 import { responseFormatter } from "../../../src/middleware/response_formatter";
 import { errorHandler } from "../../../src/middleware/error_handler";
 import { HttpError } from "../../../src/utlils/errors";
@@ -20,6 +21,7 @@ import { HttpError } from "../../../src/utlils/errors";
 const flushPromises = () => new Promise((resolve) => setImmediate(resolve));
 
 describe("asyncHandler — unit", () => {
+
   it("forwards a rejected promise's error to next(), and does not call next() on success", async () => {
     const err = new Error("boom");
     const rejecting = asyncHandler(async () => {
@@ -73,15 +75,20 @@ describe("asyncHandler — wired into a real Express pipeline", () => {
     return app;
   }
 
+  // Bound ONCE. `request(buildApp())` bound a fresh ephemeral port per request; that
+  // churn causes an intermittent process-wide connection failure (see
+  // tests/integration/shared-server.ts).
+  const server = useSharedServer(buildApp());
+
   it("a rejected promise reaches the error handler and the request completes (does not hang)", async () => {
-    const res = await request(buildApp()).get("/rejects");
+    const res = await request(server()).get("/rejects");
 
     expect(res.status).toBe(404);
     expect(res.body).toMatchObject({ success: false, message: "nope" });
   });
 
   it("a resolved promise completes the request via the normal success path", async () => {
-    const res = await request(buildApp()).get("/resolves");
+    const res = await request(server()).get("/resolves");
 
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ success: true, data: { ok: true } });

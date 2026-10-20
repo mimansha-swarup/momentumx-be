@@ -232,7 +232,7 @@ Rationale:
 
 ## Concurrent Video Projects
 
-A creator can have multiple video projects active simultaneously, **including multiple projects on the same idea** — each project owns its own script document (via the script's decoupled UUID id), so they never collide. Each video project is independent — status transitions on one do not affect any other. There is no cross-project KMeans context — clustering is already per-user globally.
+A creator can have multiple video projects active simultaneously, **including multiple projects on the same idea** — each project owns its own script document (via the script's decoupled UUID id), so they never collide. Each video project is independent — status transitions on one do not affect any other. There is no cross-project KMeans context — clustering is scoped to the active channel.
 
 When the source idea is regenerated (Regenerate All), the stale cascade fans out to **all** projects backed by that idea, not just one.
 
@@ -280,7 +280,8 @@ videoProjects/{videoProjectId}
 hooks/{hookId}
   id: string                 // Firestore auto-generated ID
   videoProjectId: string
-  createdBy: string          // userId of the owner
+  accountId: string          // active channel tenancy key
+  createdBy: string          // author uid, never the permission key
   hooks: string[]            // 5 hook variations
   hookFeedback: Record<string, "like" | "dislike" | null>
   createdAt: Timestamp
@@ -303,7 +304,8 @@ A script document now has its **own** `randomUUID` document ID — it is no long
 scripts/{scriptId}
   id: string                 // own randomUUID — NOT the ideaId
   title: string              // title of the source idea
-  createdBy: string          // userId of the owner
+  accountId: string          // active channel tenancy key
+  createdBy: string          // author uid, never the permission key
   createdAt: Timestamp       // server-side
   script: string             // full script text
   ideaId: string            // FK → ideas collection (source idea)

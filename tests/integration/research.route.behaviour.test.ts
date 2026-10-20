@@ -59,6 +59,19 @@ const server = useSharedServer(app);
 
 const AUTH_HEADER = ["Authorization", "Bearer valid-token"] as const;
 
+/**
+ * The real row shapes. `TrendingVideo` and `KeywordSignal` are both
+ * `{ title, channelTitle, videoId }` (src/repository/research.repository.ts) and
+ * `CompetitorInsight` is `{ channelTitle, titles[] }` (research.service.ts).
+ *
+ * The keyword fixture here used to be `[{ keyword: "ai tools" }]` — a key that
+ * exists on no type in the codebase — and the test asserted only the arguments the
+ * controller passed, never the body. So the endpoint's response shape was
+ * described wrongly and checked not at all.
+ */
+const TRENDING = [{ title: "I Tested 10 AI Tools", channelTitle: "Tool Time", videoId: "vid-1" }];
+const KEYWORDS = [{ title: "Best AI tools 2026", channelTitle: "AI Weekly", videoId: "vid-2" }];
+
 beforeEach(() => {
   mockVerifyIdToken.mockReset();
   mockVerifyIdToken.mockResolvedValue({ uid: "user-1" });
@@ -88,12 +101,15 @@ describe("/v1/research — auth, as real requests", () => {
 
 describe("GET /v1/research/trending and /competitors", () => {
   it("scopes trending to the caller's own niche, taken from the token", async () => {
-    mockResearchService.getTrending.mockResolvedValueOnce([{ videoId: "a" }]);
+    mockResearchService.getTrending.mockResolvedValueOnce(TRENDING);
 
     const res = await request(server()).get("/v1/research/trending").set(...AUTH_HEADER);
 
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ success: true, data: [{ videoId: "a" }] });
+    expect(res.body.success).toBe(true);
+    // `title` and `channelTitle` are what the panel renders; a row carrying only
+    // `videoId` is a list of blank cards with working links.
+    expect(res.body.data).toEqual(TRENDING);
     expect(mockResearchService.getTrending).toHaveBeenCalledWith(
       testOwner("user-1"));
   });
@@ -125,8 +141,8 @@ describe("GET /v1/research/trending and /competitors", () => {
 });
 
 describe("GET /v1/research/keywords", () => {
-  it("passes the query through verbatim", async () => {
-    mockResearchService.getKeywords.mockResolvedValueOnce([{ keyword: "ai tools" }]);
+  it("passes the query through verbatim and returns the ranked signals", async () => {
+    mockResearchService.getKeywords.mockResolvedValueOnce(KEYWORDS);
 
     const res = await request(server())
       .get("/v1/research/keywords?query=ai%20tools")
@@ -134,6 +150,7 @@ describe("GET /v1/research/keywords", () => {
 
     expect(res.status).toBe(200);
     expect(mockResearchService.getKeywords).toHaveBeenCalledWith("ai tools");
+    expect(res.body.data).toEqual(KEYWORDS);
   });
 
   it("sends an empty string, not undefined, when no query is given", async () => {

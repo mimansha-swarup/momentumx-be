@@ -43,7 +43,7 @@ When Hooks completes:
 
 | Attribute | Value |
 |---|---|
-| Model | `gemini-3.5-flash` |
+| Model | `gemini-3.8-flash` |
 | Prompt | `GENERATE_HOOKS_PROMPT` in `src/constants/prompt.ts` |
 | Generation config | `GENERATION_CONFIG_HOOKS` (responseSchema-enforced `{ hooks: string[] }`, exactly 5) |
 | Output | JSON object with `hooks` array — 5 strings |
@@ -101,7 +101,8 @@ Hooks are generated in batches. Each batch produces 5 variations saved as a sing
 |---|---|---|
 | `id` | `string` | Firestore auto-generated ID |
 | `videoProjectId` | `string` | Foreign key to the video project |
-| `createdBy` | `string` | `userId` of the owner |
+| `accountId` | `string` | Active channel tenancy key |
+| `createdBy` | `string` | Authenticated author uid; never the permission key |
 | `hooks` | `string[]` | Array of 5 hook strings |
 | `hookFeedback` | `Record<string, "like" \| "dislike" \| null>` | Per-hook feedback keyed by index |
 | `createdAt` | `Timestamp` | Server-side timestamp |
@@ -133,3 +134,9 @@ Hooks are generated in batches. Each batch produces 5 variations saved as a sing
 - [Packaging Feature Spec](../packaging/spec.md)
 - [Pipeline Spec](../../product/pipeline-spec.md)
 - [Product Roadmap](../../product/roadmap.md)
+
+## Channel tenancy and roles
+
+Content is scoped by `accountId`, resolved from verified channel membership.
+`createdBy` records authorship only. Owners and editors may mutate/generate; viewers
+may read and export. Member management and channel deletion require owner.

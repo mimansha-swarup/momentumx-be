@@ -29,6 +29,7 @@ describe("ExtractService.getWebsiteContent", () => {
   afterEach(() => {
     global.fetch = realFetch;
     jest.restoreAllMocks();
+    jest.useRealTimers();
   });
 
   it("extracts text and strips tags", async () => {
@@ -52,13 +53,65 @@ describe("ExtractService.getWebsiteContent", () => {
     expect(out.length).toBe(20_000);
   });
 
-  it("passes an abort signal so a stalled connection cannot hang the request", async () => {
-    const fetchMock = jest.fn().mockResolvedValue(htmlResponse("<p>hi</p>"));
-    global.fetch = fetchMock as unknown as typeof fetch;
+  /**
+   * A stalled connection must actually be aborted, at the documented 8s bound.
+   *
+   * This test used to assert `{ signal: expect.anything() }` — which a
+   * never-aborted `new AbortController().signal` satisfies, and so does a 10
+   * minute bound. Neither would keep onboarding from hanging, which is the only
+   * reason the signal exists.
+   *
+   * `AbortSignal.timeout` is driven by a Node-internal timer that jest's fake
+   * timers do NOT patch (verified: advancing 8001ms leaves `signal.aborted`
+   * false), so the timer wiring — and only the wiring — is re-hosted on the
+   * faked global `setTimeout`. The delay asserted is the real one, read off the
+   * real call, and the abort still travels through the service's own signal: if
+   * the source stopped passing it, or asked for a different bound, this fails.
+   */
+  it("aborts a stalled connection at the 8s bound instead of hanging", async () => {
+    jest.useFakeTimers();
+    const requested: unknown[] = [];
+    jest.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+      requested.push(ms);
+      const controller = new AbortController();
+      setTimeout(
+        () => controller.abort(new DOMException("timed out", "TimeoutError")),
+        ms as number
+      );
+      return controller.signal;
+    });
 
-    await makeService().getWebsiteContent("https://example.com");
+    // A connection that accepts the request and then says nothing.
+    global.fetch = jest.fn((_url, init: RequestInit = {}) =>
+      new Promise((_resolve, reject) => {
+        if (!init.signal) {
+          reject(new Error("fetch was called with no abort signal"));
+          return;
+        }
+        init.signal.addEventListener("abort", () =>
+          reject(init.signal!.reason)
+        );
+      })
+    ) as unknown as typeof fetch;
 
-    expect(fetchMock.mock.calls[0][1]).toMatchObject({ signal: expect.anything() });
+    let outcome: string = "pending";
+    const settled = makeService()
+      .getWebsiteContent("https://example.com")
+      .then(
+        () => (outcome = "resolved"),
+        (error: Error) => (outcome = error.name)
+      );
+
+    await Promise.resolve(); // let the fetch call happen
+    expect(requested).toEqual([8000]); // the real bound, not "some signal"
+
+    jest.advanceTimersByTime(7999);
+    await Promise.resolve();
+    expect(outcome).toBe("pending"); // not cut off early either
+
+    jest.advanceTimersByTime(1);
+    await settled;
+    expect(outcome).toBe("TimeoutError");
   });
 
   it("rejects an oversized declared body without reading it", async () => {
@@ -177,5 +230,60 @@ describe("ExtractService.getWebsiteContent", () => {
     await expect(
       makeService().getWebsiteContent("https://my-brand.example.com/about")
     ).resolves.toBe("ok");
+  });
+});
+
+/**
+ * `retrieveChannelId` builds a raw query fragment (`forHandle=@x`) that the
+ * repository interpolates straight into a YouTube URL. The value comes from a
+ * user-supplied channel URL, so it is the injection point — and it had no test at
+ * all, which is why this exists.
+ *
+ * The `@` must stay literal (that is the form YouTube documents); only the value
+ * is escaped.
+ */
+describe("ExtractService.retrieveChannelId — the query fragment it hands the repository", () => {
+  const withRepo = () => {
+    const repo = {
+      retrieveChannelId: jest.fn().mockResolvedValue({ items: [{ id: "UC-resolved" }] }),
+    } as unknown as ExtractRepository;
+    return { repo, service: new ExtractService(repo) };
+  };
+
+  it("keeps the @ literal for a handle and escapes only the value", async () => {
+    const { repo, service } = withRepo();
+
+    await service.retrieveChannelId("https://youtube.com/@some.channel-1");
+
+    expect(repo.retrieveChannelId).toHaveBeenCalledWith("forHandle=@some.channel-1");
+  });
+
+  it("uses forUsername for a legacy custom URL", async () => {
+    const { repo, service } = withRepo();
+
+    await service.retrieveChannelId("https://youtube.com/c/LegacyName");
+
+    expect(repo.retrieveChannelId).toHaveBeenCalledWith("forUsername=LegacyName");
+  });
+
+  it("returns a direct channel id without asking the API at all", async () => {
+    // 24-char channel ids need no lookup; spending a quota unit on one is waste.
+    const { repo, service } = withRepo();
+
+    const id = await service.retrieveChannelId(
+      "https://youtube.com/channel/UCabcdefghijklmnopqrstuv"
+    );
+
+    expect(id).toBe("UCabcdefghijklmnopqrstuv");
+    expect(repo.retrieveChannelId).not.toHaveBeenCalled();
+  });
+
+  it("rejects a URL it cannot parse instead of querying with a broken fragment", async () => {
+    const { repo, service } = withRepo();
+
+    await expect(service.retrieveChannelId("https://example.com/nope")).rejects.toThrow(
+      "Invalid YouTube channel URL"
+    );
+    expect(repo.retrieveChannelId).not.toHaveBeenCalled();
   });
 });

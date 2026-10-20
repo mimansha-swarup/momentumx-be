@@ -1,5 +1,5 @@
-import ExtractRepository from "../repository/extract.repository.js";
 import UserRepository from "../repository/user.repository.js";
+import StepRunner from "./step-runner.js";
 import ExtractService from "./extract.service.js";
 import AccountRepository from "../repository/account.repository.js";
 import { formatUserData, RecordOwner, resolveChannel } from "../utlils/content.js";
@@ -26,10 +26,12 @@ class UserService {
 
   constructor(
     repo: UserRepository,
-    private accounts: AccountRepository
+    private accounts: AccountRepository,
+    private steps: StepRunner,
+    extractService: ExtractService
   ) {
     this.repo = repo;
-    this.extractService = new ExtractService(new ExtractRepository());
+    this.extractService = extractService;
   }
 
   createOnboardingData = async (owner: RecordOwner, data: IOnboardingPayload) => {
@@ -45,10 +47,10 @@ class UserService {
     // `users/{uid}` instead is what made onboarding a second channel overwrite the
     // first one's niche — one record, two channels' answers — and it is why a
     // channel created by POST /v1/accounts could never report itself onboarded.
-    await this.accounts.writeContext(owner.accountId, data as unknown as Record<string, unknown>);
+    await this.accounts.writeContext(owner.accountId, data as unknown as Record<string, unknown>, owner.userId);
     // The channel is named here or nowhere: `deriveDisplayName` otherwise runs
     // only on the user's first request, before any of this exists.
-    await adoptChannelIdentity(this.accounts, owner.accountId, data as unknown as Record<string, unknown>);
+    await adoptChannelIdentity(this.accounts, owner.accountId, data as unknown as Record<string, unknown>, owner.userId);
     return data;
   };
 
@@ -57,22 +59,39 @@ class UserService {
   // Nothing is persisted — these are suggestions. Channel resolution is
   // best-effort (never throws); with no signal we return blank suggestions
   // instead of asking the model to hallucinate from nothing.
-  prefillFromChannel = async (channelUrl: string) => {
-    const channel = await resolveChannel(this.extractService, channelUrl);
-    const description = channel?.description ?? "";
-    const titles = channel?.titles ?? [];
+  prefillFromChannel = async (channelUrl: string, owner: RecordOwner) => {
+    /**
+     * The WHOLE operation runs inside one `steps.run`, not just the model call.
+     *
+     * `steps.run` was previously opened inside `inferOnboardingFields`, which is only
+     * reached when the channel yielded a signal. Two consequences: the YouTube
+     * resolution and website scrape — the expensive, quota-metered part — happened
+     * entirely OUTSIDE the lock meant to protect them, so concurrent prefills on
+     * different URLs each burned quota; and a channel that resolved to nothing never
+     * entered `steps.run` at all, so it took no lock and ran no membership check.
+     *
+     * Prefill is free (cost 0), so this reserves no credits — it is the duplicate-work
+     * lock and the membership/role check that matter here.
+     */
+    return this.steps.run({ actor: owner, kind: "prefill" }, async () => {
+      const channel = await resolveChannel(this.extractService, channelUrl);
+      const description = channel?.description ?? "";
+      const titles = channel?.titles ?? [];
 
-    const suggestions =
-      description.trim() || titles.length
-        ? await this.inferOnboardingFields(description, titles)
-        : { niche: "", targetAudience: "", brandName: "" };
+      const suggestions =
+        description.trim() || titles.length
+          ? await this.inferOnboardingFields(description, titles)
+          : { niche: "", targetAudience: "", brandName: "" };
 
-    return {
-      suggestions,
-      channel: { channelDescription: description, topTitles: titles },
-    };
+      return {
+        suggestions,
+        channel: { channelDescription: description, topTitles: titles },
+      };
+    });
   };
 
+  // No `owner` and no `steps.run` of its own: the caller holds the lock. Opening a
+  // second reservation under the same lock key would refuse itself with 409.
   private inferOnboardingFields = async (
     channelDescription: string,
     topTitles: string[]
@@ -115,8 +134,11 @@ class UserService {
       this.accounts.getContext(owner.accountId),
     ]);
     const userId = owner.userId;
+    // Never expose cleanup snapshots or use another channel's legacy profile as fallback.
+    const channelKeys = new Set(["legacyChannelSnapshot", "userName", "channelId", "channelDescription", "userTitle", "niche", "targetAudience", "brandName", "website", "websiteContent", "competitors", "format", "purpose", "description"]);
+    const identity = Object.fromEntries(Object.entries(record ?? {}).filter(([key]) => !channelKeys.has(key)));
     return {
-      ...(record ?? {}),
+      ...identity,
       ...(context ?? {}),
       // Always answer with the uid. The onboarding write (`repo.add`) never
       // stores it, so profiles created that way came back without one — and the
@@ -134,8 +156,8 @@ class UserService {
 
   updateProfile = async (owner: RecordOwner, data: IOnboardingPayload) => {
     const record = await formatUserData(data, this.extractService);
-    await this.accounts.writeContext(owner.accountId, record as unknown as Record<string, unknown>);
-    await adoptChannelIdentity(this.accounts, owner.accountId, record as unknown as Record<string, unknown>);
+    await this.accounts.writeContext(owner.accountId, record as unknown as Record<string, unknown>, owner.userId);
+    await adoptChannelIdentity(this.accounts, owner.accountId, record as unknown as Record<string, unknown>, owner.userId);
     return record;
   };
 
@@ -158,10 +180,10 @@ class UserService {
     } as IOnboardingPayload;
 
     const refreshed = await formatUserData(input, this.extractService);
-    await this.accounts.writeContext(owner.accountId, refreshed as unknown as Record<string, unknown>);
+    await this.accounts.writeContext(owner.accountId, refreshed as unknown as Record<string, unknown>, owner.userId);
     // Enrichment resolves the channel URL, so this is where a channel onboarded
     // fast (before enrichment) finally gets its "@handle".
-    await adoptChannelIdentity(this.accounts, owner.accountId, refreshed as unknown as Record<string, unknown>);
+    await adoptChannelIdentity(this.accounts, owner.accountId, refreshed as unknown as Record<string, unknown>, owner.userId);
     return { ...refreshed, completeness: computeProfileCompleteness(refreshed) };
   };
 }

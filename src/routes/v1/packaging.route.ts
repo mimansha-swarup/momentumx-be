@@ -1,3 +1,4 @@
+import { requireRole } from "../../middleware/role.js";
 import { Router } from "express";
 import { authMiddleware } from "../../middleware/auth.js";
 import { accountMiddleware } from "../../middleware/account.js";
@@ -19,17 +20,17 @@ router.use(authMiddleware);
 router.use(accountMiddleware);
 
 // Generation endpoints
-router.post("/generate-title", validate(generateTitleSchema), packagingController.generateTitle);
-router.post("/generate-description", validate(generateDescriptionSchema), packagingController.generateDescription);
-router.post("/generate-thumbnail", validate(generateThumbnailSchema), packagingController.generateThumbnail);
-router.post("/generate-shorts", validate(generateShortsSchema), packagingController.generateShorts);
+router.post("/generate-title", requireRole("editor"), validate(generateTitleSchema), packagingController.generateTitle);
+router.post("/generate-description", requireRole("editor"), validate(generateDescriptionSchema), packagingController.generateDescription);
+router.post("/generate-thumbnail", requireRole("editor"), validate(generateThumbnailSchema), packagingController.generateThumbnail);
+router.post("/generate-shorts", requireRole("editor"), validate(generateShortsSchema), packagingController.generateShorts);
 
 // CRUD endpoints
-router.post("/save", validate(packagingSaveSchema), packagingController.save);
+router.post("/save", requireRole("editor"), validate(packagingSaveSchema), packagingController.save);
 router.get("/list", packagingController.getPackagingByAccount);
 router.get("/:packagingId", packagingController.getPackaging);
-router.post("/:packagingId/regenerate/:item", validate(regenerateItemSchema), packagingController.regenerateItem);
-router.post("/:packagingId/select-title", validate(selectTitleSchema), packagingController.selectTitle);
+router.post("/:packagingId/regenerate/:item", requireRole("editor"), validate(regenerateItemSchema), packagingController.regenerateItem);
+router.post("/:packagingId/select-title", requireRole("editor"), validate(selectTitleSchema), packagingController.selectTitle);
 router.get("/:packagingId/export", packagingController.exportPackaging);
 
 export default router;

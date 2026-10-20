@@ -1,3 +1,4 @@
+import { publicProfile } from "../utlils/public-response.js";
 import { asyncHandler } from "../middleware/async_handler.js";
 import { ownerOf } from "../utlils/content.js";
 class UserController {
@@ -12,13 +13,13 @@ class UserController {
             const payload = await this.service.createOnboardingData(ownerOf(req), req.body);
             res.sendSuccess({
                 message: "Onboarded successfully",
-                data: { payload },
+                data: { payload: publicProfile(payload) },
             });
         });
         // Body validated by `validate(prefillSchema)` — channelUrl is a valid YouTube
         // channel URL. Returns inferred suggestions (not persisted).
         this.prefill = asyncHandler(async (req, res) => {
-            const data = await this.service.prefillFromChannel(req.body.channelUrl);
+            const data = await this.service.prefillFromChannel(req.body.channelUrl, ownerOf(req));
             res.sendSuccess({
                 message: "Prefill suggestions generated",
                 data,
@@ -29,21 +30,21 @@ class UserController {
             const payload = await this.service.refreshContext(ownerOf(req));
             res.sendSuccess({
                 message: "Context refreshed successfully",
-                data: { ...payload },
+                data: publicProfile(payload),
             });
         });
         this.getProfile = asyncHandler(async (req, res) => {
             const payload = await this.service.getProfile(ownerOf(req));
             res.sendSuccess({
                 message: "Fetched onboarding data successfully",
-                data: { ...(payload ?? {}) },
+                data: publicProfile(payload),
             });
         });
         this.updateProfile = asyncHandler(async (req, res) => {
             const payload = await this.service.updateProfile(ownerOf(req), req.body);
             res.sendSuccess({
                 message: "Profile updated successfully",
-                data: { payload },
+                data: { payload: publicProfile(payload) },
             });
         });
         this.service = service;

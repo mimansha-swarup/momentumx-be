@@ -17,7 +17,24 @@ const STRING_SENTINELS = {
     "Hooks batch not found": 404,
     "Packaging not found": 404,
 };
-const resolveStatus = (err) => {
+// A status Node cannot write is worse than a wrong status. `res.writeHead` throws
+// ERR_HTTP_INVALID_STATUS_CODE from inside `res.json`, Express hands off to
+// finalhandler, and the client receives 500 text/html with no `success` field —
+// breaking the "Standard Response Shape — Always" contract at exactly the point
+// every client's error interceptor reads. NaN was worse: the request HUNG.
+//
+// Normalised HERE rather than in response_formatter.ts on purpose. That file's
+// `Number(statusCode) || 500` catches falsy values only, and does not protect this
+// file's own raw-JSON fallback branch (used when responseFormatter has not mounted),
+// which called res.status(0).json() directly. One guard, both output paths.
+// 400-599, not 100-599. This handler always writes a JSON error envelope, and 1xx,
+// 204, 205 and 304 are defined to carry NO body — Node accepts them at writeHead
+// (it allows 100-999), then the response either hangs or arrives empty, which breaks
+// the "Standard Response Shape — Always" contract just as surely as a throw. A 2xx or
+// 3xx reaching an ERROR handler is a bug in the thrower either way.
+const writable = (status) => Number.isInteger(status) && status >= 400 && status <= 599 ? status : 500;
+const resolveStatus = (err) => writable(rawStatus(err));
+const rawStatus = (err) => {
     if (err instanceof HttpError)
         return err.statusCode;
     if (err && typeof err === "object") {
@@ -57,11 +74,18 @@ _next) => {
         // to read — masking it turns "regeneration returned nothing, your script is
         // unchanged" into "Something went wrong", which is strictly less safe to act on.
         const message = err instanceof HttpError ? rawMessage : "Something went wrong";
+        // Only the confirmed "you were not charged" marker crosses the 5xx boundary;
+        // driver details remain private. The UI must never infer it from an arbitrary
+        // failure. It replaced `refunded: true` when credits moved to charge-on-success:
+        // a failed run is never charged, so there is nothing to refund and the honest
+        // claim is the weaker one.
+        const uncharged = err instanceof HttpError && err.detail?.charged === false;
+        const refundDetail = uncharged ? { detail: { charged: false } } : {};
         if (typeof res.sendError === "function") {
-            res.sendError({ message, statusCode });
+            res.sendError({ message, statusCode, ...refundDetail });
         }
         else {
-            res.status(statusCode).json({ success: false, message });
+            res.status(statusCode).json({ success: false, message, ...refundDetail });
         }
         return;
     }

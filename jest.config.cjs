@@ -13,15 +13,13 @@ module.exports = {
     "^.+\\.ts$": [
       "ts-jest",
       {
-        tsconfig: {
-          module: "CommonJS",
-          moduleResolution: "node",
-          strict: false,
-          noImplicitAny: false,
-          esModuleInterop: true,
-          allowSyntheticDefaultImports: true,
-          types: ["node", "jest"],
-        },
+        // POINTS AT tsconfig.test.json rather than repeating its options.
+        //
+        // These were duplicated inline, and had drifted: this block disabled `strict`
+        // and `noImplicitAny` entirely, so tests RAN with no strict checking even
+        // though the gate demanded it. One source of truth removes the drift — a
+        // change to the gate now changes what jest enforces, by construction.
+        tsconfig: "tsconfig.test.json",
       },
     ],
   },

@@ -17,6 +17,7 @@
 import express from "express";
 import request from "supertest";
 import { responseFormatter } from "../../src/middleware/response_formatter";
+import { useSharedServer } from "../integration/shared-server";
 import { errorHandler } from "../../src/middleware/error_handler";
 import {
   AccountForbidden,
@@ -28,14 +29,29 @@ import {
   WrongAccount,
 } from "../../src/utlils/errors";
 
-const appThrowing = (err: unknown) => {
-  const app = express();
-  app.use(responseFormatter);
-  app.get("/probe", () => {
-    throw err;
-  });
-  app.use(errorHandler);
-  return app;
+// ONE app, bound ONCE, with the thrown error swapped per request.
+//
+// This used to build a fresh Express app per call and hand it to `request()`, which
+// makes supertest bind and tear down an ephemeral port every time — 10 sites here, and
+// one of them fired three of them in parallel via Promise.all. That churn is the cause
+// of an intermittent connection-level failure across the whole test process (see
+// tests/integration/shared-server.ts); this file was observed failing that way on
+// "keeps the three 403s distinguishable".
+//
+// `thrown` is module-level mutable state, so every probe must be AWAITED before the
+// next is issued. The one test that used Promise.all is now sequential for that reason.
+let thrown: unknown;
+const app = express();
+app.use(responseFormatter);
+app.get("/probe", () => {
+  throw thrown;
+});
+app.use(errorHandler);
+const server = useSharedServer(app);
+
+const probe = (err: unknown) => {
+  thrown = err;
+  return request(server()).get("/probe");
 };
 
 describe("the code reaches the response body", () => {
@@ -44,18 +60,17 @@ describe("the code reaches the response body", () => {
     ["role_forbidden", RoleForbidden(), 403],
     ["wrong_account", WrongAccount({ accountId: "acc-1", displayName: "Cooking with Sam" }), 403],
   ])("%s survives the full chain", async (code, err, status) => {
-    const res = await request(appThrowing(err)).get("/probe");
+    const res = await probe(err);
 
     expect(res.status).toBe(status);
     expect(res.body.code).toBe(code);
   });
 
   it("keeps the three 403s distinguishable from one another", async () => {
-    const codes = await Promise.all(
-      [AccountForbidden(), RoleForbidden(), WrongAccount({ accountId: "a" })].map(
-        async (err) => (await request(appThrowing(err)).get("/probe")).body.code
-      )
-    );
+    const codes: unknown[] = [];
+    for (const err of [AccountForbidden(), RoleForbidden(), WrongAccount({ accountId: "a" })]) {
+      codes.push((await probe(err)).body.code);
+    }
 
     expect(new Set(codes).size).toBe(3);
   });
@@ -64,9 +79,7 @@ describe("the code reaches the response body", () => {
     // Without this the frontend renders "Project not found. It may have been
     // deleted." for a project that is one switch away — the worst sentence this
     // product can produce right after a tenancy migration.
-    const res = await request(
-      appThrowing(WrongAccount({ accountId: "acc-1", displayName: "Cooking with Sam" }))
-    ).get("/probe");
+    const res = await probe(WrongAccount({ accountId: "acc-1", displayName: "Cooking with Sam" }));
 
     expect(res.body.detail).toEqual({ accountId: "acc-1", displayName: "Cooking with Sam" });
   });
@@ -74,14 +87,14 @@ describe("the code reaches the response body", () => {
 
 describe("errors that carry no code still behave exactly as before", () => {
   it("a plain Forbidden() has no code", async () => {
-    const res = await request(appThrowing(Forbidden())).get("/probe");
+    const res = await probe(Forbidden());
 
     expect(res.status).toBe(403);
     expect(res.body.code).toBeUndefined();
   });
 
   it("a 400 is unchanged", async () => {
-    const res = await request(appThrowing(BadRequest("title is required"))).get("/probe");
+    const res = await probe(BadRequest("title is required"));
 
     expect(res.status).toBe(400);
     expect(res.body).toMatchObject({ success: false, message: "title is required" });
@@ -90,7 +103,7 @@ describe("errors that carry no code still behave exactly as before", () => {
   it("a tombstoned channel is 410, not 404", async () => {
     // 404 says "it never existed" and is a dead end; 410 says "it did", which the
     // client can act on.
-    const res = await request(appThrowing(Gone())).get("/probe");
+    const res = await probe(Gone());
 
     expect(res.status).toBe(410);
   });
@@ -98,7 +111,7 @@ describe("errors that carry no code still behave exactly as before", () => {
 
 describe("the 500 disclosure policy is not weakened by forwarding code and detail", () => {
   it("an unexpected throw leaks neither detail nor an internal message", async () => {
-    const res = await request(appThrowing(new Error("connect ECONNREFUSED 10.0.0.1:5432"))).get("/probe");
+    const res = await probe(new Error("connect ECONNREFUSED 10.0.0.1:5432"));
 
     expect(res.status).toBe(500);
     expect(res.body.message).toBe("Something went wrong");
@@ -119,7 +132,7 @@ describe("the 500 disclosure policy is not weakened by forwarding code and detai
       detail: { serviceAccountKey: "-----BEGIN PRIVATE KEY-----" },
     });
 
-    const res = await request(appThrowing(leaky)).get("/probe");
+    const res = await probe(leaky);
 
     expect(res.status).toBe(403);
     expect(res.body.detail).toBeUndefined();
@@ -131,7 +144,7 @@ describe("the 500 disclosure policy is not weakened by forwarding code and detai
     // the user out of their channel.
     const forged = Object.assign(new Error("Forbidden"), { code: "account_forbidden" });
 
-    const res = await request(appThrowing(forged)).get("/probe");
+    const res = await probe(forged);
 
     expect(res.body.code).toBeUndefined();
   });
@@ -139,7 +152,7 @@ describe("the 500 disclosure policy is not weakened by forwarding code and detai
   it("a 500-level HttpError still does not forward its detail", async () => {
     const err = new HttpError("internal", 500, { connectionString: "postgres://user:pw@host" });
 
-    const res = await request(appThrowing(err)).get("/probe");
+    const res = await probe(err);
 
     expect(res.body.detail).toBeUndefined();
     expect(JSON.stringify(res.body)).not.toContain("postgres://");

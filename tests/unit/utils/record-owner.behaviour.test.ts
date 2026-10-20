@@ -80,7 +80,9 @@ describe("the owner is read by key, not by position", () => {
   // the test rather than naming the missing field in the document.
   it("does not confuse batchId with accountId", async () => {
     const doc = (await formatGeneratedIdea(
-      { workingTitle: "T", concept: null, type: "long", evidence: null },
+      // Nulls on purpose: this probes the RUNTIME guard for a malformed idea, which
+      // the compiler forbids constructing. One cast at the boundary, not `any`.
+      { workingTitle: "T", concept: null, type: "long", evidence: null } as unknown as Parameters<typeof formatGeneratedIdea>[0],
       OWNER,
       "batch-1"
     )) as Record<string, unknown>;

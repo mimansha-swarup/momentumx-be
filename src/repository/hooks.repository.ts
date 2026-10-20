@@ -1,3 +1,5 @@
+import type { CreditReservation } from "./billing.repository.js";
+import { generationWrite } from "./generation-guard.js";
 import { isDocumentId } from "../utlils/firestore-id.js";
 import { Firestore } from "firebase-admin/firestore";
 import { COLLECTIONS } from "../constants/collection.js";
@@ -13,14 +15,15 @@ class HooksRepository {
     this.collection = COLLECTIONS.HOOKS;
   }
 
-  save = async (data: Omit<IHooksBatch, "id" | "createdAt">): Promise<IHooksBatch> => {
+  save = async (data: Omit<IHooksBatch, "id" | "createdAt">, charge?: CreditReservation | null): Promise<IHooksBatch> => {
     const docRef = this.db.collection(this.collection).doc();
     const doc: Record<string, unknown> = {
       ...data,
       id: docRef.id,
       createdAt: firebase.firestore.FieldValue.serverTimestamp(),
     };
-    await docRef.set(doc);
+    if (charge) await generationWrite(charge, tx => tx.set(docRef, doc));
+    else await docRef.set(doc);
     return doc as unknown as IHooksBatch;
   };
 
@@ -34,8 +37,10 @@ class HooksRepository {
     return doc.data() as IHooksBatch;
   };
 
-  update = async (hooksId: string, data: Record<string, unknown>): Promise<void> => {
-    await this.db.collection(this.collection).doc(hooksId).update(data);
+  update = async (hooksId: string, data: Record<string, unknown>, charge?: CreditReservation | null): Promise<void> => {
+    const ref = this.db.collection(this.collection).doc(hooksId);
+    if (charge) await generationWrite(charge, tx => tx.update(ref, data));
+    else await ref.update(data);
   };
 }
 

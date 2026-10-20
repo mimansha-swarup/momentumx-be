@@ -1,7 +1,8 @@
+import { memberRole } from "../utlils/account-member.js";
 import { CHANNEL_CONTEXT_DOC, } from "../constants/collection.js";
 import { db, firebase } from "../config/firebase.js";
 import { isDocumentId } from "../utlils/firestore-id.js";
-import { NotFound } from "../utlils/errors.js";
+import { BadRequest, AccountForbidden, Gone, NotFound, RoleForbidden } from "../utlils/errors.js";
 class AccountRepository {
     constructor() {
         /**
@@ -70,8 +71,12 @@ class AccountRepository {
             const userRef = this.db.collection("users" /* COLLECTIONS.USERS */).doc(account.ownerUids[0]);
             return this.db.runTransaction(async (txn) => {
                 const claimed = (await txn.get(userRef)).get("lastActiveAccountId");
-                if (typeof claimed === "string" && claimed)
-                    return claimed;
+                if (typeof claimed === "string" && isDocumentId(claimed)) {
+                    const existing = await txn.get(this.db.collection(this.collection).doc(claimed));
+                    const data = existing.data();
+                    if (data && !data.deletedAt && !data.orphanedAt && data.memberUids?.includes(account.ownerUids[0]))
+                        return claimed;
+                }
                 this.writeAccount(txn, account, context, userRef);
                 return account.id;
             });
@@ -126,27 +131,24 @@ class AccountRepository {
                 .get();
             return doc.exists ? doc.data() : null;
         };
-        /**
-         * Merge into the channel context. The channel now OWNS these fields — they are
-         * not a copy of anything on the user record.
-         */
-        this.writeContext = async (accountId, patch) => {
+        this.writeContext = async (accountId, patch, actorUserId) => {
             if (!isDocumentId(accountId))
                 throw NotFound("Channel not found");
-            await this.db
-                .collection(this.collection)
-                .doc(accountId)
-                .collection("context" /* SUBCOLLECTIONS.CONTEXT */)
-                .doc(CHANNEL_CONTEXT_DOC)
-                .set(patch, { merge: true });
+            const ref = this.db.collection(this.collection).doc(accountId);
+            await this.db.runTransaction(async (txn) => {
+                // Enrichment can finish after deletion or membership changes.
+                this.assertContextWriter((await txn.get(ref)).data(), actorUserId);
+                txn.set(ref.collection("context" /* SUBCOLLECTIONS.CONTEXT */).doc(CHANNEL_CONTEXT_DOC), patch, { merge: true });
+            });
         };
-        this.update = async (accountId, patch) => {
+        this.update = async (accountId, patch, actorUserId) => {
             if (!isDocumentId(accountId))
                 throw NotFound("Channel not found");
-            await this.db
-                .collection(this.collection)
-                .doc(accountId)
-                .update({ ...patch, updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
+            const ref = this.db.collection(this.collection).doc(accountId);
+            await this.db.runTransaction(async (txn) => {
+                this.assertContextWriter((await txn.get(ref)).data(), actorUserId);
+                txn.update(ref, { ...patch, updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
+            });
         };
         /**
          * Tombstone, never a hard delete.
@@ -171,9 +173,48 @@ class AccountRepository {
          *
          * Returns false when it refused, so the caller can answer 400.
          */
+        /**
+         * Owner-only channel edits, with the owner check inside the writing transaction.
+         *
+         * The service checks ownership first, but that is a separate read: a demotion
+         * committing in the gap let a now-non-owner's rename land. Same reasoning as
+         * `softDeleteUnlessLast` below — authorization must share the transaction with
+         * the write it authorizes.
+         */
+        this.updateIfOwner = async (accountId, userId, changes) => {
+            if (!isDocumentId(accountId))
+                throw NotFound("Channel not found");
+            const ref = this.db.collection(this.collection).doc(accountId);
+            await this.db.runTransaction(async (txn) => {
+                const account = (await txn.get(ref)).data();
+                if (!account)
+                    throw AccountForbidden("Channel not found");
+                if (!account.memberUids?.includes(userId))
+                    throw AccountForbidden();
+                if (account.deletedAt)
+                    throw Gone();
+                if (account.orphanedAt)
+                    throw AccountForbidden("Channel needs ownership recovery; contact support");
+                if (memberRole(account.members, userId) !== "owner")
+                    throw RoleForbidden("Only the channel owner can do this");
+                txn.update(ref, { ...changes, updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
+            });
+        };
         this.softDeleteUnlessLast = async (accountId, userId) => this.db.runTransaction(async (txn) => {
             const snap = await txn.get(this.db.collection(this.collection).where("memberUids", "array-contains", userId));
-            const live = snap.docs.filter((doc) => !doc.data().deletedAt);
+            // Authorization must share the transaction with the tombstone. The service's
+            // earlier owner check can race a demotion/removal before destructive purge.
+            const target = snap.docs.find(doc => doc.id === accountId)?.data();
+            if (!target || target.orphanedAt)
+                throw AccountForbidden();
+            if (target.deletedAt)
+                throw Gone();
+            if (memberRole(target.members, userId) !== "owner")
+                throw RoleForbidden();
+            const live = snap.docs.filter((doc) => {
+                const account = doc.data();
+                return !account.deletedAt && !account.orphanedAt;
+            });
             if (live.length <= 1)
                 return false;
             const now = firebase.firestore.FieldValue.serverTimestamp();
@@ -184,73 +225,84 @@ class AccountRepository {
             return true;
         });
         /**
-         * Delete a deleted channel's content.
-         *
-         * **Firestore does not cascade.** Tombstoning `accounts/{id}` leaves every
-         * idea, script, hook batch, packaging document, video project and event
-         * exactly where it was — present and billable, and unreachable only because
-         * every query filters `accountId`. Phase 05 spells this out: "there is no
-         * cascade, so account deletion has to enumerate and delete, or mark and
-         * sweep". The endpoint shipped in Phase 06a doing neither.
-         *
-         * `accounts/{id}/context/channel` goes too, and it is the one that matters
-         * most for a deletion request: it holds the niche, the competitor list and the
-         * scraped website text. A subcollection is not removed with its parent either.
-         * `usage/**` has no documents until Phase 08, so it is not swept here — add it
-         * with the code that starts writing it.
-         *
-         * ponytail: capped PER COLLECTION and run inline. The first version shared one
-         * counter across the whole loop, so a channel with 5,000+ ideas exhausted the
-         * budget and `scripts`, `hooks`, `packaging`, `videoProjects` and `events`
-         * were never queried at all — five whole collections skipped, chosen by array
-         * order, silently. A per-collection cap cannot starve a sibling.
-         *
-         * Returns a report rather than a number so the caller can say what was left.
-         * Phase 10's sweep is where an unbounded, resumable job belongs.
+         * Purge only tombstoned channels, retaining the tombstone and telemetry.
+         * Each collection has its own strict cap; repeated calls resume from remaining rows.
+         * Context is deleted first. The dry run reads at most cap + 1 rows per collection.
          */
-        this.purgeAccountData = async (accountId, capPerCollection = 2000) => {
-            const PAGE = 450; // Firestore caps a batch at 500 writes.
+        this.purgeAccountData = async (accountId, capPerCollection = 2000, dryRun = false) => {
+            if (!Number.isInteger(capPerCollection) || capPerCollection < 1 || capPerCollection > 2000) {
+                throw BadRequest("Purge limit must be an integer from 1 to 2000 per collection");
+            }
+            const account = await this.findById(accountId);
+            if (!account?.deletedAt)
+                throw BadRequest("Only a tombstoned channel can be purged");
+            const accountRef = this.db.collection(this.collection).doc(accountId);
+            const contextRef = accountRef.collection("context" /* SUBCOLLECTIONS.CONTEXT */).doc(CHANNEL_CONTEXT_DOC);
             let deleted = 0;
+            let matched = 0;
             const incomplete = [];
-            // FIRST, not last. The context holds the niche, the competitor list and the
-            // uncapped website scrape — the data a deletion request is actually about.
-            // Deleting it after the content loop meant that a timeout or a Firestore
-            // error part-way through left precisely that document behind, and the
-            // tombstone makes the operation unrepeatable through the API.
-            await this.db
-                .collection(this.collection)
-                .doc(accountId)
-                .collection("context" /* SUBCOLLECTIONS.CONTEXT */)
-                .doc(CHANNEL_CONTEXT_DOC)
-                .delete();
-            for (const collection of AccountRepository.PURGE_COLLECTIONS) {
+            const hasContext = (await contextRef.get()).exists;
+            if (dryRun) {
+                if (hasContext)
+                    matched++;
+            }
+            else {
+                // Context goes first, so a later batch failure cannot strand the private scrape.
+                await contextRef.delete();
+                if (hasContext)
+                    deleted++;
+            }
+            const nestedPaths = ["usage" /* SUBCOLLECTIONS.USAGE */, "membershipChanges" /* SUBCOLLECTIONS.MEMBERSHIP_CHANGES */].map(name => `${this.collection}/${accountId}/${name}`);
+            for (const collection of [...AccountRepository.PURGE_COLLECTIONS, ...nestedPaths]) {
+                const query = nestedPaths.includes(collection)
+                    ? this.db.collection(collection)
+                    : this.db.collection(collection).where("accountId", "==", accountId);
+                if (dryRun) {
+                    const preview = await query.limit(capPerCollection + 1).get();
+                    matched += Math.min(preview.size, capPerCollection);
+                    if (preview.size > capPerCollection)
+                        incomplete.push(collection);
+                    continue;
+                }
                 let fromThis = 0;
                 while (fromThis < capPerCollection) {
-                    const snap = await this.db
-                        .collection(collection)
-                        .where("accountId", "==", accountId)
-                        .limit(PAGE)
-                        .get();
+                    const pageSize = Math.min(450, capPerCollection - fromThis);
+                    const snap = await query.limit(pageSize).get();
                     if (snap.empty)
                         break;
                     const batch = this.db.batch();
-                    snap.docs.forEach((doc) => batch.delete(doc.ref));
+                    snap.docs.forEach(doc => batch.delete(doc.ref));
                     await batch.commit();
                     fromThis += snap.size;
                     deleted += snap.size;
-                    // A short page is the last page. Re-querying would cost one empty read
-                    // per collection for nothing.
-                    if (snap.size < PAGE)
+                    if (snap.size < pageSize)
                         break;
                 }
-                // Hit the cap on a full page, so there is very likely more behind it.
-                if (fromThis >= capPerCollection)
+                if (fromThis === capPerCollection && !(await query.limit(1).get()).empty)
                     incomplete.push(collection);
             }
-            return { deleted, incomplete };
+            // Deleting each committed page is the cursor: retrying the same id resumes safely.
+            return { deleted, matched: dryRun ? matched : deleted, incomplete };
         };
         this.db = db;
         this.collection = "accounts" /* COLLECTIONS.ACCOUNTS */;
+    }
+    /**
+     * Merge into the channel context. The channel now OWNS these fields — they are
+     * not a copy of anything on the user record.
+     */
+    assertContextWriter(account, actorUserId) {
+        if (!account)
+            throw NotFound("Channel not found");
+        if (account.deletedAt)
+            throw Gone();
+        if (account.orphanedAt)
+            throw AccountForbidden("This channel requires owner recovery");
+        if (!account.memberUids?.includes(actorUserId))
+            throw AccountForbidden();
+        const role = memberRole(account.members, actorUserId);
+        if (role !== "owner" && role !== "editor")
+            throw RoleForbidden();
     }
 }
 /**
@@ -263,6 +315,13 @@ AccountRepository.PURGE_COLLECTIONS = [
     "hooks" /* COLLECTIONS.HOOKS */,
     "packaging" /* COLLECTIONS.PACKAGING */,
     "videoProjects" /* COLLECTIONS.VIDEO_PROJECTS */,
-    "events" /* COLLECTIONS.EVENTS */,
+    "invites" /* COLLECTIONS.INVITES */,
+    // COLLECTIONS.EVENTS is deliberately ABSENT. `events` is append-only
+    // telemetry, and it is the only record of what a channel did — the thing you
+    // need to answer a support ticket or spot abuse after the fact, and it cannot
+    // be reconstructed. Product decision: retain it and stop surfacing it to
+    // users, rather than destroy it with the channel. Nothing in the API reads
+    // `events`, so retaining it exposes nothing; the rows keep their `accountId`
+    // and are simply unreachable once the account is tombstoned.
 ];
 export default AccountRepository;

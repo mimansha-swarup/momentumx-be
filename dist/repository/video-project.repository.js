@@ -1,7 +1,6 @@
+import { generationWrite } from "./generation-guard.js";
 import { FieldPath } from "firebase-admin/firestore";
 import { db, firebase } from "../config/firebase.js";
-import { STEP_ORDER } from "../constants/pipeline.js";
-import { BadRequest, Conflict, Forbidden, NotFound } from "../utlils/errors.js";
 import { isDocumentId } from "../utlils/firestore-id.js";
 class VideoProjectRepository {
     constructor() {
@@ -21,8 +20,8 @@ class VideoProjectRepository {
             // card's "2 hours ago" rendered blank.
             //
             // Only the two document-level fields. `pipeline.<step>.startedAt` stays a
-            // Timestamp because `acquireStep` reads `.toMillis()` off it to evaluate the
-            // lock, and the client never displays it.
+            // Timestamp because pipeline transitions preserve their stored shape;
+            // the client never displays these.
             for (const field of ["createdAt", "updatedAt"]) {
                 const value = project[field];
                 if (value?.toDate) {
@@ -30,100 +29,6 @@ class VideoProjectRepository {
                 }
             }
             return project;
-        };
-        /**
-         * Take the in-flight lock ATOMICALLY, and return the project as it was BEFORE
-         * the write.
-         *
-         * Replaces the read-then-write pairs at `content.service.ts` and
-         * `hooks.service.ts` — neither of which was a lock. Both read the step status,
-         * decided it was free, and wrote `in_progress` in a separate call; two requests
-         * could both read "free" and both proceed. Today that is a duplicate Gemini
-         * call; once credits gate generation it is a double charge.
-         *
-         * Ownership check, precondition and lock all live INSIDE the transaction,
-         * because a check performed outside it guarantees nothing about the write.
-         *
-         * The pre-write project is returned so callers can read `scriptId`/`hooksId`
-         * for idempotent replay, and so the runner can capture prior state to restore
-         * on failure.
-         */
-        this.acquireStep = async (projectId, step, 
-        // The OWNER object, not a bare `accountId: string`. `projectId`, `step` and
-        // both ids are all strings, so a positional id here accepts whichever one the
-        // caller happens to have — and during the Phase 06 flip the step runner did
-        // exactly that, passing `actor.userId` into the account slot. It compiled, and
-        // the check below would have refused every generation.
-        owner, guard) => {
-            const ref = this.db.collection(this.collection).doc(projectId);
-            return this.db.runTransaction(async (txn) => {
-                const snap = await txn.get(ref);
-                if (!snap.exists)
-                    throw NotFound("Video project not found");
-                const project = this.hydrate(snap.data());
-                if (project.isDeleted)
-                    throw NotFound("Video project not found");
-                // Phase 06: the account, not the author. Inside the transaction, because a
-                // check performed outside it guarantees nothing about the write.
-                //
-                // Deliberately a BARE `Forbidden()`, unlike the 18 service-layer checks
-                // that now answer `wrong_account` or `account_forbidden`. This is a
-                // backstop, not the client's answer: every caller reaches a step lock
-                // through a service that has already loaded and ownership-checked the
-                // project (`videoProjectService.getById`, before `steps.run`), so a
-                // cross-channel caller is refused there with the discriminator. Resolving
-                // membership here would mean a second read inside a transaction to
-                // produce a message nobody receives.
-                if (project.accountId !== owner.accountId)
-                    throw Forbidden();
-                for (const required of guard.requires) {
-                    if (project.pipeline[required]?.status !== "completed") {
-                        throw BadRequest(`${required} must be completed before generating ${step}`);
-                    }
-                }
-                const state = project.pipeline[step];
-                const startedMs = state?.startedAt?.toMillis?.() ?? 0;
-                if (state?.status === "in_progress" &&
-                    Date.now() - startedMs < guard.lockMs) {
-                    throw Conflict(`${step} generation already in progress for this project`);
-                }
-                // A completed step is left alone: regeneration paths re-enter here and must
-                // not knock a finished step back to in_progress on the way.
-                if (state?.status !== "completed") {
-                    const updates = {
-                        [`pipeline.${step}.status`]: "in_progress",
-                        [`pipeline.${step}.startedAt`]: firebase.firestore.FieldValue.serverTimestamp(),
-                    };
-                    // Only ever forward. completeStep has the mirror-image bug (it moves
-                    // currentStep backward unconditionally) — tracked separately.
-                    if (STEP_ORDER.indexOf(step) > STEP_ORDER.indexOf(project.currentStep)) {
-                        updates["currentStep"] = step;
-                    }
-                    txn.update(ref, updates);
-                }
-                return project;
-            });
-        };
-        /**
-         * Restore a step to exactly what it was before `acquireStep`.
-         *
-         * Deliberately NOT "set it to not_started", which is what
-         * `VideoProjectService.abandonStep` does: when the step being abandoned was
-         * **stale**, hardcoding `not_started` silently clears the stale marker, so a
-         * failed regenerate of a stale step leaves it looking fresh. Restoring captured
-         * prior state fixes that for free.
-         */
-        this.releaseStep = async (projectId, step, prior) => {
-            const updates = {
-                [`pipeline.${step}.status`]: prior.status,
-                [`pipeline.${step}.startedAt`]: prior.startedAt ?? null,
-            };
-            // Only restore the reason when there was one; writing undefined would be
-            // dropped by ignoreUndefinedProperties and leave a stale marker behind.
-            if (prior.staleReason !== undefined) {
-                updates[`pipeline.${step}.staleReason`] = prior.staleReason;
-            }
-            await this.db.collection(this.collection).doc(projectId).update(updates);
         };
         this.create = async (data) => {
             const docRef = this.db.collection(this.collection).doc();
@@ -191,14 +96,40 @@ class VideoProjectRepository {
             const nextCursor = hasMore ? resultDocs[resultDocs.length - 1].id : null;
             return { projects, hasMore, nextCursor };
         };
-        this.update = async (projectId, data) => {
-            await this.db
-                .collection(this.collection)
-                .doc(projectId)
-                .update({
-                ...data,
-                updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        /**
+         * Apply a status repair ONLY if the statuses it was computed from are still current.
+         *
+         * `getReconciledById` reads, computes repairs, then writes — last-writer-wins. A
+         * `markStale` landing in that gap was silently erased: the dotted-path write reset
+         * `pipeline.<step>.status` to "completed" while the concurrent write's `staleReason`
+         * survived, leaving a project that is completed AND carries a stale reason, so the
+         * user ships packaging built from a script they have since regenerated.
+         *
+         * Same shape as `account.repository.updateIfOwner`: the check belongs INSIDE the
+         * write, not before it. Returns false when it declined, so the caller can serve the
+         * fresh view rather than its own stale computation.
+         */
+        this.updateIfStatusesUnchanged = async (projectId, expected, data) => {
+            const ref = this.db.collection(this.collection).doc(projectId);
+            return this.db.runTransaction(async (txn) => {
+                const current = (await txn.get(ref)).data();
+                if (!current)
+                    return false;
+                for (const [step, status] of Object.entries(expected)) {
+                    if (current.pipeline?.[step]?.status !== status)
+                        return false;
+                }
+                txn.update(ref, { ...data, updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
+                return true;
             });
+        };
+        this.update = async (projectId, data, charge) => {
+            const ref = this.db.collection(this.collection).doc(projectId);
+            const patch = { ...data, updatedAt: firebase.firestore.FieldValue.serverTimestamp() };
+            if (charge)
+                await generationWrite(charge, tx => tx.update(ref, patch));
+            else
+                await ref.update(patch);
         };
         /**
          * How many live projects this channel holds (Phase 06a's `projectCount`).

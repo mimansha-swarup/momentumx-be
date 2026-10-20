@@ -1,3 +1,4 @@
+import { memberRole } from "../utlils/account-member.js";
 import { NextFunction, Request, Response } from "express";
 import {
   accountRepository,
@@ -26,27 +27,30 @@ export const ACCOUNT_HEADER = "x-account-id";
 /**
  * Whether a request with no `X-Account-Id` may still mutate.
  *
- * The phase document says to make the fallback read-only — GET only, 400 for
- * anything that mutates — and that is right FROM PHASE 07, not here. Today no
- * client sends the header at all (`momentumx-fe` has no reference to it), so
- * shipping read-only would 400 every generation and every save the moment this
- * deploys.
+ * FLIPPED IN PHASE 07 (was `true` through Phases 05–06b). The frontend now
+ * sends `X-Account-Id` on every call — one axios request interceptor
+ * (`momentumx-fe/src/utils/network.ts`) reading a module-level value hydrated
+ * from `localStorage` at sign-in — so a header-less write is no longer a client
+ * that has not caught up. It is a guess, and the thing it guesses wrong is
+ * which channel the user's work lands in.
  *
- * The rule it is protecting against is "the user believes they are in channel B
- * while every write lands in channel A". This comment used to dismiss that as
- * impossible because "every user has exactly one account" — which stopped being
- * true the moment Phase 06a shipped `POST /v1/accounts`, and the fallback was
- * ignoring `lastActiveAccountId` at the time, so it was live.
+ * The rule this protects is "the user believes they are in channel B while
+ * every write lands in channel A". That became reachable the moment Phase 06a
+ * shipped `POST /v1/accounts`, and is now routine: the switcher is live.
  *
- * `resolveWithoutHeader` now honours the pointer, so a header-less write lands
- * in the channel the user actually activated. That makes the fallback safe
- * rather than merely convenient — but it is still a guess, which is why the flip
- * below is a Phase 07 item and not a permanent answer.
+ * READS still fall back, deliberately. A cold tab and an already-open tab that
+ * predates the deploy both have a legitimate reason to send nothing, and
+ * refusing to SHOW them anything is a worse answer than showing them the
+ * channel they last activated. `resolveWithoutHeader` honours
+ * `lastActiveAccountId`, so that guess is the best one available.
  *
- * FLIP THIS TO `false` IN PHASE 07, in the commit that makes the frontend send
- * the header. The read-only tests below are written for both settings.
+ * Sign-in resolves the channel before fetching its profile. If the list is
+ * empty, the frontend calls the authenticated, account-exempt
+ * `POST /v1/accounts/bootstrap`, which atomically reuses or creates a first
+ * channel. Headerless reads still retain lazy creation for older clients;
+ * bootstrap and that fallback share the same transactional pointer claim.
  */
-export const FALLBACK_ALLOWS_WRITES = true;
+export const FALLBACK_ALLOWS_WRITES = false;
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
@@ -74,7 +78,7 @@ export const fallbackRejectsWrite = (
  * privilege on drift, never most.
  */
 export const roleFor = (account: IAccount, uid: string) =>
-  account.members?.[uid]?.role ?? "viewer";
+  memberRole(account.members, uid) ?? "viewer";
 
 /**
  * Verify an account and attach it to the request.
@@ -89,6 +93,7 @@ const enterAccount = async (
   { clearPointerOnTombstone = false } = {}
 ): Promise<void> => {
   if (!account) throw AccountForbidden("Channel not found");
+  if (account.orphanedAt) throw AccountForbidden("Channel needs ownership recovery; contact support");
 
   // Tombstoned, not hard-deleted: 410 says "it existed", which is repairable,
   // where 404 says "it never did". Clearing the pointer is the repair path — the
@@ -157,7 +162,7 @@ const enterAccount = async (
  */
 const resolveWithoutHeader = async (userId: string): Promise<IAccount | null> => {
   const memberships = await accountRepository.findByMember(userId);
-  const live = memberships.filter((account) => !account.deletedAt);
+  const live = memberships.filter((account) => !account.deletedAt && !account.orphanedAt);
 
   // One channel: the pointer can only name it or something stale, so there is
   // nothing to disambiguate and no reason to pay for the user-record read.
@@ -177,6 +182,11 @@ export const accountMiddleware = (
   res: Response,
   next: NextFunction
 ): void => {
+  // Idempotent, for the same reason as `authMiddleware`: two routers share the
+  // `/accounts` mount, so this otherwise resolves and re-reads the account
+  // document twice per member-management request (and runs `findByMember` twice
+  // for a header-less GET).
+  if (req.accountId) return next();
   void (async () => {
     const headerValue = req.header(ACCOUNT_HEADER);
     const requested = typeof headerValue === "string" ? headerValue.trim() : "";

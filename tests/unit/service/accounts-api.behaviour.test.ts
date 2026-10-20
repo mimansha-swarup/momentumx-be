@@ -129,6 +129,49 @@ describe("activeAccountId — what a cold tab opens", () => {
   });
 });
 
+describe("bootstrapAccount — one initial channel", () => {
+  it("reuses a live membership even when the stored pointer is stale", async () => {
+    db.seed("users", [{ id: uid, lastActiveAccountId: "gone" }]);
+    const resolved = await make().bootstrapAccount(uid);
+    expect(resolved.id).toBe(ACC_A);
+    expect(db.all("accounts")).toHaveLength(2);
+  });
+
+  it.each(["missing", "deleted", "departed"])("repairs a %s pointer without adopting an inaccessible channel", async (kind) => {
+    db.data.clear();
+    db.seed("users", [{ id: uid, lastActiveAccountId: ACC_A }]);
+    if (kind !== "missing") db.seed("accounts", [account(ACC_A, kind === "deleted"
+      ? { deletedAt: "yesterday" }
+      : { memberUids: [mate] })]);
+    const resolved = await make().bootstrapAccount(uid);
+    expect(resolved.id).not.toBe(ACC_A);
+    expect(resolved.memberUids).toContain(uid);
+    expect((await make().bootstrapAccount(uid)).id).toBe(resolved.id);
+  });
+
+  it("concurrent initial bootstraps converge through the transactional pointer claim", async () => {
+    db.data.clear();
+    db.seed("users", [{ id: uid }]);
+    // Model Firestore's serializable transactions. The shared fake deliberately
+    // does not model retries; serialize only transaction commits in this check.
+    const transaction = db.runTransaction.bind(db);
+    let tail: Promise<unknown> = Promise.resolve();
+    const spy = jest.spyOn(db, "runTransaction").mockImplementation((fn) => {
+      const next = tail.then(() => transaction(fn));
+      tail = next;
+      return next as never;
+    });
+    try {
+      const [first, second] = await Promise.all([make().bootstrapAccount(uid), make().bootstrapAccount(uid)]);
+      expect(first.id).toBe(second.id);
+      expect(db.all("accounts")).toHaveLength(1);
+      expect(spy).toHaveBeenCalledTimes(2);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
 describe("POST /v1/accounts — create a channel", () => {
   it("creates an additional channel rather than adopting the active one", async () => {
     // `ensureDefaultAccount` is idempotent through `lastActiveAccountId`, because
@@ -264,6 +307,7 @@ describe("DELETE /v1/accounts/:id", () => {
       db.seed("packaging", [{ id: `p1-${accountId}`, accountId }]);
       db.seed("videoProjects", [{ id: `v1-${accountId}`, accountId }]);
       db.seed("events", [{ id: `e1-${accountId}`, accountId }]);
+      db.seed("invites", [{ id: `inv1-${accountId}`, accountId, email: "guest@example.com", status: "pending" }]);
     };
 
     it("deletes every tenancy collection's documents for that channel", async () => {
@@ -271,9 +315,38 @@ describe("DELETE /v1/accounts/:id", () => {
 
       await make().deleteAccount(uid, ACC_B);
 
-      for (const collection of ["ideas", "scripts", "hooks", "packaging", "videoProjects", "events"]) {
+      for (const collection of ["ideas", "scripts", "hooks", "packaging", "videoProjects"]) {
         expect(db.all(collection).filter((d) => d.accountId === ACC_B)).toEqual([]);
       }
+    });
+
+    it("purges invitations, which carry a third party's email and the channel's name", async () => {
+      // Nothing else in the codebase deletes an invite. Left behind, they kept the
+      // deleted channel's name answerable from the UNAUTHENTICATED preview route
+      // indefinitely, and kept costing every invitee an account read per inbox
+      // load — and no API could sweep them afterwards, because every path through
+      // a tombstoned account throws.
+      seedContent(ACC_B);
+      seedContent(ACC_A);
+
+      await make().deleteAccount(uid, ACC_B);
+
+      expect(db.all("invites").filter((d) => d.accountId === ACC_B)).toEqual([]);
+      // The other channel's invitations are untouched.
+      expect(db.all("invites").filter((d) => d.accountId === ACC_A)).toHaveLength(1);
+    });
+
+    it("RETAINS the telemetry log, which the content purge must not touch", async () => {
+      // Product decision: `events` is append-only telemetry and the only record of
+      // what a channel did — needed to answer a support ticket or spot abuse, and
+      // impossible to reconstruct. It is retained and simply not surfaced, rather
+      // than destroyed with the channel. Nothing in the API reads it, so keeping
+      // it exposes nothing.
+      seedContent(ACC_B);
+
+      await make().deleteAccount(uid, ACC_B);
+
+      expect(db.all("events").filter((d) => d.accountId === ACC_B).length).toBeGreaterThan(0);
     });
 
     it("leaves the OTHER channel's content completely alone", async () => {
@@ -339,14 +412,16 @@ describe("DELETE /v1/accounts/:id", () => {
         "ideas",
         Array.from({ length: 2500 }, (_, i) => ({ id: `many-${i}`, accountId: ACC_B }))
       );
-      db.seed("events", [{ id: "ev-1", accountId: ACC_B }]);
+      db.seed("videoProjects", [{ id: "vp-1", accountId: ACC_B }]);
 
+      db.seed("accounts", [account(ACC_B, { deletedAt: "now" })]);
       const { incomplete } = await repo.purgeAccountData(ACC_B, 1000);
 
       // Ideas hit the cap and are reported as unfinished...
       expect(incomplete).toContain("ideas");
-      // ...but events, last in the list, were still swept.
-      expect(db.all("events").filter((d) => d.accountId === ACC_B)).toEqual([]);
+      // ...but videoProjects, last in the list, were still swept. A per-collection
+      // cap is what stops one huge collection consuming the whole budget.
+      expect(db.all("videoProjects").filter((d) => d.accountId === ACC_B)).toEqual([]);
     });
 
     it("reports which collections it could not finish, rather than returning a bare count", async () => {
@@ -356,6 +431,7 @@ describe("DELETE /v1/accounts/:id", () => {
         Array.from({ length: 1200 }, (_, i) => ({ id: `s-${i}`, accountId: ACC_B }))
       );
 
+      db.seed("accounts", [account(ACC_B, { deletedAt: "now" })]);
       const { deleted, incomplete } = await repo.purgeAccountData(ACC_B, 900);
 
       expect(incomplete).toEqual(["scripts"]);
@@ -379,6 +455,7 @@ describe("DELETE /v1/accounts/:id", () => {
         return realBatch();
       });
 
+      db.seed("accounts", [account(ACC_B, { deletedAt: "now" })]);
       await expect(repo.purgeAccountData(ACC_B)).rejects.toThrow("firestore unavailable");
       expect(db.all(`accounts/${ACC_B}/context`)).toEqual([]);
 
@@ -454,6 +531,88 @@ describe("GET, PATCH and activate on a single channel", () => {
     await expect(make().updateAccount(uid, ACC_A, { displayName: "   " })).rejects.toMatchObject({
       statusCode: 400,
     });
+  });
+
+  it("lets an owner fix a handle, which was otherwise permanent", async () => {
+    // `adoptChannelIdentity` fills a BLANK handle from whatever channel URL
+    // onboarding was given — and onboarding is `requireRole("editor")` while
+    // rename is owner-only. So an editor could set a bare channel's handle once
+    // and no route could ever change it: adoption only fills blanks, and this
+    // patch accepted `displayName` alone.
+    db.seed("accounts", [account(ACC_A, { handle: "@wrong" })]);
+
+    await make().updateAccount(uid, ACC_A, { handle: "  @right  " });
+
+    expect(db.all("accounts").find((a) => a.id === ACC_A)!.handle).toBe("@right");
+  });
+
+  it("lets an owner clear a handle outright", async () => {
+    db.seed("accounts", [account(ACC_A, { handle: "@wrong" })]);
+
+    await make().updateAccount(uid, ACC_A, { handle: null });
+
+    expect(db.all("accounts").find((a) => a.id === ACC_A)!.handle).toBeNull();
+  });
+
+  it("refuses a rename from a member who is not an owner", async () => {
+    // The check now lives INSIDE the writing transaction. It used to be a
+    // separate read, so a demotion committing in the gap let a now-non-owner's
+    // rename land anyway.
+    db.seed("accounts", [
+      account(ACC_A, {
+        memberUids: [uid, "uid-editor"],
+        ownerUids: [uid],
+        members: { [uid]: { role: "owner" }, "uid-editor": { role: "editor" } },
+      }),
+    ]);
+
+    await expect(
+      make().updateAccount("uid-editor", ACC_A, { displayName: "Theirs" })
+    ).rejects.toMatchObject({ code: "role_forbidden" });
+
+    expect(db.all("accounts").find((a) => a.id === ACC_A)!.displayName).toBe("My Channel");
+  });
+
+  it("refuses a rename whose authorization went stale before the write", async () => {
+    // The race the transaction closes. `assertOwner` is a separate read, so a
+    // demotion committing between it and the write let a now-non-owner's rename
+    // land. Reproduced by handing the pre-check a STALE view while the stored
+    // document has already demoted the caller — exactly the state the gap leaves.
+    db.seed("accounts", [
+      account(ACC_A, { ownerUids: [], members: { [uid]: { role: "editor" } } }),
+    ]);
+    const repo = new AccountRepository();
+    const service = new AccountService(repo, new UserRepository(), new VideoProjectRepository());
+    jest
+      .spyOn(repo, "findById")
+      .mockResolvedValueOnce(account(ACC_A) as never); // still an owner, as it was a moment ago
+
+    await expect(
+      service.updateAccount(uid, ACC_A, { displayName: "Theirs" })
+    ).rejects.toMatchObject({ code: "role_forbidden" });
+
+    expect(db.all("accounts").find((a) => a.id === ACC_A)!.displayName).toBe("My Channel");
+  });
+
+  it("tells a non-member nothing about a channel's state", async () => {
+    // Ordering: membership BEFORE state. Checking `deletedAt`/`orphanedAt` first
+    // gave a caller with no right to know the channel exists three
+    // distinguishable answers — 410 for deleted, a recovery message for orphaned,
+    // and a plain 403 otherwise.
+    db.seed("accounts", [account(ACC_B, { memberUids: ["someone-else"], deletedAt: "2026-08-01" })]);
+    const deleted = await make().getAccount(uid, ACC_B).catch((error) => error);
+
+    db.seed("accounts", [account(ACC_B, { memberUids: ["someone-else"], orphanedAt: "2026-08-01" })]);
+    const orphaned = await make().getAccount(uid, ACC_B).catch((error) => error);
+
+    db.seed("accounts", [account(ACC_B, { memberUids: ["someone-else"] })]);
+    const forbidden = await make().getAccount(uid, ACC_B).catch((error) => error);
+
+    // All three look identical to a non-member.
+    for (const error of [deleted, orphaned, forbidden]) {
+      expect(error).toMatchObject({ statusCode: 403, code: "account_forbidden" });
+    }
+    expect(new Set([deleted.message, orphaned.message, forbidden.message]).size).toBe(1);
   });
 
   it("activate moves the pointer, and only to a channel the caller can enter", async () => {
@@ -533,4 +692,30 @@ describe("Phase 06b — onboarding a channel makes THAT channel onboarded", () =
     expect(user.niche).toBeUndefined();
     expect(user.targetAudience).toBeUndefined();
   });
+});
+
+it("orphaned channels are excluded from discovery and bootstrap repairs their pointer", async () => {
+  db.seed("accounts", [account(ACC_A, { orphanedAt: "now" }), account(ACC_B)]);
+  const service = make();
+  expect((await service.listAccounts(uid)).map(a => a.id)).toEqual([ACC_B]);
+  expect((await service.bootstrapAccount(uid)).id).toBe(ACC_B);
+  expect(await service.ensureDefaultAccount(uid)).toBe(ACC_B);
+  await expect(service.getAccount(uid, ACC_A)).rejects.toMatchObject({ code: "account_forbidden" });
+});
+
+it.each(["demoted", "removed"])("refuses deletion if ownership is %s after the service precheck", async change => {
+  const repo = new AccountRepository();
+  const original = repo.softDeleteUnlessLast;
+  repo.softDeleteUnlessLast = async (id, caller) => {
+    db.seed("accounts", [account(ACC_A, change === "demoted"
+      ? { members: { [uid]: { role: "editor" }, [mate]: { role: "owner" } }, ownerUids: [mate], billingOwnerUid: mate }
+      : { members: { [mate]: { role: "owner" } }, memberUids: [mate], ownerUids: [mate], billingOwnerUid: mate })]);
+    return original(id, caller);
+  };
+  const purge = jest.spyOn(repo, "purgeAccountData");
+  const service = new AccountService(repo, new UserRepository(), new VideoProjectRepository());
+  await expect(service.deleteAccount(uid, ACC_A)).rejects.toMatchObject({ statusCode: 403 });
+  expect(purge).not.toHaveBeenCalled();
+  expect(db.all("accounts").find(a => a.id === ACC_A)!.deletedAt).toBeNull();
+  expect(db.all("videoProjects").find(p => p.id === "p1")).toBeDefined();
 });

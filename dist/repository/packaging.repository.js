@@ -1,3 +1,4 @@
+import { assertGeneration, generationWrite } from "./generation-guard.js";
 import { isDocumentId } from "../utlils/firestore-id.js";
 import { db, firebase } from "../config/firebase.js";
 class PackagingRepository {
@@ -63,12 +64,13 @@ class PackagingRepository {
                 throw error;
             }
         };
-        this.update = async (packagingId, data) => {
+        this.update = async (packagingId, data, charge) => {
             try {
-                await this.db
-                    .collection(this.collection)
-                    .doc(packagingId)
-                    .update(data);
+                const ref = this.db.collection(this.collection).doc(packagingId);
+                if (charge)
+                    await generationWrite(charge, tx => tx.update(ref, data));
+                else
+                    await ref.update(data);
                 return { id: packagingId, ...data };
             }
             catch (error) {
@@ -87,8 +89,9 @@ class PackagingRepository {
         // An OBJECT, not two positional strings — `userId` and `accountId` are both
         // strings, so a sixth `accountId: string` parameter would let an existing
         // 5-argument call keep compiling with the wrong value in the slot.
-        { userId, accountId }, field, item, canonical) => {
+        { userId, accountId }, field, item, canonical, charge) => {
             return this.db.runTransaction(async (txn) => {
+                await assertGeneration(txn, charge);
                 // A point read, because the id IS the videoProjectId. This used to be a
                 // `where("videoProjectId", "==", ...)` query, which existed only to find
                 // documents the old auto-ID save path had written — there are none.
@@ -153,9 +156,10 @@ class PackagingRepository {
         // already used dotted paths; these two just didn't follow the pattern. An item
         // this call doesn't touch is now untouched in the write, not rewritten to the
         // value it happened to have when we looked.
-        this.transitionItemStatuses = async (packagingId, from, to, docFields) => {
+        this.transitionItemStatuses = async (packagingId, from, to, docFields, charge) => {
             const ref = this.db.collection(this.collection).doc(packagingId);
             await this.db.runTransaction(async (txn) => {
+                await assertGeneration(txn, charge);
                 const doc = await txn.get(ref);
                 if (!doc.exists)
                     return;
@@ -172,19 +176,19 @@ class PackagingRepository {
         // Inverse of markStale, for the "Keep as-is" path: the creator accepted the
         // content as-is, so the doc must stop reporting stale or every card keeps an
         // "Outdated" chip under a banner they already dismissed.
-        this.clearStale = async (packagingId) => {
+        this.clearStale = async (packagingId, charge) => {
             await this.transitionItemStatuses(packagingId, "stale", "completed", {
                 isStale: false,
                 staleReason: null,
                 staleSince: null,
-            });
+            }, charge);
         };
-        this.markStale = async (packagingId, reason) => {
+        this.markStale = async (packagingId, reason, charge) => {
             await this.transitionItemStatuses(packagingId, "completed", "stale", {
                 isStale: true,
                 staleReason: reason,
                 staleSince: firebase.firestore.FieldValue.serverTimestamp(),
-            });
+            }, charge);
         };
         this.db = db;
         this.collection = "packaging" /* COLLECTIONS.PACKAGING */;

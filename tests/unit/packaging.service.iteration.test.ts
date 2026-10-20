@@ -1,3 +1,4 @@
+import { unmeteredSteps } from "../helpers/step-runner";
 jest.mock("firebase-admin", () => ({
   apps: [],
   initializeApp: jest.fn(),
@@ -21,6 +22,8 @@ jest.mock("../../src/config/firebase", () => ({
   },
 }));
 
+import StepRunner from "../../src/service/step-runner";
+import type BillingRepository from "../../src/repository/billing.repository";
 import PackagingService from "../../src/service/packaging.service";
 import PackagingRepository from "../../src/repository/packaging.repository";
 import { generateStreamingContent } from "../../src/utlils/ai";
@@ -88,7 +91,7 @@ describe("PackagingService — regenerateItem", () => {
 
   beforeEach(() => {
     mockRepo = new MockPackagingRepo() as jest.Mocked<PackagingRepository>;
-    service = new PackagingService(mockRepo, makeVp(), makeContextService(), fakeAccountRepo());
+    service = new PackagingService(mockRepo, makeVp(), makeContextService(), fakeAccountRepo(), undefined, unmeteredSteps);
     // Real generator shape for titles: { titles: [{ title, characterCount }] }
     mockGenerate.mockResolvedValue(makeStream('{"titles":[{"title":"New A","characterCount":40},{"title":"New B","characterCount":42},{"title":"New C","characterCount":44}]}'));
   });
@@ -242,7 +245,7 @@ describe("PackagingService — regenerateItem project sync (DA6 stale clear)", (
       startStep: jest.fn().mockResolvedValue(undefined),
       completeStep: jest.fn().mockResolvedValue(undefined),
     };
-    service = new PackagingService(mockRepo, mockVp as any, makeContextService(), fakeAccountRepo());
+    service = new PackagingService(mockRepo, mockVp as any, makeContextService(), fakeAccountRepo(), undefined, unmeteredSteps);
     mockGenerate.mockResolvedValue(makeStream('{"titles":[{"title":"New A","characterCount":40}]}'));
     mockRepo.update = jest.fn().mockResolvedValue(undefined);
   });
@@ -367,15 +370,23 @@ describe("PackagingService — regenerateItem project sync (DA6 stale clear)", (
     expect(mockVp.setThumbnailHint).not.toHaveBeenCalled();
   });
 
-  it("sets thumbnailHint to null when the regenerated thumbnail has no briefs", async () => {
+  it("refuses an empty regenerated thumbnail instead of erasing the briefs it replaces", async () => {
+    // `{"descriptions":[]}` satisfies the response schema and passes
+    // `normalizeField`, which only checks the TYPE. Persisting it marked the item
+    // completed, kept the charge, and destroyed the briefs the user already had —
+    // a regenerate write REPLACES content. 503 so the caller can retry, thrown
+    // before the write so the reservation is released and nothing is billed.
     mockGenerate.mockResolvedValue(makeStream('{"descriptions":[]}'));
     mockRepo.get = jest.fn().mockResolvedValue(
       linkedPkg({ title: "completed", description: "completed", thumbnail: "completed", shorts: "completed" })
     );
 
-    await service.regenerateItem(testOwner("user-1"), "pkg-1", "thumbnail", "script", "My Title");
+    await expect(
+      service.regenerateItem(testOwner("user-1"), "pkg-1", "thumbnail", "script", "My Title")
+    ).rejects.toMatchObject({ statusCode: 503 });
 
-    expect(mockVp.setThumbnailHint).toHaveBeenCalledWith("proj-1", null, testOwner("user-1"));
+    expect(mockRepo.update).not.toHaveBeenCalled();
+    expect(mockVp.setThumbnailHint).not.toHaveBeenCalled();
   });
 
   it("still resolves the regeneration when the thumbnailHint refresh fails (best-effort)", async () => {
@@ -390,6 +401,68 @@ describe("PackagingService — regenerateItem project sync (DA6 stale clear)", (
     expect(result.id).toBe("pkg-1");
     expect(mockVp.setThumbnailHint).toHaveBeenCalled();
   });
+
+  // Below: BLANK-BUT-NONEMPTY output — every element/slot is present (satisfies
+  // the response schema and normalizeField's type check) but carries no real
+  // text. The `{"descriptions":[]}` case above is structurally empty and was
+  // already caught before this fix; these are not, and are what FIX 1 targets.
+
+  it("refuses a regenerated title whose three variations are all blank text", async () => {
+    mockGenerate.mockResolvedValue(makeStream(
+      '{"titles":[{"title":"","score":1,"reason":"a"},{"title":"  ","score":1,"reason":"b"},{"title":"","score":1,"reason":"c"}]}'
+    ));
+    mockRepo.get = jest.fn().mockResolvedValue(
+      linkedPkg({ title: "completed", description: "completed", thumbnail: "completed", shorts: "completed" })
+    );
+
+    await expect(
+      service.regenerateItem(testOwner("user-1"), "pkg-1", "title", "script text")
+    ).rejects.toMatchObject({ statusCode: 503 });
+
+    expect(mockRepo.update).not.toHaveBeenCalled();
+  });
+
+  it("refuses a regenerated description that is only whitespace", async () => {
+    mockGenerate.mockResolvedValue(makeStream('{"description":"   "}'));
+    mockRepo.get = jest.fn().mockResolvedValue(
+      linkedPkg({ title: "completed", description: "completed", thumbnail: "completed", shorts: "completed" })
+    );
+
+    await expect(
+      service.regenerateItem(testOwner("user-1"), "pkg-1", "description", "script", "My Title")
+    ).rejects.toMatchObject({ statusCode: 503 });
+
+    expect(mockRepo.update).not.toHaveBeenCalled();
+  });
+
+  it("refuses a regenerated thumbnail whose three briefs are all blank text", async () => {
+    mockGenerate.mockResolvedValue(makeStream('{"descriptions":["", " ", ""]}'));
+    mockRepo.get = jest.fn().mockResolvedValue(
+      linkedPkg({ title: "completed", description: "completed", thumbnail: "completed", shorts: "completed" })
+    );
+
+    await expect(
+      service.regenerateItem(testOwner("user-1"), "pkg-1", "thumbnail", "script", "My Title")
+    ).rejects.toMatchObject({ statusCode: 503 });
+
+    expect(mockRepo.update).not.toHaveBeenCalled();
+    expect(mockVp.setThumbnailHint).not.toHaveBeenCalled();
+  });
+
+  it("refuses a regenerated Shorts script whose segments carry no text", async () => {
+    mockGenerate.mockResolvedValue(makeStream(
+      '{"segments":[{"startTime":"0:00","endTime":"0:05","content":"","type":"hook"}],"totalDuration":"0:60"}'
+    ));
+    mockRepo.get = jest.fn().mockResolvedValue(
+      linkedPkg({ title: "completed", description: "completed", thumbnail: "completed", shorts: "completed" })
+    );
+
+    await expect(
+      service.regenerateItem(testOwner("user-1"), "pkg-1", "shorts", "script")
+    ).rejects.toMatchObject({ statusCode: 503 });
+
+    expect(mockRepo.update).not.toHaveBeenCalled();
+  });
 });
 
 describe("PackagingService — savePackaging with videoProjectId", () => {
@@ -400,11 +473,62 @@ describe("PackagingService — savePackaging with videoProjectId", () => {
   beforeEach(() => {
     mockRepo = new MockPackagingRepo() as jest.Mocked<PackagingRepository>;
     mockVp = makeVp();
-    service = new PackagingService(mockRepo, mockVp, makeContextService(), fakeAccountRepo());
+    service = new PackagingService(mockRepo, mockVp, makeContextService(), fakeAccountRepo(), undefined, unmeteredSteps);
+    mockRepo.update = jest.fn().mockResolvedValue({ id: "proj-1" });
     // Phase 05a: creates go to doc(videoProjectId), so the id IS the project id.
     mockRepo.saveWithId = jest.fn(async (id: string, _data: Record<string, unknown>) => ({ id }));
     // savePackaging upserts by project: no existing doc -> create path.
     mockRepo.get = jest.fn().mockResolvedValue(null);
+  });
+
+  it("synchronizes an edited selected title in the scoped save without completing the title step", async () => {
+    mockRepo.get.mockResolvedValue({ id: "proj-1", titles: [{ title: "Old" }], selectedTitleIndex: 0 } as never);
+    mockRepo.update.mockResolvedValue({ id: "proj-1" });
+
+    await service.savePackaging(testOwner("user-1"), { titles: [{ title: "  Edited  " }] }, "proj-1");
+
+    expect(mockVp.update).toHaveBeenCalledWith("proj-1", testOwner("user-1"), { title: "Edited" });
+    expect(mockVp.completeStep).not.toHaveBeenCalled();
+  });
+
+  it.each([null, undefined])("does not select or promote a title when the selection is %s", async (selectedTitleIndex) => {
+    mockRepo.get.mockResolvedValue({ id: "proj-1", titles: [{ title: "Old" }], selectedTitleIndex } as never);
+    mockRepo.update.mockResolvedValue({ id: "proj-1" });
+
+    await service.savePackaging(testOwner("user-1"), { titles: [{ title: "Edited" }] }, "proj-1");
+
+    expect(mockVp.update).not.toHaveBeenCalled();
+    expect(mockVp.completeStep).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a project rename failure and repairs it when the same saved edit is retried", async () => {
+    let stored: Record<string, unknown> & { id: string } = { id: "proj-1", titles: [{ title: "Old" }], selectedTitleIndex: 0 };
+    mockRepo.get.mockImplementation(async () => stored as never);
+    mockRepo.update.mockImplementation(async (_id, patch) => {
+      stored = { ...stored, ...patch };
+      return stored;
+    });
+    mockVp.update.mockRejectedValueOnce(new Error("rename unavailable"));
+    const edit = { titles: [{ title: "Edited" }] };
+
+    await expect(service.savePackaging(testOwner("user-1"), edit, "proj-1")).rejects.toThrow("rename unavailable");
+    expect(stored.titles).toEqual(edit.titles);
+    await service.savePackaging(testOwner("user-1"), edit, "proj-1");
+
+    expect(mockVp.update).toHaveBeenCalledTimes(2);
+    expect(mockVp.update).toHaveBeenLastCalledWith("proj-1", testOwner("user-1"), { title: "Edited" });
+  });
+
+  it.each([
+    { selectedTitleIndex: 2, titles: [{ title: "Only one" }] },
+    { selectedTitleIndex: 0.5, titles: [{ title: "One" }] },
+    { selectedTitleIndex: 0, titles: [{ title: 42 }] },
+    { selectedTitleIndex: 0, titles: [{ title: "   " }] },
+  ])("rejects an invalid merged selected title before persisting: %j", async (edit) => {
+    mockRepo.get.mockResolvedValue({ id: "proj-1", titles: [{ title: "Old" }], selectedTitleIndex: 0 } as never);
+    await expect(service.savePackaging(testOwner("user-1"), edit, "proj-1")).rejects.toMatchObject({ statusCode: 400 });
+    expect(mockRepo.update).not.toHaveBeenCalled();
+    expect(mockVp.update).not.toHaveBeenCalled();
   });
 
   it("saves videoProjectId on the document when provided", async () => {
@@ -592,7 +716,7 @@ describe("PackagingService — selectTitle (title continuity §7.3)", () => {
   beforeEach(() => {
     mockRepo = new MockPackagingRepo() as jest.Mocked<PackagingRepository>;
     mockVp = makeVp();
-    service = new PackagingService(mockRepo, mockVp, makeContextService(), fakeAccountRepo());
+    service = new PackagingService(mockRepo, mockVp, makeContextService(), fakeAccountRepo(), undefined, unmeteredSteps);
     mockRepo.get = jest.fn().mockResolvedValue({
       id: "pkg-1",
       createdBy: "user-1",
@@ -657,7 +781,7 @@ describe("PackagingService — generation persists + drives the right step", () 
     mockGenerate.mockResolvedValue(makeStream(JSON.stringify({ titles: fakeTitles })));
     const ctx = makeContextService({ selectedHook: "my hook opener" });
     const vp = makeVp();
-    service = new PackagingService(mockRepo, vp, ctx, fakeAccountRepo());
+    service = new PackagingService(mockRepo, vp, ctx, fakeAccountRepo(), undefined, unmeteredSteps);
     mockRepo.upsertGeneratedItem = jest.fn().mockResolvedValue({ packagingId: "proj-1", created: false, statuses: { ...allNotStarted, title: "completed" } });
 
     const result = await service.generateTitle(testOwner("user-1"), "script text", "proj-1");
@@ -682,7 +806,7 @@ describe("PackagingService — generation persists + drives the right step", () 
   it("links the doc only when the upsert reports it was created", async () => {
     mockGenerate.mockResolvedValue(makeStream(JSON.stringify({ titles: [{ title: "T", characterCount: 1 }] })));
     const vp = makeVp();
-    service = new PackagingService(mockRepo, vp, makeContextService({ selectedHook: "h" }), fakeAccountRepo());
+    service = new PackagingService(mockRepo, vp, makeContextService({ selectedHook: "h" }), fakeAccountRepo(), undefined, unmeteredSteps);
     mockRepo.upsertGeneratedItem = jest.fn().mockResolvedValue({ packagingId: "proj-1", created: true, statuses: { ...allNotStarted, title: "completed" } });
 
     await service.generateTitle(testOwner("user-1"), "script text", "proj-1");
@@ -693,7 +817,7 @@ describe("PackagingService — generation persists + drives the right step", () 
   it("completes the PACKAGING step once its three items exist", async () => {
     mockGenerate.mockResolvedValue(makeStream(shortsJson));
     const vp = makeVp();
-    service = new PackagingService(mockRepo, vp, makeContextService(), fakeAccountRepo());
+    service = new PackagingService(mockRepo, vp, makeContextService(), fakeAccountRepo(), undefined, unmeteredSteps);
     mockRepo.upsertGeneratedItem = jest.fn().mockResolvedValue({ packagingId: "proj-1", created: false, statuses: { title: "completed", description: "completed", thumbnail: "completed", shorts: "completed" } });
 
     await service.generateShorts(testOwner("user-1"), "script text", 60, "proj-1");
@@ -705,7 +829,7 @@ describe("PackagingService — generation persists + drives the right step", () 
   it("does NOT complete packaging while an item is missing", async () => {
     mockGenerate.mockResolvedValue(makeStream(shortsJson));
     const vp = makeVp();
-    service = new PackagingService(mockRepo, vp, makeContextService(), fakeAccountRepo());
+    service = new PackagingService(mockRepo, vp, makeContextService(), fakeAccountRepo(), undefined, unmeteredSteps);
     mockRepo.upsertGeneratedItem = jest.fn().mockResolvedValue({ packagingId: "proj-1", created: false, statuses: { title: "completed", description: "not_started", thumbnail: "completed", shorts: "completed" } });
 
     await service.generateShorts(testOwner("user-1"), "script text", 60, "proj-1");
@@ -718,7 +842,7 @@ describe("PackagingService — generation persists + drives the right step", () 
     const fakeTitles = [{ title: "Title B", characterCount: 50 }];
     mockGenerate.mockResolvedValue(makeStream(JSON.stringify({ titles: fakeTitles })));
     const ctx = makeContextService();
-    service = new PackagingService(mockRepo, makeVp(), ctx, fakeAccountRepo());
+    service = new PackagingService(mockRepo, makeVp(), ctx, fakeAccountRepo(), undefined, unmeteredSteps);
     mockRepo.upsertGeneratedItem = jest.fn();
 
     const result = await service.generateTitle(testOwner("user-1"), "script text");
@@ -726,6 +850,61 @@ describe("PackagingService — generation persists + drives the right step", () 
     expect(ctx.assemble).toHaveBeenCalledWith(testOwner("user-1"), {});
     expect(mockRepo.upsertGeneratedItem).not.toHaveBeenCalled();
     expect(result).toEqual({ titles: fakeTitles });
+  });
+
+  // Persisted path (videoProjectId present): blank-but-nonempty output must be
+  // rejected BEFORE persistGeneratedItem ever calls upsertGeneratedItem — a
+  // regression here would silently persist and charge for unusable content.
+  it("rejects a persisted title generation whose variations are all blank text", async () => {
+    mockGenerate.mockResolvedValue(makeStream(
+      '{"titles":[{"title":"","score":1,"reason":"a"},{"title":" ","score":1,"reason":"b"},{"title":"","score":1,"reason":"c"}]}'
+    ));
+    service = new PackagingService(mockRepo, makeVp(), makeContextService(), fakeAccountRepo(), undefined, unmeteredSteps);
+    mockRepo.upsertGeneratedItem = jest.fn();
+
+    await expect(
+      service.generateTitle(testOwner("user-1"), "script text", "proj-1")
+    ).rejects.toMatchObject({ statusCode: 503 });
+
+    expect(mockRepo.upsertGeneratedItem).not.toHaveBeenCalled();
+  });
+
+  it("rejects a persisted description generation that is only whitespace", async () => {
+    mockGenerate.mockResolvedValue(makeStream('{"description":"   "}'));
+    service = new PackagingService(mockRepo, makeVp(), makeContextService(), fakeAccountRepo(), undefined, unmeteredSteps);
+    mockRepo.upsertGeneratedItem = jest.fn();
+
+    await expect(
+      service.generateDescription(testOwner("user-1"), "script text", "A Title", "proj-1")
+    ).rejects.toMatchObject({ statusCode: 503 });
+
+    expect(mockRepo.upsertGeneratedItem).not.toHaveBeenCalled();
+  });
+
+  it("rejects a persisted thumbnail generation whose briefs are all blank text", async () => {
+    mockGenerate.mockResolvedValue(makeStream('{"descriptions":["", " ", ""]}'));
+    service = new PackagingService(mockRepo, makeVp(), makeContextService(), fakeAccountRepo(), undefined, unmeteredSteps);
+    mockRepo.upsertGeneratedItem = jest.fn();
+
+    await expect(
+      service.generateThumbnail(testOwner("user-1"), "script text", "A Title", "proj-1")
+    ).rejects.toMatchObject({ statusCode: 503 });
+
+    expect(mockRepo.upsertGeneratedItem).not.toHaveBeenCalled();
+  });
+
+  it("rejects a persisted Shorts generation whose segments carry no text", async () => {
+    mockGenerate.mockResolvedValue(makeStream(
+      '{"segments":[{"startTime":"0:00","endTime":"0:05","content":"","type":"hook"}],"totalDuration":"0:60"}'
+    ));
+    service = new PackagingService(mockRepo, makeVp(), makeContextService(), fakeAccountRepo(), undefined, unmeteredSteps);
+    mockRepo.upsertGeneratedItem = jest.fn();
+
+    await expect(
+      service.generateShorts(testOwner("user-1"), "script text", 60, "proj-1")
+    ).rejects.toMatchObject({ statusCode: 503 });
+
+    expect(mockRepo.upsertGeneratedItem).not.toHaveBeenCalled();
   });
 });
 
@@ -735,7 +914,7 @@ describe("PackagingService — exportPackaging", () => {
 
   beforeEach(() => {
     mockRepo = new MockPackagingRepo() as jest.Mocked<PackagingRepository>;
-    service = new PackagingService(mockRepo, makeVp(), makeContextService(), fakeAccountRepo());
+    service = new PackagingService(mockRepo, makeVp(), makeContextService(), fakeAccountRepo(), undefined, unmeteredSteps);
   });
 
   it("throws 404 if not found", async () => {
@@ -818,5 +997,134 @@ describe("PackagingService — exportPackaging", () => {
     expect(result.text).toContain("1. Brief one  ← selected");
     // No title selected yet -> no title is marked.
     expect(result.text).toContain("1. Only\n");
+  });
+});
+
+/**
+ * The stateless PREVIEW path (no videoProjectId) reserved credits, generated, and
+ * returned the model's output directly — skipping `persistGeneratedItem`, and with it
+ * the `isEmptyField` rejection. So `{"description":""}` settled as a SUCCESS: the
+ * caller was billed for a blank result.
+ *
+ * Previews are a supported mode (packaging.validation.ts allows a bodyless project),
+ * so this is a live path, not a theoretical one.
+ *
+ * Needs its own runner: `makeTestStepRunner` returns no charge when `spec.projectId`
+ * is absent, which is exactly the case under test, so it cannot observe the billing.
+ * The real `reserve` DOES reserve for a preview — no project id only means no project
+ * lock, the cost still applies.
+ */
+describe("a preview that generates nothing is not billed for it", () => {
+  const settle = (raw: string) => {
+    const settlements: Array<{ cost: number; failed: boolean }> = [];
+    const steps = new StepRunner({
+      reserve: async (spec: { kind: string }) => ({ token: "tok", cost: 2, kind: spec.kind }),
+      settle: async (charge: { cost: number }, failed: boolean) => {
+        settlements.push({ cost: charge.cost, failed });
+        return true;
+      },
+    } as unknown as BillingRepository);
+
+    mockGenerate.mockResolvedValue(makeStream(raw));
+    const service = new PackagingService(
+      mockPkg as unknown as PackagingRepository,
+      makeVp(),
+      makeContextService(),
+      fakeAccountRepo(),
+      undefined,
+      steps
+    );
+    return { service, settlements };
+  };
+
+  it("refuses an empty description preview and RELEASES the reservation", async () => {
+    const { service, settlements } = settle('{"description":""}');
+
+    await expect(
+      service.generateDescription(testOwner("user-1"), "the script", "A Title")
+    ).rejects.toMatchObject({ statusCode: 503 });
+
+    // failed: true is what makes step-runner release rather than charge.
+    expect(settlements).toEqual([{ cost: 2, failed: true }]);
+  });
+
+  it("refuses an empty shorts preview", async () => {
+    const { service, settlements } = settle('{"segments":[],"totalDuration":0}');
+
+    await expect(
+      service.generateShorts(testOwner("user-1"), "the script", 30)
+    ).rejects.toMatchObject({ statusCode: 503 });
+
+    expect(settlements).toEqual([{ cost: 2, failed: true }]);
+  });
+
+  // Blank-but-nonempty: the response schema's element count is satisfied, but
+  // every text-carrying field inside is blank. Rung guarded by rejectEmptyGeneration
+  // BEFORE the `if (!videoProjectId) return raw` preview short-circuit — without
+  // it these two previews would settle as billed successes.
+  it("refuses a title preview whose three variations are all blank text", async () => {
+    const { service, settlements } = settle(
+      '{"titles":[{"title":"","score":1,"reason":"a"},{"title":" ","score":1,"reason":"b"},{"title":"","score":1,"reason":"c"}]}'
+    );
+
+    await expect(
+      service.generateTitle(testOwner("user-1"), "the script")
+    ).rejects.toMatchObject({ statusCode: 503 });
+
+    expect(settlements).toEqual([{ cost: 2, failed: true }]);
+  });
+
+  it("refuses a Shorts preview whose segments carry no text", async () => {
+    const { service, settlements } = settle(
+      '{"segments":[{"startTime":"0:00","endTime":"0:05","content":"","type":"hook"}],"totalDuration":"0:60"}'
+    );
+
+    await expect(
+      service.generateShorts(testOwner("user-1"), "the script", 30)
+    ).rejects.toMatchObject({ statusCode: 503 });
+
+    expect(settlements).toEqual([{ cost: 2, failed: true }]);
+  });
+
+  it("refuses a thumbnail preview whose three briefs are all blank text", async () => {
+    const { service, settlements } = settle('{"descriptions":["", " ", ""]}');
+
+    await expect(
+      service.generateThumbnail(testOwner("user-1"), "the script", "A Title")
+    ).rejects.toMatchObject({ statusCode: 503 });
+
+    expect(settlements).toEqual([{ cost: 2, failed: true }]);
+  });
+
+  it("still bills a preview that actually produced something", async () => {
+    // The inverse, so this pair cannot be satisfied by refusing everything.
+    const { service, settlements } = settle('{"description":"A real description."}');
+
+    await service.generateDescription(testOwner("user-1"), "the script", "A Title");
+
+    expect(settlements).toEqual([{ cost: 2, failed: false }]);
+  });
+
+  // Legitimate-but-minimal output must not be caught by the stricter check:
+  // a real, short title and a single real Shorts segment both carry actual
+  // text, so neither is "empty".
+  it("still bills a title preview with a genuinely short (but non-blank) variation", async () => {
+    const { service, settlements } = settle(
+      '{"titles":[{"title":"Go","score":1,"reason":"a"},{"title":"Stop","score":1,"reason":"b"},{"title":"Now","score":1,"reason":"c"}]}'
+    );
+
+    await service.generateTitle(testOwner("user-1"), "the script");
+
+    expect(settlements).toEqual([{ cost: 2, failed: false }]);
+  });
+
+  it("still bills a single-segment Shorts preview with real content", async () => {
+    const { service, settlements } = settle(
+      '{"segments":[{"startTime":"0:00","endTime":"0:15","content":"Hook","type":"hook"}],"totalDuration":"0:15"}'
+    );
+
+    await service.generateShorts(testOwner("user-1"), "the script", 15);
+
+    expect(settlements).toEqual([{ cost: 2, failed: false }]);
   });
 });

@@ -1,75 +1,59 @@
-import StepRunner from "../../src/service/step-runner";
-import VideoProjectRepository from "../../src/repository/video-project.repository";
+import type { CreditReservation } from "../../src/repository/billing.repository";
+import { CREDIT_COSTS } from "../../src/constants/credits";
+import { KIND_STEP, REQUIRES } from "../../src/constants/pipeline";
+import StepRunner, { GenerationSpec } from "../../src/service/step-runner";
 import { IVideoProject, StepName } from "../../src/types/routes/video-project";
-import { BadRequest, Conflict, Forbidden, NotFound } from "../../src/utlils/errors";
-import { RecordOwner } from "../../src/utlils/content";
+import { BadRequest, Forbidden, NotFound } from "../../src/utlils/errors";
 
-/**
- * A StepRunner backed by an in-memory project, for SERVICE-level flow tests.
- *
- * The real `acquireStep` is a Firestore transaction, tested directly against the
- * transaction mock in `tests/unit/repository/step-lock.behaviour.test.ts`. That
- * suite is the AUTHORITY on refusals; this helper only mirrors the observable
- * contract so service flow tests can drive the surrounding flow without reaching
- * for Firestore.
- *
- * Read that distinction literally: an assertion made here about a 400 or a 409 is
- * an assertion about the code below, not about production. It was written that way
- * once — the two service-level lock assertions passed while `acquireStep` had no
- * test at all. Put refusal tests in the repository suite; use this one for what
- * happens AROUND the seam.
- */
+/** Service-flow stub only. Real locks/debits/refunds are tested against BillingRepository. */
 export function makeTestStepRunner(opts: {
-  /**
-   * The project to guard. Accepts a thunk so a suite can hand over the same
-   * source the service reads (`() => vpService.getById()`) instead of a snapshot
-   * that may be replaced per test.
-   */
-  project:
-    | IVideoProject
-    | (() => IVideoProject | Promise<IVideoProject>);
-  /** Called with the update the real transaction would have written. */
+  project: IVideoProject | (() => IVideoProject | Promise<IVideoProject>);
+  reject?: Error;
   onAcquire?: (step: StepName) => void;
   onRelease?: (step: StepName, prior: unknown) => void;
 }): StepRunner {
-  const projects = {
-    acquireStep: async (
-      _projectId: string,
-      step: StepName,
-      owner: RecordOwner,
-      guard: { requires: readonly StepName[]; lockMs: number }
-    ): Promise<IVideoProject> => {
-      const project =
-        typeof opts.project === "function" ? await opts.project() : opts.project;
-      if (!project) throw NotFound("Video project not found");
-      if (project.isDeleted) throw NotFound("Video project not found");
-      if (project.accountId !== owner.accountId) throw Forbidden();
-
-      for (const required of guard.requires) {
-        if (project.pipeline[required]?.status !== "completed") {
-          throw BadRequest(
-            `${required} must be completed before generating ${step}`
-          );
-        }
+  /**
+   * Typed against the real `Pick<BillingRepository, "reserve" | "settle">`, so a drift
+   * from either signature is a compile error rather than a fake quietly standing in for
+   * something it is not. It used to be laundered through
+   * `as unknown as BillingRepository`, which hid a `reserve` returning 3 of
+   * `CreditReservation`'s 10 required fields — so any service reading `charge.cost`,
+   * `charge.token` or `charge.periodStart` was reading undefined in these tests.
+   */
+  return new StepRunner({
+    reserve: async (spec: GenerationSpec): Promise<CreditReservation | null> => {
+      if (opts.reject) throw opts.reject;
+      const step = spec.mode === "regenerate" ? undefined : KIND_STEP[spec.kind];
+      if (!step || !spec.projectId) return null;
+      const project = typeof opts.project === "function" ? await opts.project() : opts.project;
+      if (!project || project.isDeleted) throw NotFound();
+      if (project.accountId !== spec.actor.accountId) throw Forbidden();
+      for (const required of REQUIRES[step]) {
+        if (project.pipeline[required]?.status !== "completed") throw BadRequest(`${required} must be completed before generating ${step}`);
       }
-
-      const state = project.pipeline[step];
-      const startedMs = state?.startedAt?.toMillis?.() ?? 0;
-      if (
-        state?.status === "in_progress" &&
-        Date.now() - startedMs < guard.lockMs
-      ) {
-        throw Conflict(`${step} generation already in progress for this project`);
-      }
-
       opts.onAcquire?.(step);
-      return project;
+      return {
+        ownerUid: spec.actor.userId,
+        accountId: spec.actor.accountId,
+        actorUserId: spec.actor.userId,
+        periodStart: "2026-09",
+        cost: CREDIT_COSTS[spec.kind],
+        debited: CREDIT_COSTS[spec.kind] > 0,
+        counter: spec.kind,
+        lockKey: `${spec.actor.accountId}_${spec.kind}`,
+        token: `test-token-${spec.kind}`,
+        kind: spec.kind,
+        projectId: spec.projectId,
+        step,
+        prior: project.pipeline[step],
+      };
     },
-
-    releaseStep: async (_projectId: string, step: StepName, prior: unknown) => {
-      opts.onRelease?.(step, prior);
+    settle: async (charge: CreditReservation | null, failed: boolean) => {
+      if (failed && charge && charge.step) opts.onRelease?.(charge.step, charge.prior);
+      return true;
     },
-  } as unknown as VideoProjectRepository;
-
-  return new StepRunner(projects);
+  });
 }
+
+/** Service tests isolate billing; repository behaviour tests exercise charging. */
+export const unmeteredSteps = { run: async (_spec: unknown, generate: () => Promise<unknown>) => generate() } as StepRunner;

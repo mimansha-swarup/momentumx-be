@@ -74,8 +74,8 @@ describe("the account repository refuses a path-shaped id on every entry point",
   });
 
   it.each([
-    ["writeContext", (r: AccountRepository, id: string) => r.writeContext(id, { niche: "x" })],
-    ["update", (r: AccountRepository, id: string) => r.update(id, { displayName: "x" })],
+    ["writeContext", (r: AccountRepository, id: string) => r.writeContext(id, { niche: "x" }, "owner")],
+    ["update", (r: AccountRepository, id: string) => r.update(id, { displayName: "x" }, "owner")],
   ])("%s refuses rather than writing to a path it was handed", async (_n, call) => {
     await expect(call(new AccountRepository(), "victim/context/channel")).rejects.toMatchObject({
       statusCode: 404,

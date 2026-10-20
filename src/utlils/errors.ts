@@ -11,7 +11,10 @@ export type ErrorCode =
   | "account_forbidden"
   | "wrong_account"
   | "role_forbidden"
-  | "insufficient_credits";
+  | "insufficient_credits"
+  | "provider_quota_exceeded" | "provider_rate_limited"
+  | "invite_email_mismatch" | "invite_expired" | "invite_used"
+  | "invite_email_unverified" | "invite_revoked";
 
 export class HttpError extends Error {
   statusCode: number;
@@ -90,3 +93,7 @@ export const RoleForbidden = (
 /** A tombstoned channel. 410, not 404 — it existed, and saying so is repairable. */
 export const Gone = (message = "This channel has been deleted", detail?: unknown): HttpError =>
   new HttpError(message, 410, detail);
+
+/** Generation gate only; saves and exports never call this. */
+export const InsufficientCredits = (message: string, detail?: unknown): HttpError =>
+  new HttpError(message, 402, detail, "insufficient_credits");

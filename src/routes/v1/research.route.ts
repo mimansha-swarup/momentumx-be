@@ -1,3 +1,4 @@
+import { requireRole } from "../../middleware/role.js";
 import { Router } from "express";
 import { authMiddleware } from "../../middleware/auth.js";
 import { accountMiddleware } from "../../middleware/account.js";
@@ -7,6 +8,7 @@ const router = Router();
 
 router.use(authMiddleware);
 router.use(accountMiddleware);
+router.use(requireRole("editor"));
 router.get("/trending", researchController.getTrending);
 router.get("/competitors", researchController.getCompetitors);
 router.get("/keywords", researchController.getKeywords);

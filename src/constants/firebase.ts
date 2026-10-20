@@ -111,7 +111,7 @@ export const GENERATION_CONFIG_THUMBNAIL: GenerationConfig = {
 // Hooks generation: hook text routinely contains quotation marks (the system
 // prompt's own style examples are quoted sentences), which under a schema-less
 // JSON config came back unescaped and broke JSON.parse in production.
-// Schema-enforced to the canonical { hooks } shape, exactly 5 — one per style
+// Schema-enforced to the canonical { hooks } shape, exactly 5 distinct alternatives
 // in HOOKS_SYSTEM_PROMPT.
 export const GENERATION_CONFIG_HOOKS: GenerationConfig = {
   responseMimeType: "application/json",

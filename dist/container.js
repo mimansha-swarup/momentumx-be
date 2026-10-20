@@ -19,8 +19,11 @@
 // it should earn it.
 //
 // Ordering matters — a const must be declared before it is used as an argument.
+import SharingRepository from "./repository/sharing.repository.js";
+import BillingRepository from "./repository/billing.repository.js";
 import AccountRepository from "./repository/account.repository.js";
 import ContentRepository from "./repository/content.repository.js";
+import ExtractRepository from "./repository/extract.repository.js";
 import HooksRepository from "./repository/hooks.repository.js";
 import PackagingRepository from "./repository/packaging.repository.js";
 import ResearchRepository from "./repository/research.repository.js";
@@ -29,6 +32,7 @@ import VideoProjectRepository from "./repository/video-project.repository.js";
 import AccountService from "./service/account.service.js";
 import ContentService from "./service/content.service.js";
 import ContextService from "./service/context.service.js";
+import ExtractService from "./service/extract.service.js";
 import HooksService from "./service/hooks.service.js";
 import PackagingService from "./service/packaging.service.js";
 import ResearchContextService from "./service/research-context.service.js";
@@ -44,7 +48,14 @@ import ScriptController from "./controller/script.controller.js";
 import UserController from "./controller/user.controller.js";
 import AccountController from "./controller/account.controller.js";
 import VideoProjectController from "./controller/video-project.controller.js";
+import BillingController from "./controller/billing.controller.js";
+import SharingController from "./controller/sharing.controller.js";
+import InviteController from "./controller/invite.controller.js";
 // --- Repositories ----------------------------------------------------------
+export const sharingRepository = new SharingRepository();
+export const billingRepository = new BillingRepository();
+export const extractRepository = new ExtractRepository();
+export const stepRunner = new StepRunner(billingRepository);
 export const accountRepository = new AccountRepository();
 export const contentRepository = new ContentRepository();
 export const hooksRepository = new HooksRepository();
@@ -68,19 +79,15 @@ export const researchContextService = new ResearchContextService(researchReposit
 // depending on which router you arrived through. Research degrades silently by
 // design (see the degradation contract in ai-generation-patterns.md), so a
 // missing wire and a YouTube outage look identical. One instance, fully wired.
-export const contentService = new ContentService(contentRepository, userRepository, videoProjectService, accountRepository, researchContextService);
+export const contentService = new ContentService(contentRepository, userRepository, videoProjectService, accountRepository, researchContextService, stepRunner);
 // The generation seam (Phase 01b). One instance, shared by every service that
 // makes a model call — it is stateless, and Phase 08 attaches billing here rather
 // than at twelve call sites.
-export const stepRunner = new StepRunner(videoProjectRepository);
 export const hooksService = new HooksService(hooksRepository, videoProjectService, contextService, stepRunner, accountRepository);
-export const packagingService = new PackagingService(packagingRepository, videoProjectService, contextService, accountRepository, researchContextService);
+export const packagingService = new PackagingService(packagingRepository, videoProjectService, contextService, accountRepository, researchContextService, stepRunner);
+export const extractService = new ExtractService(extractRepository);
 export const researchService = new ResearchService(researchRepository, accountRepository);
-// ponytail: UserService still builds its own ExtractService/ExtractRepository
-// internally (`user.service.ts:27`) rather than taking them as parameters, so
-// that one dependency is not visible here. Left as-is — injecting it changes the
-// constructor and its two test suites, which is a separate change from this one.
-export const userService = new UserService(userRepository, accountRepository);
+export const userService = new UserService(userRepository, accountRepository, stepRunner, extractService);
 // --- Controllers -----------------------------------------------------------
 export const accountController = new AccountController(accountService);
 export const hooksController = new HooksController(hooksService);
@@ -90,3 +97,6 @@ export const researchController = new ResearchController(researchService);
 export const scriptController = new ScriptController(contentService);
 export const userController = new UserController(userService);
 export const videoProjectController = new VideoProjectController(videoProjectService);
+export const billingController = new BillingController(billingRepository);
+export const sharingController = new SharingController(sharingRepository);
+export const inviteController = new InviteController(sharingRepository, accountService);

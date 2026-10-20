@@ -1,3 +1,4 @@
+import { memberRole } from "../utlils/account-member.js";
 import { randomUUID } from "crypto";
 import { firebase } from "../config/firebase.js";
 import AccountRepository from "../repository/account.repository.js";
@@ -87,7 +88,7 @@ export const forbidCrossAccount = async (
 ): Promise<never> => {
   const account = resourceAccountId ? await accounts.findById(resourceAccountId) : null;
 
-  if (account && !account.deletedAt && account.memberUids?.includes(owner.userId)) {
+  if (account && !account.deletedAt && !account.orphanedAt && account.memberUids?.includes(owner.userId)) {
     // `detail` is what lets the client offer "Switch to «Cooking»?" by name
     // instead of showing an id the user has never seen.
     throw WrongAccount({ accountId: account.id, displayName: account.displayName });
@@ -114,7 +115,8 @@ export const forbidCrossAccount = async (
 export const adoptChannelIdentity = async (
   accounts: AccountRepository,
   accountId: string,
-  context: Record<string, unknown>
+  context: Record<string, unknown>,
+  actorUserId: string
 ): Promise<void> => {
   const account = await accounts.findById(accountId);
   if (!account) return;
@@ -138,7 +140,7 @@ export const adoptChannelIdentity = async (
   const handle = deriveHandle(context.userName);
   if (handle && !account.handle) patch.handle = handle;
 
-  if (Object.keys(patch).length > 0) await accounts.update(accountId, patch);
+  if (Object.keys(patch).length > 0) await accounts.update(accountId, patch, actorUserId);
 };
 
 /** `"@foo"` when the stored channel URL is a handle URL, else null. */
@@ -235,7 +237,10 @@ class AccountService {
     const user = (await this.userRepo.get(userId)) as Record<string, unknown> | null;
 
     const pointer = user?.lastActiveAccountId;
-    if (typeof pointer === "string" && pointer) return pointer;
+    if (typeof pointer === "string" && pointer) {
+      const pointed = await this.repo.findById(pointer);
+      if (pointed && !pointed.deletedAt && !pointed.orphanedAt && pointed.memberUids?.includes(userId)) return pointer;
+    }
 
     // No pointer. Membership is the authority — a pointer can be missing while
     // the account exists (an interrupted first write, or a restore).
@@ -253,7 +258,7 @@ class AccountService {
         // A tombstoned channel must not be adopted here. Doing so hands the
         // caller an account that `accountMiddleware` will immediately 410, on
         // every request, with no way out of the loop.
-        !account.deletedAt
+        !account.deletedAt && !account.orphanedAt
     );
     if (found) {
       await this.userRepo.update(userId, { lastActiveAccountId: found.id });
@@ -269,6 +274,14 @@ class AccountService {
       }),
       toChannelContext(user ?? {})
     );
+  };
+
+  /** Resolve an existing membership, or atomically claim the first channel. */
+  bootstrapAccount = async (userId: string): Promise<IAccount> => {
+    const live = (await this.repo.findByMember(userId)).filter((a) => !a.deletedAt && !a.orphanedAt);
+    const id = await this.resolveActiveAccountId(userId, live)
+      ?? await this.ensureDefaultAccount(userId);
+    return this.getAccount(userId, id);
   };
 
   /**
@@ -313,7 +326,7 @@ class AccountService {
    */
   listAccounts = async (userId: string): Promise<IAccountSummary[]> => {
     const memberships = (await this.repo.findByMember(userId)).filter(
-      (account) => !account.deletedAt
+      (account) => !account.deletedAt && !account.orphanedAt
     );
 
     return Promise.all(
@@ -327,7 +340,7 @@ class AccountService {
           id: account.id,
           name: account.displayName,
           handle: account.handle,
-          role: account.members?.[userId]?.role ?? "viewer",
+          role: memberRole(account.members, userId) ?? "viewer",
           isOnboarded: isChannelOnboarded(context),
           projectCount,
           completeness: computeProfileCompleteness(context ?? {}),
@@ -367,8 +380,12 @@ class AccountService {
   getAccount = async (userId: string, accountId: string): Promise<IAccount> => {
     const account = await this.repo.findById(accountId);
     if (!account) throw AccountForbidden("Channel not found");
-    if (account.deletedAt) throw Gone();
+    // Membership before state — see `assertOwner`. A non-member must not be able
+    // to tell a deleted channel from an orphaned one from one they simply cannot
+    // reach.
     if (!account.memberUids?.includes(userId)) throw AccountForbidden();
+    if (account.deletedAt) throw Gone();
+    if (account.orphanedAt) throw AccountForbidden("Channel needs ownership recovery; contact support");
     return account;
   };
 
@@ -376,21 +393,32 @@ class AccountService {
   updateAccount = async (
     userId: string,
     accountId: string,
-    patch: { displayName?: string }
+    patch: { displayName?: string; handle?: string | null }
   ): Promise<IAccount> => {
     const account = await this.assertOwner(userId, accountId);
 
     const displayName = patch.displayName?.trim();
-    if (!displayName) throw BadRequest("displayName is required");
+    if (patch.displayName !== undefined && !displayName) throw BadRequest("displayName is required");
 
-    await this.repo.update(accountId, { displayName });
-    return { ...account, displayName };
+    // Check-then-act, closed. `assertOwner` above is a separate read, so a
+    // demotion committing in the gap let a now-non-owner's rename land anyway —
+    // the one authorization decision left on the account plane that did not share
+    // its transaction with its write. `deleteAccount` already works this way, and
+    // says so: "authorization must share the transaction with the tombstone".
+    const changes: { displayName?: string; handle?: string | null } = {};
+    if (displayName) changes.displayName = displayName;
+    // `null` clears it; an empty string is treated the same way, because a blank
+    // handle is what "no handle" has always meant on this document.
+    if (patch.handle !== undefined) changes.handle = patch.handle?.trim() ? patch.handle.trim() : null;
+
+    await this.repo.updateIfOwner(accountId, userId, changes);
+    return { ...account, ...changes };
   };
 
   /** Which channel a fresh tab should open in. */
   activateAccount = async (userId: string, accountId: string): Promise<void> => {
     const account = await this.repo.findById(accountId);
-    if (!account || account.deletedAt) throw AccountForbidden("Channel not found");
+    if (!account || account.deletedAt || account.orphanedAt) throw AccountForbidden("Channel unavailable");
     if (!account.memberUids?.includes(userId)) throw AccountForbidden();
 
     await this.userRepo.update(userId, { lastActiveAccountId: accountId });
@@ -451,8 +479,14 @@ class AccountService {
   private assertOwner = async (userId: string, accountId: string): Promise<IAccount> => {
     const account = await this.repo.findById(accountId);
     if (!account) throw AccountForbidden("Channel not found");
-    if (account.deletedAt) throw Gone();
+    // MEMBERSHIP FIRST, state second. Checking `deletedAt`/`orphanedAt` ahead of it
+    // answered three distinguishable things to a caller with no right to know the
+    // channel exists at all: 410 for a deleted one, "needs ownership recovery" for
+    // an orphaned one, and a plain 403 otherwise. Ids are UUID v4 so this is not
+    // brute-forceable, but anyone who ever held an id could still probe its fate.
     if (!account.memberUids?.includes(userId)) throw AccountForbidden();
+    if (account.deletedAt) throw Gone();
+    if (account.orphanedAt) throw AccountForbidden("Channel needs ownership recovery; contact support");
     if (!account.ownerUids?.includes(userId)) {
       throw RoleForbidden("Only the channel owner can do this");
     }

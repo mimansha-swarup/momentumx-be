@@ -138,17 +138,28 @@ const PERMISSIVE_PROJECT = {
 } as never;
 
 const seamFor = (
-  vpService: { getById?: (...a: unknown[]) => unknown },
+  // `Pick<VideoProjectService, "getById">` rather than a hand-drawn `(...a: unknown[])`
+  // shape: a stub whose getById does not match the REAL signature should fail to
+  // compile, which is the entire reason the tests are type-checked now. Partial,
+  // because most call sites stub only this one method.
+  vpService: Partial<Pick<VideoProjectService, "getById">>,
   acquired?: string[]
 ) =>
   makeTestStepRunner({
     project: async () => {
-      try {
-        return ((await vpService.getById?.("proj-1", "user-1")) ??
-          PERMISSIVE_PROJECT) as never;
-      } catch {
-        return PERMISSIVE_PROJECT;
-      }
+      /**
+       * A RecordOwner, not a bare "user-1". Both fields are strings, so the old loose
+       * `(...a: unknown[])` stub type accepted the wrong one silently — and a `catch`
+       * here swallowed the resulting throw and substituted a PERMISSIVE project, so an
+       * ownership failure looked like a pass. Strict typing surfaced the wrong argument;
+       * removing the catch is what keeps it surfaced.
+       *
+       * No catch on purpose: a lookup that throws is a broken fixture or broken ownership
+       * wiring, and either should fail the test rather than be replaced with a project
+       * that permits everything. Verified not load-bearing — all 10 tests pass without it.
+       */
+      return ((await vpService.getById?.("proj-1", testOwner("user-1"))) ??
+        PERMISSIVE_PROJECT) as never;
     },
     onAcquire: (step) => acquired?.push(step),
   });
@@ -156,12 +167,12 @@ const seamFor = (
 describe("HooksService.generate — requires a completed Script step (docs/features/hooks/spec.md 'Requires')", () => {
   beforeEach(() => jest.clearAllMocks());
 
-  // WHERE THIS RULE IS ACTUALLY TESTED: `tests/unit/repository/step-lock.behaviour.test.ts`
+  // WHERE THIS RULE IS ACTUALLY TESTED: `tests/unit/repository/billing.repository.behaviour.test.ts`
   // ("400s when a required upstream step is not completed"), against the real
   // transaction. It cannot be tested here: `HooksService.generate` contains no
   // precondition logic at all any more — the seam owns it. An earlier version of
   // this block asserted `statusCode === 400` and passed with the real check
-  // deleted from `acquireStep`, because the 400 came from the test's own fake.
+  // deleted from `BillingRepository.reserve`, because the 400 came from the test's own fake.
   //
   // What IS this service's job, and what is asserted here: refuse to spend a
   // generation when the seam says no.
@@ -176,7 +187,14 @@ describe("HooksService.generate — requires a completed Script step (docs/featu
       const hooksRepo = { findById: jest.fn(), save: jest.fn() } as unknown as jest.Mocked<HooksRepository>;
       const service = new HooksService(hooksRepo, vpService, undefined, seamFor(vpService), fakeAccountRepo());
 
-      await service.generate(testOwner("user-1"), "proj-1", "a script").catch(() => undefined);
+      // Assert the EXPECTED rejection, rather than swallowing any rejection at all.
+      // `.catch(() => undefined)` meant an unrelated throw — a broken fixture, a wrong
+      // argument, a missing mock — satisfied "the model wasn't called" just as well as
+      // the precondition refusal this test is about. Which is precisely how the
+      // `getById` argument bug in `seamFor` stayed invisible.
+      await expect(
+        service.generate(testOwner("user-1"), "proj-1", "a script")
+      ).rejects.toMatchObject({ statusCode: 400 });
 
       expect(mockGenerate).not.toHaveBeenCalled();
       expect(hooksRepo.save).not.toHaveBeenCalled();
@@ -249,7 +267,7 @@ describe("Hooks selection completes the Hooks step (real VideoProjectService)", 
 describe("Hooks regenerate — stale cascade matches the documented table (real VideoProjectService + PackagingRepository)", () => {
   beforeEach(() => jest.clearAllMocks());
 
-  it("cascades stale to exactly title + packaging (never script or hooks itself) and records staleReason 'hooks_regenerated' on both the project AND the packaging document", async () => {
+  it.each(["regenerate", "recover missing batch"])("%s cascades stale to exactly title + packaging (never script or hooks itself) and records staleReason 'hooks_regenerated' on both the project AND the packaging document", async (operation) => {
     let state = makeProject({
       packagingId: "pkg-1",
       hooksId: "hooks-1",
@@ -275,7 +293,7 @@ describe("Hooks regenerate — stale cascade matches the documented table (real 
       clearStale: jest.fn(),
       markStale: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<PackagingRepository>;
-    const hooksRepoForVp = { findById: jest.fn() } as unknown as jest.Mocked<HooksRepository>;
+    const hooksRepoForVp = { findById: jest.fn().mockResolvedValue({ id: "replacement", accountId: TEST_ACCOUNT_ID }) } as unknown as jest.Mocked<HooksRepository>;
     const vpService = new VideoProjectService(vpRepo, contentRepo, packagingRepo, hooksRepoForVp, fakeAccountRepo());
 
     mockGenerate.mockResolvedValue(makeStream(HOOKS_JSON));
@@ -285,7 +303,14 @@ describe("Hooks regenerate — stale cascade matches the documented table (real 
     } as unknown as jest.Mocked<HooksRepository>;
     const hooksService = new HooksService(hooksBatchRepo, vpService, undefined, seamFor(vpService), fakeAccountRepo());
 
-    await hooksService.regenerate(testOwner("user-1"), "hooks-1", "an updated script");
+    if (operation === "regenerate") {
+      await hooksService.regenerate(testOwner("user-1"), "hooks-1", "an updated script");
+    } else {
+      hooksBatchRepo.findById.mockResolvedValue(null);
+      hooksBatchRepo.save = jest.fn().mockResolvedValue({ id: "replacement", accountId: TEST_ACCOUNT_ID });
+      await hooksService.generate(testOwner("user-1"), "proj-1", "an updated script");
+      expect(state.hooksId).toBe("replacement");
+    }
 
     // Project-level cascade: title + packaging staled; script and hooks itself untouched.
     expect(state.pipeline.title.status).toBe("stale");
@@ -301,7 +326,8 @@ describe("Hooks regenerate — stale cascade matches the documented table (real 
     expect(state.pipeline.hooks.status).toBe("in_progress");
 
     // Document-level cascade: the packaging document itself is flagged too.
-    expect(packagingRepo.markStale).toHaveBeenCalledWith("pkg-1", "hooks_regenerated");
+    expect(packagingRepo.markStale).toHaveBeenCalledWith("pkg-1", "hooks_regenerated", ...(operation === "recover missing batch"
+      ? [expect.objectContaining({ projectId: "proj-1", token: "test-token-hooks" })] : []));
   });
 
   it("does not cascade at all when nothing downstream was ever started (hooks step alone, no title/packaging yet)", async () => {

@@ -29,10 +29,18 @@ const config: { indexes: Index[]; fieldOverrides: Override[] } = JSON.parse(
   fs.readFileSync(FILE, "utf8")
 );
 
-/** An index's identity, ignoring which tenancy field it keys on. */
+/**
+ * An index's identity, ignoring which tenancy field it keys on.
+ *
+ * `queryScope` is part of the shape, not incidental: a `createdBy` twin
+ * rebuilt as `COLLECTION_GROUP` would serve a different class of query than
+ * its `accountId` original, and comparing field lists alone would call that
+ * a match.
+ */
 const shapeWithout = (index: Index, tenancyField: string): string =>
   [
     index.collectionGroup,
+    index.queryScope,
     index.fields
       .filter((f) => f.fieldPath !== tenancyField)
       .map((f) => `${f.fieldPath}:${f.order ?? f.arrayConfig}`)
@@ -50,13 +58,23 @@ describe("firestore.indexes.json — the migration coexistence window", () => {
   it("pairs each accountId index with a createdBy index of the same shape", () => {
     const legacyShapes = new Set(byTenancy("createdBy").map((i) => shapeWithout(i, "createdBy")));
 
-    const orphans = byTenancy("accountId")
+    // `invites` is Phase-09-new: there are no pre-migration `createdBy` documents
+    // for it to coexist with, so it needs no rollback twin. The exemption is tied
+    // to that REASON — asserted below — rather than being an unconditional skip
+    // that would silently cover any future `invites` index shape.
+    const orphans = byTenancy("accountId").filter(i => i.collectionGroup !== "invites")
       .map((i) => shapeWithout(i, "accountId"))
       .filter((shape) => !legacyShapes.has(shape));
 
     // An accountId index with no createdBy twin means the twin was REPLACED
     // rather than added — the exact edit that removes the rollback path.
     expect(orphans).toEqual([]);
+  });
+
+  it("justifies the invites exemption: it has no legacy createdBy shape at all", () => {
+    // If an `invites` index on `createdBy` ever appears, the collection is no
+    // longer purely post-migration and the exemption above stops being free.
+    expect(byTenancy("createdBy").filter((i) => i.collectionGroup === "invites")).toEqual([]);
   });
 
   it("gives every queried legacy index an accountId twin, so Phase 06 has an index to switch to", () => {
@@ -68,7 +86,7 @@ describe("firestore.indexes.json — the migration coexistence window", () => {
       // `ideas createdBy,createdAt ASC` matches no query in the codebase: every
       // ideas query also filters `archived` and orders createdAt DESCENDING.
       // Deliberately NOT twinned; deleted in Phase 10.
-      .filter((shape) => shape !== "ideas createdAt:ASCENDING");
+      .filter((shape) => shape !== "ideas COLLECTION createdAt:ASCENDING");
 
     expect(untwinned).toEqual([]);
   });

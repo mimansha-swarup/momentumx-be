@@ -35,3 +35,5 @@ export const WrongAccount = (detail, message = "This item belongs to another one
 export const RoleForbidden = (message = "Your role does not allow this action", detail) => new HttpError(message, 403, detail, "role_forbidden");
 /** A tombstoned channel. 410, not 404 — it existed, and saying so is repairable. */
 export const Gone = (message = "This channel has been deleted", detail) => new HttpError(message, 410, detail);
+/** Generation gate only; saves and exports never call this. */
+export const InsufficientCredits = (message, detail) => new HttpError(message, 402, detail, "insufficient_credits");

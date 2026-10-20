@@ -1,3 +1,4 @@
+import { requireRole } from "../../middleware/role.js";
 import { Router } from "express";
 import { authMiddleware } from "../../middleware/auth.js";
 import { accountMiddleware } from "../../middleware/account.js";
@@ -6,6 +7,7 @@ import {
   createAccountSchema,
   updateAccountSchema,
 } from "../../validation/account.validation.js";
+import { wrongAccountGuard } from "../../middleware/wrong_account.js";
 import { accountController } from "../../container.js";
 
 const router = Router();
@@ -13,33 +15,34 @@ const router = Router();
 router.use(authMiddleware);
 
 /**
- * THESE TWO ARE DELIBERATELY ABOVE `router.use(accountMiddleware)`.
- *
- * You cannot present an `X-Account-Id` for a channel you do not have yet, and a
- * brand-new user's very first list call has no channel at all. Mounting the
- * account middleware in front of them would drop that request into Phase 05's
- * header-less fallback, which mints an account as a side effect of *reading the
- * list* — and, once Phase 07 flips `FALLBACK_ALLOWS_WRITES` to false, would
- * reject `POST /v1/accounts` outright: the one call whose entire purpose is to
- * produce the id the header needs.
- *
- * The exemption is narrow on purpose. It covers the two COLLECTION routes only;
- * everything addressed by `:id` sits below the mount and is account-checked like
- * every other route in the API. `tests/unit/auth-coverage.test.ts` names these two
- * explicitly, so a third one cannot be added by accident.
- *
- * They are not unprotected. `authMiddleware` is already mounted above, and each
- * handler scopes to `req.userId`: `list` returns only channels whose `memberUids`
- * contain the caller, and `create` can only ever make a channel owned by them.
+ * Authenticated discovery, creation and bootstrap cannot require an existing
+ * channel header. Bootstrap atomically adopts or creates the first channel;
+ * POST / creates an additional one. All three scope to req.userId and are
+ * explicitly named in tests/unit/auth-coverage.test.ts.
  */
 router.get("/", accountController.list);
 router.post("/", validate(createAccountSchema), accountController.create);
 
+// Bootstrap is authenticated but cannot require the channel it is resolving.
+router.post("/bootstrap", accountController.bootstrap);
+
 router.use(accountMiddleware);
 
+/**
+ * Every `/:id` route below acts on `params.id`, while `requireRole` reads
+ * `req.role` — which `accountMiddleware` resolved from the HEADER's channel.
+ * Unpinned, those are two different channels: a user who owns B but is a viewer
+ * in the active channel A got `role_forbidden` for `PATCH /accounts/B`, which the
+ * client contract defines as "inline message, stay put" — so it never offered the
+ * switch that would make the call succeed. `wrong_account` is the honest answer,
+ * and it is what this produces. Same guard, same reason, as `sharing.route.ts` —
+ * shared as `wrongAccountGuard` (`src/middleware/wrong_account.ts`).
+ */
+router.use("/:id", wrongAccountGuard);
+
 router.get("/:id", accountController.getById);
-router.patch("/:id", validate(updateAccountSchema), accountController.update);
+router.patch("/:id", requireRole("owner"), validate(updateAccountSchema), accountController.update);
 router.post("/:id/activate", accountController.activate);
-router.delete("/:id", accountController.remove);
+router.delete("/:id", requireRole("owner"), accountController.remove);
 
 export default router;

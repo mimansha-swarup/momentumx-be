@@ -2,12 +2,72 @@
 title: "Phase 08 — Credits and Metering"
 description: "One credit balance with a price list, replacing the separate stats counters."
 date: 2026-08-19
-last_updated: 2026-08-19
-status: "planned"
+last_updated: 2026-09-26
+status: "locally accepted — deployment not performed"
 tags: ["multi-account", "phase-08", "billing"]
 ---
 
 # Phase 08 — Credits and Metering
+
+## Local acceptance and rollout boundary
+
+Frontend acceptance is complete locally: 174 tests in 24 files, including mounted
+pipeline/lifecycle coverage and stream HTTP/domain-error handling; build passes and
+lint has zero errors (three existing warnings). The balance/402 states and refund
+messaging distinguish disabled enforcement, unknown balance and verified refunds.
+`VITE_SUPPORT_EMAIL` optionally enables the support link; without it no contact link
+is invented. Backend final persistence-fencing and malformed-balance validation pass: **1,243 tests
+in 75 suites**, including 35 independent adversarial acceptance checks. Full evidence is
+recorded in [operational readiness](./operational-readiness.md). No deployment or
+allowance provisioning was performed.
+
+## Implementation decisions — 2026-09-26
+
+The user chose **enforcement disabled until configured**, then delegated pricing with
+"Decide something and keep it configurable." These decisions supersede the contradictory
+bundle/pricing and unconditional-enforcement language in the historical design below.
+
+- **Packaging is per item:** description 2, thumbnail 1, shorts 1 (total 4). Only the failed
+  item refunds and retries. There is no composite packaging charge or bundle endpoint.
+- Defaults: ideas 3, script 5, hooks 1, title 1, description 2, thumbnail 1, shorts 1.
+  Override each with `CREDIT_COST_<KIND>` (for example `CREDIT_COST_SCRIPT=8`). Values must be
+  nonnegative safe integers; invalid prices fail startup. Prefill always remains free.
+- Set `MONTHLY_CREDIT_ALLOWANCE` to a nonnegative integer to enable monthly enforcement for
+  a billing owner. New records use `allowanceSource:"default"` and follow configuration;
+  an explicit `allowanceOverride` sets a per-owner quota. Legacy manually provisioned
+  `allowance` values remain overrides until marked `allowanceSource:"default"`.
+  No configured allowance means `enabled:false`, `allowance:null`, `remaining:null`:
+  generation remains available, with transactional locks and channel usage reporting.
+  Zero is an enabled, exhausted allowance. Invalid configuration and database errors fail
+  closed. Existing lifetime counters are never converted into consumption.
+- `GET /v1/billing` returns the standard success envelope with `data` containing `enabled`,
+  `allowance`, `consumed`, `remaining`, `periodStart` (`YYYY-MM` UTC),
+  `resetsAt` (ISO UTC), and `costs`. HTTP 402 uses `insufficient_credits`, with the same balance
+  fields and `required` in `detail`. Channel usage counts nominal credit cost even while
+  enforcement is disabled; it is reporting, not a debit.
+- Reservation atomically validates membership, role, step preconditions and the generation
+  lock, and holds available credits. Successful settlement charges consumed credits after
+  content persistence; failures release the hold without charging. Expired locks permit
+  reservation recovery. Generation and billing persistence remain separate transactions.
+- Every durable generation write re-checks membership, role and the current project
+  generation token inside its persistence transaction; an expired runner cannot overwrite
+  a successor even if its model result arrives late.
+- Confirmed uncharged failures expose `detail.charged:false`. SSE reports structured
+  generation errors followed by `[DONE]`; pre-stream refusals retain HTTP status/JSON.
+  If settlement fails after content persistence, output can remain saved but uncharged;
+  the runner logs the failure. This is not an atomic content-and-payment ledger.
+- Public YouTube requests use a six-hour cache: local promises coalesce requests; 256
+  hash-addressed Firestore slots share results across instances. Each slot checks the full
+  query hash and expiry, so collisions only lower hit rate. API keys are excluded from stored
+  keys; private channel context is never cached here. No TTL service/scheduler is required.
+
+Paid reservations have no 256-receipt ceiling; expired locks allow stale holds to be
+recovered. Noncharged usage receipts are bounded to 256 and evict an entry to keep free
+runs available (not guaranteed chronological eviction). A sufficiently old free run whose
+receipt and lock have both disappeared cannot contribute usage when it finally settles.
+Purchased credits would need a durable recovery ledger beyond this monthly allowance model.
+Configuration and Google quota changes remain operator actions.
+
 
 **Size:** medium.
 **Depends on:** Phase 01b (the generation seam) and Phase 06. Phase 01b is a hard
@@ -418,7 +478,7 @@ script generations counts 15 credits gone with no evidence otherwise.
 - **Navigating to a project charges nothing.** Open every pipeline screen by dashboard card,
   deep link and refresh; the balance is unchanged.
 - Retrying an idempotent script generation charges once, not twice.
-- The packaging step charges 4 once, not 1+1+2 three times.
+- Packaging charges its independent items at configured prices (defaults 2+1+1); retry only recharges the failed item.
 - Per-channel usage matches the sum of the actions taken.
 - A user with no `billing/{uid}` document gets one created rather than an error.
 - A viewer cannot spend the billing owner's credits (Phase 09 — but assert it here too).

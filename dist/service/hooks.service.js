@@ -1,7 +1,7 @@
 import { HOOKS_SYSTEM_PROMPT, GENERATE_HOOKS_PROMPT, } from "../constants/prompt.js";
 import { GENERATION_CONFIG_HOOKS } from "../constants/firebase.js";
 import { collectJson, generateStreamingContent } from "../utlils/ai.js";
-import { fillTemplate } from "../utlils/prompt-blocks.js";
+import { buildCreatorContextBlock, fillTemplate } from "../utlils/prompt-blocks.js";
 import { BadRequest, NotFound, ServiceUnavailable } from "../utlils/errors.js";
 import { forbidCrossAccount } from "./account.service.js";
 // The schema requires exactly 5 non-empty strings, but a schema is a request to
@@ -32,17 +32,17 @@ class HooksService {
         this.accounts = accounts;
         // Body script (if sent) wins; otherwise resolve the project's stored script
         // server-side (phases 1D). Hooks are script-native — no script anywhere is a 400.
-        this.resolveScript = async (owner, videoProjectId, explicitScript) => {
-            if (explicitScript?.trim()) {
-                return explicitScript;
-            }
-            if (this.contextService) {
-                const ctx = await this.contextService.assemble(owner, { videoProjectId });
-                if (ctx.sessionContext.script) {
-                    return ctx.sessionContext.script;
-                }
-            }
-            throw BadRequest("script is required — none found on this project");
+        this.buildUserPrompt = async (owner, videoProjectId, explicitScript) => {
+            const ctx = this.contextService
+                ? await this.contextService.assemble(owner, videoProjectId ? { videoProjectId } : {})
+                : undefined;
+            const script = explicitScript?.trim() ? explicitScript : ctx?.sessionContext.script;
+            if (!script)
+                throw BadRequest("script is required — none found on this project");
+            return fillTemplate(GENERATE_HOOKS_PROMPT, {
+                "{script}": script,
+                "{creatorContext}": buildCreatorContextBlock(ctx?.channelContext),
+            });
         };
         this.generate = async (owner, videoProjectId, script) => {
             const { userId, accountId } = owner;
@@ -54,32 +54,34 @@ class HooksService {
                 if (existing)
                     return existing;
             }
-            const resolvedScript = await this.resolveScript(owner, videoProjectId, script);
-            const userPrompt = fillTemplate(GENERATE_HOOKS_PROMPT, { "{script}": resolvedScript });
+            const userPrompt = await this.buildUserPrompt(owner, videoProjectId, script);
             // Everything the old body hand-rolled — the script precondition, the
             // read-then-write "lock" that wasn't atomic, the swallowed startStep, and the
             // abandon-on-failure block — now lives in the seam. `REQUIRES.hooks` carries
-            // the precondition; `acquireStep` enforces it inside the transaction that
-            // takes the lock; `releaseStep` restores prior state on failure (and, unlike
+            // the precondition; `BillingRepository.reserve` enforces it in the transaction that
+            // takes the lock; settlement restores prior state on failure (and, unlike
             // the old abandon, does not clear a stale marker).
-            const hooksBatch = await this.steps.run({ actor: owner, kind: "hooks", projectId: videoProjectId }, async () => {
+            const hooksBatch = await this.steps.run({ actor: owner, kind: "hooks", projectId: videoProjectId }, async (charge) => {
                 const result = await generateStreamingContent(HOOKS_SYSTEM_PROMPT, userPrompt, GENERATION_CONFIG_HOOKS);
                 const parsed = await collectJson(result, "hooks");
                 assertHooks(parsed);
-                return this.repo.save({
+                const saved = await this.repo.save({
                     videoProjectId,
                     createdBy: userId,
                     accountId,
                     hooks: parsed.hooks,
                     hookFeedback: {},
-                });
+                }, ...(charge ? [charge] : []));
+                if (project.hooksId) {
+                    // Replacing a missing batch invalidates the old selection just like
+                    // regeneration. Finish the fenced cascade before linking new hooks.
+                    await this.videoProjectService.clearSelectedHook(videoProjectId, owner, ...(charge ? [charge] : []));
+                    await this.videoProjectService.markStale(videoProjectId, "hooks", ...(charge ? [charge] : []));
+                    await this.videoProjectService.markPackagingDocumentStale(videoProjectId, "hooks_regenerated", ...(charge ? [charge] : []));
+                }
+                await this.videoProjectService.linkResource(videoProjectId, "hooks", saved.id, owner, ...(charge ? [charge] : []));
+                return saved;
             });
-            try {
-                await this.videoProjectService.linkResource(videoProjectId, "hooks", hooksBatch.id, owner);
-            }
-            catch (linkError) {
-                console.error(JSON.stringify({ event: "pipeline_link_failed", step: "hooks", projectId: videoProjectId, hooksId: hooksBatch.id, userId, message: linkError?.message }));
-            }
             return hooksBatch;
         };
         this.select = async (owner, hooksId, hookIndex) => {
@@ -121,12 +123,9 @@ class HooksService {
             if (!script && !hooksBatch.videoProjectId) {
                 throw BadRequest("script is required");
             }
-            const resolvedScript = script?.trim()
-                ? script
-                : await this.resolveScript(owner, hooksBatch.videoProjectId, script);
-            const userPrompt = fillTemplate(GENERATE_HOOKS_PROMPT, { "{script}": resolvedScript });
-            // `mode: "regenerate"` — telemetry and (from Phase 08) metering, but NO step
-            // lock and NO precondition.
+            const userPrompt = await this.buildUserPrompt(owner, hooksBatch.videoProjectId, script);
+            // Regeneration uses a distinct in-flight lock and metering, but skips
+            // starting-step preconditions. Pipeline status is never its lock.
             //
             // An earlier version of this wrapped regenerate identically to generate, on
             // the theory that it "gains the lock it never had". That broke the primary
@@ -136,27 +135,26 @@ class HooksService {
             // back to `in_progress` and re-arms it for the next attempt. The precondition
             // was wrong for the same reason: after an upstream regen marks `script`
             // stale, regenerating hooks is exactly what the user needs and it would 400.
-            const parsed = await this.steps.run({
+            return this.steps.run({
                 actor: owner,
                 kind: "hooks",
                 projectId: hooksBatch.videoProjectId,
                 mode: "regenerate",
-            }, async () => {
+            }, async (charge) => {
                 const result = await generateStreamingContent(HOOKS_SYSTEM_PROMPT, userPrompt, GENERATION_CONFIG_HOOKS);
-                const output = await collectJson(result, "hooks");
-                assertHooks(output);
-                return output;
+                const parsed = await collectJson(result, "hooks");
+                assertHooks(parsed);
+                await this.repo.update(hooksId, { hooks: parsed.hooks, hookFeedback: {} }, ...(charge ? [charge] : []));
+                try {
+                    await this.videoProjectService.clearSelectedHook(hooksBatch.videoProjectId, owner, ...(charge ? [charge] : []));
+                    await this.videoProjectService.markStale(hooksBatch.videoProjectId, "hooks", ...(charge ? [charge] : []));
+                    await this.videoProjectService.markPackagingDocumentStale(hooksBatch.videoProjectId, "hooks_regenerated", ...(charge ? [charge] : []));
+                }
+                catch (cascadeError) {
+                    console.error(JSON.stringify({ event: "stale_cascade_failed", from: "hooks", projectId: hooksBatch.videoProjectId, userId, message: cascadeError?.message }));
+                }
+                return { id: hooksId, hooks: parsed.hooks, hookFeedback: {} };
             });
-            await this.repo.update(hooksId, { hooks: parsed.hooks, hookFeedback: {} });
-            try {
-                await this.videoProjectService.clearSelectedHook(hooksBatch.videoProjectId, owner);
-                await this.videoProjectService.markStale(hooksBatch.videoProjectId, "hooks");
-                await this.videoProjectService.markPackagingDocumentStale(hooksBatch.videoProjectId, "hooks_regenerated");
-            }
-            catch (cascadeError) {
-                console.error(JSON.stringify({ event: "stale_cascade_failed", from: "hooks", projectId: hooksBatch.videoProjectId, userId, message: cascadeError?.message }));
-            }
-            return { id: hooksId, hooks: parsed.hooks, hookFeedback: {} };
         };
         // Read a saved batch. Without this the hooks existed only in the browser's
         // memory: after a refresh the creator could see "Hook 3 was selected" but never

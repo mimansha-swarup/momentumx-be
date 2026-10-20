@@ -3,24 +3,15 @@
  * handled BEFORE .replace() — a block resolves to real content or "" so no
  * {placeholder} is ever left unreplaced in an assembled prompt.
  */
-/**
- * Fill `{placeholder}` slots with untrusted values (scripts, titles, niche,
- * research signals). Uses split/join instead of String.replace because the
- * replacement form of `.replace()` treats `$&`, `$'`, `` $` ``, and `$$` in the
- * VALUE as special patterns — a user script containing e.g. `$&` would silently
- * corrupt the prompt. split/join inserts every value verbatim and replaces all
- * occurrences of each token (subsuming the old `/{token}/g` sites).
- * Constant, trusted substitutions (format directives) may stay on plain
- * `.replace()`; use this whenever the value carries user/external content.
- */
-export const fillTemplate = (template, values) => Object.entries(values).reduce((acc, [token, value]) => acc.split(token).join(value), template);
+/** Insert each value once, without interpreting dollar signs or placeholders inside it. */
+export const fillTemplate = (template, values) => template.replace(/\{[a-zA-Z][a-zA-Z0-9]*\}/g, token => Object.prototype.hasOwnProperty.call(values, token) ? values[token] : token);
 export const resolveVideoFormat = (value) => value === "faceless" ? "faceless" : "talking_head";
 export const SCRIPT_FORMAT_STYLE = {
     talking_head: "talking-head videos where the creator speaks directly to the camera",
     faceless: "faceless, documentary-style videos",
 };
 export const THUMBNAIL_FORMAT_DIRECTIVE = {
-    talking_head: "- Feature the creator where impactful — expressive close-up faces with strong emotion perform well for talking-head channels; combine with text, graphics, and scene imagery",
+    talking_head: "- Use a genuine supplied creator image only when relevant; if unavailable, offer an object or diagram composition. Never invent a face or reaction",
     faceless: "- Do not suggest faces, people, or facial expressions — these are faceless videos; use text, graphics, icons, and scene imagery",
 };
 export const buildCreatorContextBlock = (channel) => {
@@ -29,13 +20,17 @@ export const buildCreatorContextBlock = (channel) => {
     const lines = [];
     if (channel.brandName)
         lines.push(`Brand: ${channel.brandName}`);
+    if (channel.format)
+        lines.push(`Video format: ${channel.format}`);
+    if (channel.channelDescription)
+        lines.push(`Channel description: ${channel.channelDescription}`);
     if (channel.niche)
         lines.push(`Niche: ${channel.niche}`);
     if (channel.targetAudience) {
         lines.push(`Target audience: ${channel.targetAudience}`);
     }
     if (channel.topTitles?.length) {
-        lines.push("Creator's top-performing titles:");
+        lines.push("Creator's reference titles (voice and topic context, not evidence):");
         channel.topTitles.slice(0, 5).forEach((title) => lines.push(`- ${title}`));
     }
     if (lines.length === 0)

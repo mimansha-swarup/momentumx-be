@@ -42,11 +42,11 @@ Streams a full video script for the given **video project**. The `:projectId` UR
 
 **Generation flow:**
 1. `sseAuthMiddleware` verifies the `?token=` query param using Firebase Admin SDK and sets `req.userId`
-2. The project is loaded and ownership-checked (throws 404 if missing, 403 if not owner)
+2. The project is loaded and checked for channel membership and editor role (404 if missing, 403 if forbidden)
 3. User profile and the idea (from `project.ideaId`) are fetched in parallel — 404 if the idea is missing
 4. The script id is `project.scriptId ?? randomUUID()` — an existing script id is reused on regenerate so the old doc is not orphaned
 5. The script prompt is built by injecting the idea title and user context into `SCRIPT_USER_PROMPT`
-6. Gemini (`gemini-3.5-flash`) streams the response using `GENERATION_CONFIG_SCRIPTS`
+6. Gemini (configurable via `GENERATION_MODEL`, default `gemini-3.8-flash`) generates the response using `GENERATION_CONFIG_SCRIPTS`
 7. Each chunk is forwarded to the client as an SSE event
 8. After the stream ends, the full accumulated text is formatted via `formatGeneratedScript` (storing `ideaId` and `videoProjectId` FKs) and saved to Firestore
 9. The idea document is updated: `isScriptGenerated: true`, and the script is linked to the project via `linkResource` + `completeStep`
@@ -67,19 +67,19 @@ data: [DONE]\n\n
 
 `GET /v1/scripts`
 
-Returns all script documents owned by the authenticated user, ordered by `createdAt` descending.
+Returns all script documents in the active channel, ordered by `createdAt` descending.
 
 ### Get Single Script
 
 `GET /v1/scripts/:scriptId`
 
-Returns a single script document by ID. Ownership enforced — `createdBy` must match the requesting user.
+Returns a single script document by ID. Channel membership and the document’s `accountId` are checked.
 
 ### Edit Script
 
 `PATCH /v1/scripts/edit/:scriptId`
 
-Accepts fields in the request body and merges them onto the script document. Manual edit only — not AI-assisted. Ownership enforced.
+Accepts fields in the request body and merges them onto the script document. Manual edit only — not AI-assisted. Channel membership and editor role required.
 
 ---
 
@@ -91,7 +91,8 @@ Stored in the `scripts` Firestore collection. The document has its own `randomUU
 |---|---|---|
 | `id` | `string` | Own `randomUUID` — NOT the ideaId |
 | `title` | `string` | Title of the idea this script was generated for |
-| `createdBy` | `string` | `userId` of the owner |
+| `accountId` | `string` | Active channel tenancy key |
+| `createdBy` | `string` | Authenticated author uid; never the permission key |
 | `createdAt` | `Timestamp` | Server-side Firestore timestamp |
 | `script` | `string` | Full script text |
 | `ideaId` | `string` | FK → source idea |
@@ -133,12 +134,12 @@ The script prompt uses `GENERATION_CONFIG_SCRIPTS` (`responseMimeType: "text/pla
 
 | Endpoint | Auth method | Ownership check |
 |---|---|---|
-| `GET /scripts/stream/:projectId` | `?token=` query param (`sseAuthMiddleware`) | Yes — project is loaded and ownership-checked before the stream starts (403 if not owner, 404 if no project/idea) |
-| `GET /scripts` | Bearer token via `authMiddleware` | Yes — filters by `createdBy == userId` |
-| `GET /script/:scriptId` | Bearer token via `authMiddleware` | Yes — throws 403 if `createdBy !== userId` |
-| `PATCH /script/edit/:scriptId` | Bearer token via `authMiddleware` | Yes — throws 403 if `createdBy !== userId` |
-| `POST /scripts/:scriptId/regenerate` | Bearer token via `authMiddleware` | Yes — throws 403 if `createdBy !== userId` |
-| `GET /scripts/:scriptId/export` | Bearer token via `authMiddleware` | Yes — throws 403 if `createdBy !== userId` |
+| `GET /scripts/stream/:projectId` | `?token=` query param (`sseAuthMiddleware`) | Project determines the channel; current membership and editor role checked before generation |
+| `GET /scripts` | Bearer token via `authMiddleware` | Filters by `accountId == req.accountId`; viewer minimum |
+| `GET /scripts/:scriptId` | Bearer token via `authMiddleware` | Document accountId must match active channel; membership required |
+| `PATCH /scripts/edit/:scriptId` | Bearer token via `authMiddleware` | Document accountId must match active channel; membership required |
+| `POST /scripts/:scriptId/regenerate` | Bearer token via `authMiddleware` | Document accountId must match active channel; membership required |
+| `GET /scripts/:scriptId/export` | Bearer token via `authMiddleware` | Document accountId must match active channel; membership required |
 
 ---
 
@@ -166,3 +167,9 @@ The script prompt uses `GENERATION_CONFIG_SCRIPTS` (`responseMimeType: "text/pla
 - [Research Feature Spec](../research/spec.md)
 - [Pipeline Spec](../../product/pipeline-spec.md)
 - [Product Roadmap](../../product/roadmap.md)
+
+## Channel tenancy and roles
+
+Content is scoped by `accountId`, resolved from verified channel membership.
+`createdBy` records authorship only. Owners and editors may mutate/generate; viewers
+may read and export. Member management and channel deletion require owner.

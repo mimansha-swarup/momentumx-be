@@ -1,3 +1,6 @@
+import type { GenerateContentStreamResult } from "@google/generative-ai";
+import type { GenerationProgress } from "../utlils/generation-progress.js";
+import type { CreditReservation } from "../repository/billing.repository.js";
 import { randomUUID } from "crypto";
 import { DocumentData } from "firebase-admin/firestore";
 import { Response } from "express";
@@ -11,9 +14,10 @@ import {
 import ContentRepository from "../repository/content.repository.js";
 import AccountRepository from "../repository/account.repository.js";
 import UserRepository from "../repository/user.repository.js";
-import VideoProjectService, { STEP_LOCK_MS } from "./video-project.service.js";
+import VideoProjectService from "./video-project.service.js";
+import StepRunner from "./step-runner.js";
 import ResearchContextService from "./research-context.service.js";
-import { collectJson, generateContent, generateStreamingContent } from "../utlils/ai.js";
+import { streamScript, collectJson, generateContent, generateStreamingContent, generateTextContent } from "../utlils/ai.js";
 import { SCRIPT_FORMAT_STYLE, fillTemplate, resolveVideoFormat } from "../utlils/prompt-blocks.js";
 import {
   assertOwner,
@@ -41,6 +45,23 @@ const openSseStream = (res: Response): void => {
   res.flushHeaders();
 };
 
+// Observe the aggregate promise immediately, including when reading the stream fails.
+// Text alone does not mean the provider finished a complete draft.
+const scriptFinishReason = (result: GenerateContentStreamResult): Promise<string | undefined> =>
+  Promise.resolve(result.response).then(
+    response => response?.candidates?.[0]?.finishReason,
+    () => "RESPONSE_ERROR",
+  );
+
+const requireCompleteScript = async (completion: Promise<string | undefined>): Promise<void> => {
+  const reason = await completion;
+  // Some compatible responses omit finishReason; an explicit interruption is never success.
+  if (reason && reason !== "STOP") {
+    console.error(JSON.stringify({ event: "script_incomplete", finishReason: reason }));
+    throw ServiceUnavailable("The script stopped before it was complete. Nothing was saved. Please try again.");
+  }
+};
+
 //  createOnboardingData
 function formatCompetitorUrls(competitors: unknown): string {
   if (!Array.isArray(competitors)) return "";
@@ -58,7 +79,8 @@ class ContentService {
     userRepo: UserRepository,
     private videoProjectService: VideoProjectService,
     private accounts: AccountRepository,
-    private researchContext?: ResearchContextService,
+    private researchContext: ResearchContextService | undefined,
+    private steps: StepRunner,
   ) {
     this.repo = repo;
     this.userRepo = userRepo;
@@ -70,6 +92,7 @@ class ContentService {
   private buildScriptUserPrompt = (
     userRecord: DocumentData | undefined,
     title: string,
+    idea?: DocumentData | null,
   ): string =>
     fillTemplate(SCRIPT_USER_PROMPT, {
       "{userName}": userRecord?.brandName ?? "",
@@ -78,6 +101,8 @@ class ContentService {
       "{niche}": userRecord?.niche ?? "",
       "{websiteContent}": userRecord?.websiteContent ?? "",
       "{title}": title,
+      "{channelDescription}": userRecord?.channelDescription ?? "",
+      "{ideaContext}": JSON.stringify({ concept: idea?.concept ?? "", type: idea?.ideaType ?? "", evidence: idea?.evidence ?? "" }),
     });
 
   getPaginatedUsersIdeas = async (args: IGetIdeaQueryArgs) => {
@@ -128,10 +153,11 @@ class ContentService {
   // video concepts — headline optimization happens post-script at the Title
   // step, never here. Research signals are an enhancer: their failure
   // degrades to channel-context-only generation, it never blocks.
-  generateIdeas = async (
+  private buildIdeas = async (
     owner: RecordOwner,
     countTowardStats = true,
-    override?: IIdeaContextOverride
+    override?: IIdeaContextOverride,
+    progress?: GenerationProgress
   ): Promise<IGeneratedIdea[]> => {
     const { userId } = owner;
     assertOwner(owner.userId);
@@ -139,10 +165,12 @@ class ContentService {
     // the whole reason a prompt is any good. Read from the user record, ideas
     // generated in the finance channel came out about cooking, saved against the
     // right accountId, with nothing failing.
-    const [similarTitles, channel] = await Promise.all([
-      getClusteredTitles(owner.accountId, this.repo),
-      this.accounts.getContext(owner.accountId),
-    ]);
+    progress?.("preparing", "Reading your channel context and previous ideas.");
+    // Start research as soon as context is available; clustering is independent.
+    const titlesPromise = getClusteredTitles(owner.accountId, this.repo);
+    // Observe failures immediately even if the context read is slower.
+    const titlesResult = titlesPromise.then(value => ({ value }), error => ({ error }));
+    const channel = await this.accounts.getContext(owner.accountId);
     if (!channel && !override) {
       throw NotFound("Channel not found");
     }
@@ -161,9 +189,17 @@ class ContentService {
       if (override.topTitles !== undefined) ctx.userTitle = override.topTitles;
     }
 
+    if (this.researchContext && ctx.niche) progress?.("research", "Checking available research for your channel.");
     const researchSignals = this.researchContext
       ? await this.researchContext.getIdeaSignals(ctx.niche ?? "")
       : "";
+
+    const clustered = await titlesResult;
+    if ("error" in clustered) throw clustered.error;
+    const similarTitles = clustered.value;
+    progress?.("generating", researchSignals
+      ? "Generating ideas using your channel context and available research."
+      : "Generating ideas from your channel context; no research signals were available.");
 
     const userPrompt = fillTemplate(IDEA_USER_PROMPT, {
       "{niche}": ctx.niche ?? "",
@@ -177,14 +213,20 @@ class ContentService {
 
     const text = formatCreatorsData(ctx, similarTitles.flat());
 
+    let providerWasBusy = false;
     const result = await generateContent(
       IDEA_SYSTEM_PROMPT,
       userPrompt,
       GENERATION_CONFIG_IDEAS,
       "text/plain",
       text,
+      ...(progress ? [() => {
+        providerWasBusy = true;
+        progress("provider_busy", "The generation provider is busy. Retrying the connection.");
+      }] : []),
     );
 
+    if (providerWasBusy) progress?.("generating", "The provider connected. Generating your ideas.");
     const parsedRes = await collectJson<IGeneratedIdea[]>(result, "ideas");
     const ideas = (Array.isArray(parsedRes) ? parsedRes : []).filter(
       (idea) => idea?.workingTitle?.trim() && idea?.concept?.trim()
@@ -198,19 +240,36 @@ class ContentService {
     }
 
     if (countTowardStats) {
-      // Lifetime idea counter (stats.ideas); the P5 metering plan builds on it.
-      // Awaited, like the two sibling counters below: unawaited, a Firestore
-      // failure here is an unhandled rejection rather than a failed request.
+      // Lifetime telemetry is noncritical, like the script counter. A counter
+      // outage must not discard usable ideas or leave an unhandled rejection.
       await this.userRepo.update(userId, {
         "stats.ideas": firebase.firestore.FieldValue.increment(ideas.length),
-      });
+      }).catch(error => console.error(JSON.stringify({ event: "lifetime_stats_failed", userId, message: error?.message })));
     }
 
     return ideas;
   };
 
-  saveBatchIdeas = async (data: unknown[]) => {
-    return this.repo.batchSaveIdeas(data);
+  private formatIdeas = async (ideas: IGeneratedIdea[], owner: RecordOwner, progress?: GenerationProgress) => {
+    progress?.("checking", "Preparing ideas for saving and future similarity checks.");
+    const batchId = randomUUID();
+    const results = await Promise.allSettled(ideas.map(idea => formatGeneratedIdea(idea, owner, batchId)));
+    logDroppedFormats("generateIdeas", owner.userId, results);
+    const formatted = results.filter((r): r is PromiseFulfilledResult<Awaited<ReturnType<typeof formatGeneratedIdea>>> => r.status === "fulfilled").map(r => r.value);
+    if (!formatted.length) throw ServiceUnavailable("Couldn't generate or regenerate your ideas. Please try again.");
+    return formatted;
+  };
+
+  generateIdeas = async (owner: RecordOwner, countTowardStats = true, override?: IIdeaContextOverride, progress?: GenerationProgress) =>
+    this.steps.run({ actor: owner, kind: "ideas" }, async (charge) => {
+      const ideas = await this.buildIdeas(owner, countTowardStats, override, progress);
+      const formatted = await this.formatIdeas(ideas, owner, progress);
+      progress?.("saving", "Saving your ideas.");
+      return this.saveBatchIdeas(formatted, charge);
+    });
+
+  saveBatchIdeas = async (data: unknown[], charge?: CreditReservation | null) => {
+    return this.repo.batchSaveIdeas(data, ...(charge ? [charge] as const : []));
   };
 
   editIdeas = async (titleId: string, owner: RecordOwner, resBody: Record<string, string>) => {
@@ -282,17 +341,6 @@ class ContentService {
         }
       }
 
-      // In-flight lock: a second stream while one is generating (second tab,
-      // remount mid-generation) would mint a duplicate script doc. startedAt
-      // older than the Gemini timeout means a crashed run — let it retry.
-      // ponytail: ~ms read-then-start race remains; move to a transaction if
-      // concurrent tabs become a real pattern.
-      const scriptStep = project.pipeline.script;
-      const startedMs = scriptStep.startedAt?.toMillis() ?? 0;
-      if (scriptStep.status === "in_progress" && Date.now() - startedMs < STEP_LOCK_MS) {
-        throw Conflict("Script generation already in progress for this project");
-      }
-
       const [userRecord, idea] = await Promise.all([
         this.accounts.getContext(owner.accountId) as Promise<DocumentData | undefined>,
         this.repo.getIdea(project.ideaId),
@@ -302,36 +350,33 @@ class ContentService {
         throw NotFound("Idea not found");
       }
 
+      if (idea.accountId !== owner.accountId) await forbidCrossAccount(this.accounts, idea.accountId, owner);
+
       // Reuse the existing script id on regenerate — minting a new uuid when
       // project.scriptId is set would orphan the old script doc.
-      const scriptId = project.scriptId ?? randomUUID();
+      const scriptId = project.scriptId ?? projectId;
 
-      const userPrompt = this.buildScriptUserPrompt(userRecord, idea.title);
+      const userPrompt = this.buildScriptUserPrompt(userRecord, idea.title, idea);
       const systemPrompt = SCRIPT_SYSTEM_PROMPT.replace(
         "{videoFormatStyle}",
         SCRIPT_FORMAT_STYLE[resolveVideoFormat(userRecord?.format)]
       );
 
-      try {
-        await vps.startStep(projectId, "script", owner);
-      } catch (stepError) {
-        console.error(JSON.stringify({ event: "pipeline_start_failed", step: "script", projectId, userId, message: (stepError as Error)?.message }));
-      }
+      const generated = await this.steps.run({ actor: owner, kind: "script", projectId }, async (charge) => {
+        // Flush headers BEFORE connecting to Gemini: the client is attached to the
+        // stream immediately, so an upstream stall can never leave the EventSource
+        // hanging in CONNECTING with no data and no error. Any failure past this
+        // point terminates via the [DONE] in finally.
+        openSseStream(res);
 
-      // Flush headers BEFORE connecting to Gemini: the client is attached to the
-      // stream immediately, so an upstream stall can never leave the EventSource
-      // hanging in CONNECTING with no data and no error. Any failure past this
-      // point terminates via the [DONE] in finally.
-      openSseStream(res);
+        let accumulatedRes = "";
 
-      let accumulatedRes = "";
-
-      try {
         const result = await generateStreamingContent(
           systemPrompt,
           userPrompt,
           GENERATION_CONFIG_SCRIPTS,
         );
+        const completion = scriptFinishReason(result);
         for await (const chunk of result.stream) {
           const part = chunk.text();
           if (part) {
@@ -339,23 +384,17 @@ class ContentService {
             res.write(`data: ${JSON.stringify(part)}\n\n`);
           }
         }
-      } catch (streamError) {
-        console.error("SSE stream error", streamError);
-      } finally {
-        res.write(`data: [DONE]\n\n`);
-        res.end();
-      }
 
-      // Nothing generated (Gemini error/timeout): don't persist an empty script
-      // or complete the step — the client sees an empty [DONE] and offers retry.
-      // Roll the step back so the retry isn't blocked by the in-flight lock.
-      if (!accumulatedRes) {
-        console.error(JSON.stringify({ event: "script_stream_empty", projectId, userId }));
-        await vps.abandonStep(projectId, "script");
-        return accumulatedRes;
-      }
+        await requireCompleteScript(completion);
 
-      try {
+        // Nothing generated (Gemini error/timeout): don't persist an empty script
+        // or complete the step — the client sees an empty [DONE] and offers retry.
+        // Roll the step back so the retry isn't blocked by the in-flight lock.
+        if (!accumulatedRes.trim()) {
+          console.error(JSON.stringify({ event: "script_stream_empty", projectId, userId }));
+          throw ServiceUnavailable("Couldn't generate a script. Please try again.");
+        }
+
         const formattedData = formatGeneratedScript(
           idea.title,
           scriptId,
@@ -364,17 +403,17 @@ class ContentService {
           accumulatedRes,
           owner,
         );
-        await this.repo.saveScript(scriptId, formattedData);
+        await this.repo.saveScript(scriptId, formattedData, ...(charge ? [charge] as const : []));
         await this.repo.updateIdea(project.ideaId, {
           isScriptGenerated: true,
-        });
+        }, ...(charge ? [charge] as const : []));
 
         // Pipeline transition (script saved -> mark step complete). Awaited so it
         // actually runs — fire-and-forget after res.end() can be dropped on serverless —
         // and logged with context instead of silently swallowed.
+        await vps.linkResource(projectId, "script", scriptId, owner, ...(charge ? [charge] as const : []));
         try {
-          await vps.linkResource(projectId, "script", scriptId, owner);
-          await vps.completeStep(projectId, "script", owner);
+          await vps.completeStep(projectId, "script", owner, ...(charge ? [charge] as const : []));
         } catch (pipelineError) {
           console.error(JSON.stringify({ event: "pipeline_transition_failed", step: "script", projectId, scriptId, userId, message: (pipelineError as Error)?.message }));
         }
@@ -382,12 +421,13 @@ class ContentService {
         // Non-critical stats counter, last so a failure here can't skip the pipeline.
         await this.userRepo.update(userId, {
           "stats.scripts": firebase.firestore.FieldValue.increment(1),
-        });
-      } catch (saveError) {
-        console.error("Post-stream save error", saveError);
-      }
+        }).catch(error => console.error(JSON.stringify({ event: "lifetime_stats_failed", userId, message: error?.message })));
 
-      return accumulatedRes;
+        return accumulatedRes;
+      });
+      res.write(`data: [DONE]\n\n`);
+      res.end();
+      return generated;
     } catch (error) {
       console.error("Script generation error", error);
       throw error;
@@ -413,7 +453,7 @@ class ContentService {
   // An idea's content changed underneath its projects — stale every project
   // built from it. An idea can back multiple video projects, so this fans out
   // via the project index, not idea.videoProjectId (which reaches only one).
-  private cascadeIdeaStale = async (ideaId: string, owner: RecordOwner) => {
+  private cascadeIdeaStale = async (ideaId: string, owner: RecordOwner, charge?: CreditReservation | null) => {
     const { userId } = owner;
     let projects: Awaited<ReturnType<VideoProjectService["getProjectsByIdea"]>> = [];
     try {
@@ -424,51 +464,38 @@ class ContentService {
     }
     for (const project of projects) {
       try {
-        await this.videoProjectService.markStale(project.id, "research");
-        await this.videoProjectService.markPackagingDocumentStale(project.id, "research_regenerated");
+        await this.videoProjectService.markStale(project.id, "research", ...(charge ? [charge] as const : []));
+        await this.videoProjectService.markPackagingDocumentStale(project.id, "research_regenerated", ...(charge ? [charge] as const : []));
       } catch (err) {
         console.error(JSON.stringify({ event: "stale_cascade_failed", from: "research", projectId: project.id, userId, message: (err as Error)?.message }));
       }
     }
   };
 
-  regenerateAll = async (owner: RecordOwner) => {
+  regenerateAll = async (owner: RecordOwner, progress?: GenerationProgress) => {
     const { userId } = owner;
     // Before the archive below — this method destroys the previous batch, so an
     // owner problem must surface while there is still something to lose.
     assertOwner(owner.userId);
     const activeIdeas = await this.repo.getActiveBatch(owner.accountId);
 
-    for (const idea of activeIdeas) {
-      await this.cascadeIdeaStale(idea.id, owner);
-    }
+    return this.steps.run({ actor: owner, kind: "ideas" }, async (charge) => {
+      const ideas = await this.buildIdeas(owner, true, undefined, progress);
+      const formatted = await this.formatIdeas(ideas, owner, progress);
+      progress?.("saving", "Saving the replacement ideas.");
 
-    // Archive current active batch
-    await this.repo.archiveUserIdeas(owner.accountId);
+      for (const idea of activeIdeas) {
+        await this.cascadeIdeaStale(idea.id, owner, ...(charge ? [charge] as const : []));
+      }
 
-    // Generate a fresh idea batch
-    const ideas = await this.generateIdeas(owner);
-
-    const batchId = randomUUID();
-        const formattedResults = await Promise.allSettled(
-      ideas.map((idea) => formatGeneratedIdea(idea, owner, batchId)),
-    );
-    const formatted = formattedResults
-      .filter((r) => r.status === "fulfilled")
-      .map((r) => (r as PromiseFulfilledResult<Awaited<ReturnType<typeof formatGeneratedIdea>>>).value);
-
-    logDroppedFormats("regenerateAll", userId, formattedResults);
-
-    // The batch is already archived by this point, so returning an empty slate
-    // here is silent data loss rather than a failed regeneration.
-    if (!formatted.length) {
-      throw ServiceUnavailable("Couldn't regenerate your ideas. Please try again.");
-    }
-
-    return this.saveBatchIdeas(formatted);
+      // Persist replacements before archiving, excluding the new batch.
+      const saved = await this.saveBatchIdeas(formatted, ...(charge ? [charge] as const : []));
+      await this.repo.archiveUserIdeas(owner.accountId, formatted[0].batchId as string, ...(charge ? [charge] as const : []));
+      return saved;
+    });
   };
 
-  regenerateOne = async (owner: RecordOwner, ideaId: string) => {
+  regenerateOne = async (owner: RecordOwner, ideaId: string, progress?: GenerationProgress) => {
     const { userId } = owner;
     assertOwner(owner.userId);
     const idea = await this.repo.getIdea(ideaId);
@@ -479,41 +506,45 @@ class ContentService {
       await forbidCrossAccount(this.accounts, idea.accountId, owner);
     }
 
-    // Suppress the batch-length stats increment — regenerating a single slot
-    // keeps only ideas[0], so a full +batch.length here would 10x-inflate stats.ideas.
-    const ideas = await this.generateIdeas(owner, false);
+    return this.steps.run({ actor: owner, kind: "ideas" }, async (charge) => {
+      // Suppress the batch-length stats increment — regenerating a single slot
+      // keeps only ideas[0], so a full +batch.length here would 10x-inflate stats.ideas.
+      const ideas = await this.buildIdeas(owner, false, undefined, progress);
 
-    // Regenerate into the same slot type when the old doc had one.
-    const preferredType = idea.ideaType;
-    const newIdea =
-      (preferredType && ideas.find((idea) => idea.type === preferredType)) ||
-      ideas[0];
-    const formatted = await formatGeneratedIdea(
-      newIdea,
-      owner,
-      idea.batchId ?? undefined
-    );
+      // Regenerate into the same slot type when the old doc had one.
+      const preferredType = idea.ideaType;
+      const newIdea =
+        (preferredType && ideas.find((idea) => idea.type === preferredType)) ||
+        ideas[0];
+      progress?.("checking", "Preparing the replacement idea for saving.");
+      const formatted = await formatGeneratedIdea(
+        newIdea,
+        owner,
+        idea.batchId ?? undefined
+      );
 
-    await this.repo.updateIdea(ideaId, {
-      title: formatted.title,
-      concept: formatted.concept,
-      ideaType: formatted.ideaType,
-      evidence: formatted.evidence,
-      embedding: formatted.embedding,
-      isScriptGenerated: false,
-      videoProjectId: null,
-      userFeedback: null,
+      progress?.("saving", "Saving the replacement idea.");
+      await this.repo.updateIdea(ideaId, {
+        title: formatted.title,
+        concept: formatted.concept,
+        ideaType: formatted.ideaType,
+        evidence: formatted.evidence,
+        embedding: formatted.embedding,
+        isScriptGenerated: false,
+        videoProjectId: null,
+        userFeedback: null,
+      }, ...(charge ? [charge] as const : []));
+
+      // Same cascade as regenerateAll — this slot's content changed too.
+      await this.cascadeIdeaStale(ideaId, owner, ...(charge ? [charge] as const : []));
+
+      // One idea regenerated -> count exactly one toward stats.
+      await this.userRepo.update(userId, {
+        "stats.ideas": firebase.firestore.FieldValue.increment(1),
+      }).catch(error => console.error(JSON.stringify({ event: "lifetime_stats_failed", userId, message: error?.message })));
+
+      return { ...formatted, id: ideaId };
     });
-
-    // Same cascade as regenerateAll — this slot's content changed too.
-    await this.cascadeIdeaStale(ideaId, owner);
-
-    // One idea regenerated -> count exactly one toward stats.
-    await this.userRepo.update(userId, {
-      "stats.ideas": firebase.firestore.FieldValue.increment(1),
-    });
-
-    return { ...formatted, id: ideaId };
   };
 
   exportScript = async (owner: RecordOwner, scriptId: string) => {
@@ -528,7 +559,7 @@ class ContentService {
     return { title: script.title, text: script.script };
   };
 
-  regenerateScript = async (owner: RecordOwner, scriptId: string): Promise<{ id: string; title: string; script: string }> => {
+  regenerateScript = async (owner: RecordOwner, scriptId: string, progress?: GenerationProgress, onChunk?: (text: string) => void): Promise<{ id: string; title: string; script: string }> => {
     const { userId } = owner;
     const scriptDoc = await this.repo.getScriptById(scriptId);
     if (!scriptDoc) {
@@ -541,47 +572,50 @@ class ContentService {
     const userRecord = (await this.accounts.getContext(owner.accountId)) as
       | DocumentData
       | undefined;
-    const userPrompt = this.buildScriptUserPrompt(userRecord, scriptDoc.title);
+    // Older scripts may have no idea link; keep their title as a conservative fallback.
+    const idea = scriptDoc.ideaId ? await this.repo.getIdea(scriptDoc.ideaId) : null;
+    if (idea && idea.accountId !== owner.accountId) await forbidCrossAccount(this.accounts, idea.accountId, owner);
+    const userPrompt = this.buildScriptUserPrompt(userRecord, idea?.title ?? scriptDoc.title, idea);
     const systemPrompt = SCRIPT_SYSTEM_PROMPT.replace(
       "{videoFormatStyle}",
       SCRIPT_FORMAT_STYLE[resolveVideoFormat(userRecord?.format)]
     );
 
-    const result = await generateStreamingContent(
-      systemPrompt,
-      userPrompt,
-      GENERATION_CONFIG_SCRIPTS,
-    );
-
-    let accumulatedRes = "";
-    for await (const chunk of result.stream) {
-      const part = chunk.text();
-      if (part) accumulatedRes += part;
-    }
-
-    // Same guard the streaming path has: a safety-blocked or timed-out generation
-    // returns nothing, and writing that would replace the creator's script — which
-    // has no version history anywhere — with an empty string.
-    if (!accumulatedRes.trim()) {
-      console.error(JSON.stringify({ event: "script_regenerate_empty", scriptId, userId }));
-      throw ServiceUnavailable("Regeneration returned nothing — your existing script is unchanged. Try again.");
-    }
-
-    await this.repo.editScript(scriptId, { script: accumulatedRes });
-
-    if (scriptDoc.videoProjectId) {
-      try {
-        const proj = await this.videoProjectService.getById(scriptDoc.videoProjectId, owner);
-        if (proj) {
-          await this.videoProjectService.markStale(proj.id, "script");
-          await this.videoProjectService.markPackagingDocumentStale(proj.id, "script_regenerated");
-        }
-      } catch (cascadeError) {
-        console.error(JSON.stringify({ event: "stale_cascade_failed", from: "script", scriptId, userId, message: (cascadeError as Error)?.message }));
+    return this.steps.run({ actor: owner, kind: "script", projectId: scriptDoc.videoProjectId ?? undefined, mode: "regenerate" }, async (charge) => {
+      let accumulatedRes: string;
+      if (onChunk) {
+        accumulatedRes = await streamScript(systemPrompt, userPrompt, onChunk, progress);
+      } else {
+        const result = await generateTextContent(systemPrompt, userPrompt, GENERATION_CONFIG_SCRIPTS);
+        await requireCompleteScript(Promise.resolve(result.response.candidates?.[0]?.finishReason ?? "MISSING_FINISH_REASON"));
+        accumulatedRes = result.response.text();
       }
-    }
 
-    return { id: scriptId, title: scriptDoc.title, script: accumulatedRes };
+      // Same guard the streaming path has: a safety-blocked or timed-out generation
+      // returns nothing, and writing that would replace the creator's script — which
+      // has no version history anywhere — with an empty string.
+      if (!accumulatedRes.trim()) {
+        console.error(JSON.stringify({ event: "script_regenerate_empty", scriptId, userId }));
+        throw ServiceUnavailable("Regeneration returned nothing — your existing script is unchanged. Try again.");
+      }
+
+      progress?.("saving", "Saving your new script.");
+      await this.repo.editScript(scriptId, { script: accumulatedRes }, ...(charge ? [charge] as const : []));
+
+      if (scriptDoc.videoProjectId) {
+        try {
+          const proj = await this.videoProjectService.getById(scriptDoc.videoProjectId, owner);
+          if (proj) {
+            await this.videoProjectService.markStale(proj.id, "script", ...(charge ? [charge] as const : []));
+            await this.videoProjectService.markPackagingDocumentStale(proj.id, "script_regenerated", ...(charge ? [charge] as const : []));
+          }
+        } catch (cascadeError) {
+          console.error(JSON.stringify({ event: "stale_cascade_failed", from: "script", scriptId, userId, message: (cascadeError as Error)?.message }));
+        }
+      }
+
+      return { id: scriptId, title: scriptDoc.title, script: accumulatedRes };
+    });
   };
 
   exportIdeas = async (owner: RecordOwner) => {

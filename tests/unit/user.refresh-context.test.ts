@@ -1,3 +1,6 @@
+import ExtractService from "../../src/service/extract.service";
+import ExtractRepository from "../../src/repository/extract.repository";
+import { unmeteredSteps } from "../helpers/step-runner";
 jest.mock("firebase-admin", () => ({
   apps: [],
   initializeApp: jest.fn(),
@@ -52,12 +55,12 @@ const mockFormat = formatUserData as jest.Mock;
 const accountRepo = {
   getContext: jest.fn(),
   // Parameters declared so `mock.calls[n][1]` is the patch, not `never`.
-  writeContext: jest.fn(async (_accountId: string, _patch: Record<string, unknown>) => undefined),
+  writeContext: jest.fn(async (_accountId: string, _patch: Record<string, unknown>, _actorUserId: string) => undefined),
   // Reached by `adoptChannelIdentity`, which names the channel from whatever
   // onboarding just wrote. Null here means "no account document", so the naming
   // step no-ops and these tests stay about the context write.
   findById: jest.fn(async (_accountId: string) => null as Record<string, unknown> | null),
-  update: jest.fn(async (_accountId: string, _patch: Record<string, unknown>) => undefined),
+  update: jest.fn(async (_accountId: string, _patch: Record<string, unknown>, _actorUserId: string) => undefined),
 };
 const channelRepo = () => accountRepo as never;
 
@@ -68,7 +71,7 @@ describe("UserService.refreshContext", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     repo = new UserRepository() as jest.Mocked<UserRepository>;
-    service = new UserService(repo as never, channelRepo());
+    service = new UserService(repo as never, channelRepo(), unmeteredSteps, new ExtractService(new ExtractRepository()));
   });
 
   it("re-runs enrichment from stored inputs, mapping competitors back to URLs", async () => {
@@ -144,7 +147,7 @@ describe("UserService.updateProfile", () => {
     jest.clearAllMocks();
     repo = new UserRepository() as jest.Mocked<UserRepository>;
     repo.update = jest.fn().mockResolvedValue(undefined);
-    service = new UserService(repo as never, channelRepo());
+    service = new UserService(repo as never, channelRepo(), unmeteredSteps, new ExtractService(new ExtractRepository()));
   });
 
   it("enriches the submitted form before storing it, rather than persisting raw input", async () => {
@@ -163,7 +166,7 @@ describe("UserService.updateProfile", () => {
       TEST_ACCOUNT_ID, {
       niche: "AI tools",
       websiteContent: "scraped",
-    });
+    }, "user-1");
     expect(result).toMatchObject({ websiteContent: "scraped" });
   });
 
@@ -202,7 +205,7 @@ describe("UserService.createOnboardingData (fast save)", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     repo = new UserRepository() as jest.Mocked<UserRepository>;
-    service = new UserService(repo as never, channelRepo());
+    service = new UserService(repo as never, channelRepo(), unmeteredSteps, new ExtractService(new ExtractRepository()));
   });
 
   it("persists the raw minimum immediately WITHOUT inline enrichment", async () => {
@@ -213,7 +216,7 @@ describe("UserService.createOnboardingData (fast save)", () => {
 
     // Fast path: saves the provided fields, never calls the (slow) enrichment.
     expect(accountRepo.writeContext).toHaveBeenCalledWith(
-      TEST_ACCOUNT_ID, data);
+      TEST_ACCOUNT_ID, data, "user-1");
     expect(mockFormat).not.toHaveBeenCalled();
     expect(result).toBe(data);
   });
@@ -232,7 +235,7 @@ describe("UserService.getProfile", () => {
     repo = new UserRepository() as jest.Mocked<UserRepository>;
     // Identity half. getProfile merges this with the channel half below.
     repo.get = jest.fn().mockResolvedValue({});
-    service = new UserService(repo as never, channelRepo());
+    service = new UserService(repo as never, channelRepo(), unmeteredSteps, new ExtractService(new ExtractRepository()));
   });
 
   it("always returns the uid, even when the stored doc has no uid field", async () => {

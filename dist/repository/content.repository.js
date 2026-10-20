@@ -1,3 +1,5 @@
+import { IDEA_PUBLIC_FIELDS } from "../utlils/public-response.js";
+import { generationWrite } from "./generation-guard.js";
 import { isDocumentId } from "../utlils/firestore-id.js";
 import { db, firebase } from "../config/firebase.js";
 class ContentRepository {
@@ -35,21 +37,17 @@ class ContentRepository {
                     // That mismatch is why this branch used to ignore the cursor entirely and
                     // re-return page 1 forever: the cursor it was handed did not fit its sort.
                     query = query
+                        // Keep the prefix filter independent of the pagination cursor. A
+                        // cursor from an earlier search must not widen these results.
+                        .where("title", ">=", filters.searchText)
+                        .where("title", "<=", filters.searchText + "\uf8ff")
                         .orderBy("title")
                         .orderBy(firebase.firestore.FieldPath.documentId());
-                    // `endAt` keeps the prefix bound; `startAfter` moves past the previous
-                    // page's last row. Both apply together — the upper bound is what makes it
-                    // a prefix search, the lower bound is what makes it page.
-                    //
                     // docId is the tiebreaker: two ideas can share a title, and without it
                     // `startAfter(title)` would skip every duplicate after the first.
                     if (cursor?.title && cursor?.docId) {
                         query = query.startAfter(cursor.title, cursor.docId);
                     }
-                    else {
-                        query = query.startAt(filters.searchText);
-                    }
-                    query = query.endAt(filters.searchText + "\uf8ff");
                 }
                 else {
                     // ONE ordering for page 1 and every cursor page. This orderBy used to live
@@ -64,9 +62,14 @@ class ContentRepository {
                         query = query.startAfter(firebase.firestore.Timestamp.fromDate(new Date(cursor.createdAt)), cursor.docId);
                     }
                 }
-                query = query.limit(limit);
+                query = query.select(...IDEA_PUBLIC_FIELDS).limit(limit);
                 const snapshot = await query.get();
-                return snapshot.docs.map((doc) => doc.data());
+                // Pagination and later edits address the document, not a legacy stored id.
+                return snapshot.docs.map((doc) => {
+                    const data = doc.data();
+                    data.id = doc.id;
+                    return data;
+                });
             }
             catch (error) {
                 throw error;
@@ -122,7 +125,7 @@ class ContentRepository {
             data.createdAt = data.createdAt?.toDate();
             return data;
         };
-        this.batchSaveIdeas = async (dataList) => {
+        this.batchSaveIdeas = async (dataList, charge) => {
             const batch = db.batch();
             const collectionRef = db.collection(this.collection);
             const updatedDataList = (dataList ?? []).map((data) => {
@@ -137,7 +140,10 @@ class ContentRepository {
                 return dataWithId;
             });
             try {
-                await batch.commit();
+                if (charge)
+                    await generationWrite(charge, tx => updatedDataList.forEach(data => tx.set(collectionRef.doc(data.id), data)));
+                else
+                    await batch.commit();
                 return updatedDataList;
             }
             catch (err) {
@@ -168,7 +174,7 @@ class ContentRepository {
         // so records that appeared mid-run are picked up by a later pass. The loop
         // terminates because every pass archives the page it just read, which
         // permanently removes those documents from `archived == false`.
-        this.archiveUserIdeas = async (accountId, excludeBatchId) => {
+        this.archiveUserIdeas = async (accountId, excludeBatchId, charge) => {
             // Firestore caps a batch at 500 ops — stay under it so a commit never throws.
             const CHUNK_SIZE = 450;
             // A generation writes 10 ideas, so this is far more headroom than any real
@@ -196,30 +202,36 @@ class ContentRepository {
                         updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
                     });
                 });
-                await batch.commit();
+                if (charge)
+                    await generationWrite(charge, tx => toArchive.forEach(doc => tx.update(doc.ref, { archived: true, updatedAt: firebase.firestore.FieldValue.serverTimestamp() })));
+                else
+                    await batch.commit();
                 // A short page means we reached the end of what matched.
                 if (snapshot.size < CHUNK_SIZE)
                     return;
             }
             console.warn(JSON.stringify({ event: "archive_max_passes_reached", accountId, maxPasses: MAX_PASSES }));
         };
-        this.updateIdea = async (ideaId, data) => {
-            await this.db
-                .collection(this.collection)
-                .doc(ideaId)
-                .set(data, { merge: true });
+        this.updateIdea = async (ideaId, data, charge) => {
+            const ref = this.db.collection(this.collection).doc(ideaId);
+            if (charge)
+                await generationWrite(charge, tx => tx.set(ref, data, { merge: true }));
+            else
+                await ref.set(data, { merge: true });
         };
-        this.editScript = async (scriptId, data) => {
-            await this.db
-                .collection(this.script_collection)
-                .doc(scriptId)
-                .set(data, { merge: true });
+        this.editScript = async (scriptId, data, charge) => {
+            const ref = this.db.collection(this.script_collection).doc(scriptId);
+            if (charge)
+                await generationWrite(charge, tx => tx.set(ref, data, { merge: true }));
+            else
+                await ref.set(data, { merge: true });
         };
-        this.saveScript = async (scriptId, data) => {
-            await this.db
-                .collection(this.script_collection)
-                .doc(scriptId)
-                .set(data, { merge: true });
+        this.saveScript = async (scriptId, data, charge) => {
+            const ref = this.db.collection(this.script_collection).doc(scriptId);
+            if (charge)
+                await generationWrite(charge, tx => tx.set(ref, data, { merge: true }));
+            else
+                await ref.set(data, { merge: true });
         };
         this.db = db;
         this.collection = "ideas" /* COLLECTIONS.IDEAS */;

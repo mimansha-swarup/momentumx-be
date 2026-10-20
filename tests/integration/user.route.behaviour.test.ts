@@ -100,8 +100,19 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("POST /v1/user/onboarding/prefill", () => {
-  it("returns 200 with prefill suggestions", async () => {
-    mockUserService.prefillFromChannel.mockResolvedValueOnce({ niche: "n", targetAudience: "a", brandName: "b" });
+  it("returns the suggestions NESTED under `suggestions`, alongside the scraped channel", async () => {
+    // `prefillFromChannel` returns `{ suggestions: { niche, targetAudience,
+    // brandName }, channel: { channelDescription, topTitles } }` — see
+    // src/service/user.service.ts. The fixture here was a FLAT
+    // `{ niche, targetAudience, brandName }`, which the service cannot return, and
+    // `data: expect.any(Object)` passed on it anyway. A frontend reading
+    // `data.niche` (the shape this test described) would prefill three blank
+    // fields and the user would retype everything the scrape already knew.
+    const suggestions = { niche: "home cooking", targetAudience: "busy parents", brandName: "Test Kitchen" };
+    mockUserService.prefillFromChannel.mockResolvedValueOnce({
+      suggestions,
+      channel: { channelDescription: "We cook fast", topTitles: ["Pasta in 10", "One-pan dinner"] },
+    });
 
     const res = await request(server())
       .post("/v1/user/onboarding/prefill")
@@ -109,8 +120,28 @@ describe("POST /v1/user/onboarding/prefill", () => {
       .send({ channelUrl: VALID_CHANNEL_URL });
 
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ success: true, data: expect.any(Object) });
-    expect(mockUserService.prefillFromChannel).toHaveBeenCalledWith(VALID_CHANNEL_URL);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data.suggestions).toEqual(suggestions);
+    // The scraped channel rides along so the instant-first-idea call can pass it
+    // straight back as `context` without a second scrape.
+    expect(res.body.data.channel).toMatchObject({ topTitles: ["Pasta in 10", "One-pan dinner"] });
+    expect(mockUserService.prefillFromChannel).toHaveBeenCalledWith(VALID_CHANNEL_URL, expect.objectContaining({ userId: "user-1", accountId: expect.any(String) }));
+  });
+
+  it("still answers with the `suggestions` envelope when the channel yielded nothing", async () => {
+    // Empty strings, not an absent key: the form binds to these three fields.
+    mockUserService.prefillFromChannel.mockResolvedValueOnce({
+      suggestions: { niche: "", targetAudience: "", brandName: "" },
+      channel: { channelDescription: "", topTitles: [] },
+    });
+
+    const res = await request(server())
+      .post("/v1/user/onboarding/prefill")
+      .set(...AUTH_HEADER)
+      .send({ channelUrl: VALID_CHANNEL_URL });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.suggestions).toEqual({ niche: "", targetAudience: "", brandName: "" });
   });
 
   it("returns 400 when channelUrl is missing", async () => {
@@ -138,8 +169,12 @@ describe("POST /v1/user/onboarding/prefill", () => {
 // ---------------------------------------------------------------------------
 
 describe("PATCH /v1/user/onboarding", () => {
-  it("returns 200 when a channel URL alone is provided", async () => {
-    mockUserService.createOnboardingData.mockResolvedValueOnce({ userName: VALID_CHANNEL_URL });
+  it("returns 200 when a channel URL alone is provided, wrapping the record in `payload`", async () => {
+    mockUserService.createOnboardingData.mockResolvedValueOnce({
+      userName: VALID_CHANNEL_URL,
+      niche: "home cooking",
+      targetAudience: "busy parents",
+    });
 
     const res = await request(server())
       .patch("/v1/user/onboarding")
@@ -147,7 +182,14 @@ describe("PATCH /v1/user/onboarding", () => {
       .send({ userName: VALID_CHANNEL_URL });
 
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ success: true, data: { payload: expect.any(Object) } });
+    // `data: { payload: expect.any(Object) }` was satisfied by `{ payload: {} }`,
+    // i.e. by an onboarding save that persisted and returned nothing. The client
+    // seeds its store from this payload and routes on it.
+    expect(res.body.data.payload).toMatchObject({
+      userName: VALID_CHANNEL_URL,
+      niche: "home cooking",
+      targetAudience: "busy parents",
+    });
   });
 
   it("returns 200 when niche + targetAudience alone are provided (no-channel path)", async () => {
@@ -192,13 +234,21 @@ describe("PATCH /v1/user/onboarding", () => {
 // ---------------------------------------------------------------------------
 
 describe("POST /v1/user/refresh-context", () => {
-  it("returns 200 with refreshed context", async () => {
-    mockUserService.refreshContext.mockResolvedValueOnce({ channelId: "abc" });
+  it("returns public refreshed fields without backend research context", async () => {
+    mockUserService.refreshContext.mockResolvedValueOnce({
+      channelId: "UC123",
+      channelDescription: "We cook fast",
+      userTitle: ["Pasta in 10"],
+      websiteContent: "About us",
+      competitors: [{ url: "https://youtube.com/@rival" }],
+    });
 
     const res = await request(server()).post("/v1/user/refresh-context").set(...AUTH_HEADER);
 
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ success: true, data: expect.any(Object) });
+    expect(res.body.data).toEqual({ competitors: [{ url: "https://youtube.com/@rival" }] });
+    expect(res.body.data).not.toHaveProperty("websiteContent");
+    expect(res.body.data).not.toHaveProperty("userTitle");
     expect(mockUserService.refreshContext).toHaveBeenCalledWith(
       testOwner("user-1"));
   });
@@ -218,15 +268,29 @@ describe("POST /v1/user/refresh-context", () => {
 // ---------------------------------------------------------------------------
 
 describe("GET /v1/user/profile", () => {
-  it("returns 200 with the profile for the authenticated uid", async () => {
-    mockUserService.getProfile.mockResolvedValueOnce({ niche: "fitness" });
+  it("returns the profile WITH the uid and the completeness score", async () => {
+    // Both are load-bearing and neither was asserted. The service comments spell
+    // out why: a uid-less response made the client treat the profile as "no
+    // profile", throw the stored niche away and bounce the user back into
+    // onboarding forever; `completeness` is what the enrich nudge and the routing
+    // gate read.
+    mockUserService.getProfile.mockResolvedValueOnce({
+      uid: "user-1",
+      niche: "fitness",
+      targetAudience: "beginners",
+      completeness: { score: 60, incomplete: true, missing: ["website"] },
+    });
 
     const res = await request(server()).get("/v1/user/profile").set(...AUTH_HEADER);
 
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ success: true, data: { niche: "fitness" } });
-    expect(mockUserService.getProfile).toHaveBeenCalledWith(
-      testOwner("user-1"));
+    expect(res.body.success).toBe(true);
+    expect(res.body.data).toMatchObject({
+      uid: "user-1",
+      niche: "fitness",
+      completeness: { score: 60, incomplete: true },
+    });
+    expect(mockUserService.getProfile).toHaveBeenCalledWith(testOwner("user-1"));
   });
 
   it("returns an empty object, not null/undefined, when the user has no document yet", async () => {
@@ -244,8 +308,8 @@ describe("GET /v1/user/profile", () => {
 // ---------------------------------------------------------------------------
 
 describe("PATCH /v1/user/profile", () => {
-  it("returns 200 for a single-field partial update", async () => {
-    mockUserService.updateProfile.mockResolvedValueOnce({ brandName: "New Brand" });
+  it("returns 200 for a single-field partial update, echoing the stored record", async () => {
+    mockUserService.updateProfile.mockResolvedValueOnce({ brandName: "New Brand", niche: "fitness" });
 
     const res = await request(server())
       .patch("/v1/user/profile")
@@ -253,7 +317,9 @@ describe("PATCH /v1/user/profile", () => {
       .send({ brandName: "New Brand" });
 
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ success: true, data: { payload: expect.any(Object) } });
+    // A partial update must not come back as a partial RECORD — the settings form
+    // re-renders from this, and `payload: expect.any(Object)` permitted `{}`.
+    expect(res.body.data.payload).toMatchObject({ brandName: "New Brand", niche: "fitness" });
     expect(mockUserService.updateProfile).toHaveBeenCalledWith(
       testOwner("user-1"), expect.objectContaining({ brandName: "New Brand" }));
   });

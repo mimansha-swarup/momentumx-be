@@ -1,3 +1,5 @@
+import type { CreditReservation } from "./billing.repository.js";
+import { assertGeneration, generationWrite } from "./generation-guard.js";
 import { isDocumentId } from "../utlils/firestore-id.js";
 import { Firestore } from "firebase-admin/firestore";
 import { COLLECTIONS } from "../constants/collection.js";
@@ -80,12 +82,11 @@ class PackagingRepository {
     }
   };
 
-  update = async (packagingId: string, data: Record<string, unknown>) => {
+  update = async (packagingId: string, data: Record<string, unknown>, charge?: CreditReservation | null) => {
     try {
-      await this.db
-        .collection(this.collection)
-        .doc(packagingId)
-        .update(data);
+      const ref = this.db.collection(this.collection).doc(packagingId);
+      if (charge) await generationWrite(charge, tx => tx.update(ref, data));
+      else await ref.update(data);
       return { id: packagingId, ...data };
     } catch (error) {
       throw error;
@@ -108,9 +109,11 @@ class PackagingRepository {
     { userId, accountId }: RecordOwner,
     field: string,
     item: string,
-    canonical: unknown
+    canonical: unknown,
+    charge?: CreditReservation | null
   ): Promise<{ packagingId: string; created: boolean; statuses: Record<string, string> }> => {
     return this.db.runTransaction(async (txn) => {
+      await assertGeneration(txn, charge);
       // A point read, because the id IS the videoProjectId. This used to be a
       // `where("videoProjectId", "==", ...)` query, which existed only to find
       // documents the old auto-ID save path had written — there are none.
@@ -182,11 +185,13 @@ class PackagingRepository {
     packagingId: string,
     from: PackagingItemStatus,
     to: PackagingItemStatus,
-    docFields: Record<string, unknown>
+    docFields: Record<string, unknown>,
+    charge?: CreditReservation | null
   ): Promise<void> => {
     const ref = this.db.collection(this.collection).doc(packagingId);
 
     await this.db.runTransaction(async (txn) => {
+      await assertGeneration(txn, charge);
       const doc = await txn.get(ref);
       if (!doc.exists) return;
 
@@ -206,20 +211,20 @@ class PackagingRepository {
   // Inverse of markStale, for the "Keep as-is" path: the creator accepted the
   // content as-is, so the doc must stop reporting stale or every card keeps an
   // "Outdated" chip under a banner they already dismissed.
-  clearStale = async (packagingId: string): Promise<void> => {
+  clearStale = async (packagingId: string, charge?: CreditReservation | null): Promise<void> => {
     await this.transitionItemStatuses(packagingId, "stale", "completed", {
       isStale: false,
       staleReason: null,
       staleSince: null,
-    });
+    }, charge);
   };
 
-  markStale = async (packagingId: string, reason: StaleReason): Promise<void> => {
+  markStale = async (packagingId: string, reason: StaleReason, charge?: CreditReservation | null): Promise<void> => {
     await this.transitionItemStatuses(packagingId, "completed", "stale", {
       isStale: true,
       staleReason: reason,
       staleSince: firebase.firestore.FieldValue.serverTimestamp(),
-    });
+    }, charge);
   };
 }
 

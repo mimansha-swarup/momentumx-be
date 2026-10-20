@@ -2,3 +2,6 @@ node_modules
 .env
 service.json
 .qodo
+.DS_Store
+npm-debug.log*
+coverage/

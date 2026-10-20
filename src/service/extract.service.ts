@@ -171,10 +171,17 @@ class ExtractService {
 
     if (info.type === "channel") return info.value;
 
+    // Escaped at the point it becomes a URL parameter. Without this the only thing
+    // stopping parameter injection is extractChannelInfo's character class happening
+    // to exclude & and # — one regex widening away from a forged request.
+    // Only the untrusted VALUE is escaped; the `@` stays literal because that is the
+    // form YouTube documents for forHandle. Encoding it to %40 would almost certainly
+    // still work, but "almost certainly" is not worth it for zero benefit — the
+    // injection risk lives entirely in `info.value`.
     const param =
       info.type === "handle"
-        ? `forHandle=@${info.value}`
-        : `forUsername=${info.value}`;
+        ? `forHandle=@${encodeURIComponent(info.value)}`
+        : `forUsername=${encodeURIComponent(info.value)}`;
 
     const channelRes = await this.repo.retrieveChannelId(param);
     const channel = channelRes?.items?.[0];

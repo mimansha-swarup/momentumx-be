@@ -125,7 +125,8 @@ describe("AccountRepository.createWithContext", () => {
   // committed. Minting a second account here splits one user's records across
   // two accounts, which stays invisible until Phase 06.
   it("adopts the winner's account and writes NOTHING when the pointer is already claimed", async () => {
-    txnGet.mockResolvedValue(pointerSnap("acc-winner"));
+    txnGet.mockResolvedValueOnce(pointerSnap("acc-winner"))
+      .mockResolvedValueOnce({ data: () => ({ memberUids: ["uid-1"], deletedAt: null }) });
 
     expect(await repo.createWithContext(ACCOUNT, CONTEXT)).toBe("acc-winner");
     expect(txnSet).not.toHaveBeenCalled();

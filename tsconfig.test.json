@@ -1,0 +1,22 @@
+// Type-checks the TESTS, which no tsconfig covered before.
+//
+// `tsconfig.json` has `"include": ["src"]`, so `tsc --noEmit` never looked at tests at
+// all — a type error in a test surfaced only when jest happened to run that file. That
+// is how a fourth `new UserService(...)` call site survived a green typecheck.
+//
+// Strict here is what makes a test DOUBLE honest: a fake typed against the real
+// interface fails to compile when it drifts, instead of silently standing in for a
+// method it does not have. Two fakes missing `.where()` inside transactions is exactly
+// the bug this closes.
+//
+// CommonJS + jest types mirror what ts-jest actually compiles with (jest.config.cjs).
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "types": ["node", "express", "jest"]
+  },
+  "include": ["src", "tests"]
+}

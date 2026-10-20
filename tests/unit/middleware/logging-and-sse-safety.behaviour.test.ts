@@ -6,8 +6,18 @@ import { ServiceUnavailable } from "../../../src/utlils/errors";
 import type { NextFunction, Request, Response } from "express";
 
 describe("errorHandler — never writes to a response that has already started", () => {
+  // Annotated because `status: jest.fn(() => res)` references `res` inside its own
+  // initializer, which strict mode cannot infer. Typed as the Response surface the
+  // handler actually touches, so a handler reaching for anything else fails to compile.
+  type FakeRes = Pick<Response, "headersSent"> & {
+    sendError: jest.Mock;
+    status: jest.Mock;
+    json: jest.Mock;
+    end: jest.Mock;
+  };
+
   const makeRes = (headersSent: boolean) => {
-    const res = {
+    const res: FakeRes = {
       headersSent,
       sendError: jest.fn(),
       status: jest.fn(() => res),

@@ -1,3 +1,4 @@
+import { NotFound } from "../../src/utlils/errors";
 // Behaviour-driven integration tests for /v1/scripts — the router had none.
 //
 // Script is pipeline step 2 and the primary generation flow, and it was the only
@@ -62,7 +63,7 @@ jest.mock("../../src/service/content.service", () => ({
 
 import request from "supertest";
 import app from "../../src/app";
-import { ServiceUnavailable } from "../../src/utlils/errors";
+import { AccountForbidden, ServiceUnavailable, WrongAccount } from "../../src/utlils/errors";
 import { useSharedServer } from "./shared-server";
 import { testOwner, OTHER_ACCOUNT_ID } from "../helpers/account";
 
@@ -125,13 +126,32 @@ describe("/v1/scripts — nothing is reachable without a verified token", () => 
 
   // 401 and 403 are not interchangeable: 401 sends the user to log in again,
   // 403 means "we know who you are, and no". Reading someone else's script is
-  // the second one.
-  it("keeps 403 distinct from 401 when the caller is known but not the owner", async () => {
-    mockContentService.getScriptById.mockRejectedValueOnce(makeServiceError("Forbidden", 403));
+  // the second one — and WHICH 403 decides what the client does next.
+  //
+  // The fixture was a bare `Error` with `statusCode: 403`, which `getScriptById`
+  // cannot produce: it compares `script.accountId` and hands the mismatch to
+  // `forbidCrossAccount`, which throws `WrongAccount` or `AccountForbidden`. With
+  // only the status asserted, the two were interchangeable here.
+  it("offers a switch for a script in the caller's other channel, and ejects for a stranger's", async () => {
+    // HARM PREVENTED: opening a bookmarked script that lives in your own second
+    // channel must not clear the active channel and dump you on the channel list.
+    mockContentService.getScriptById.mockRejectedValueOnce(
+      WrongAccount({ accountId: OTHER_ACCOUNT_ID, displayName: "Finance Channel" })
+    );
 
-    const res = await request(server()).get("/v1/scripts/script-1").set(...AUTH_HEADER);
+    const mine = await request(server()).get("/v1/scripts/script-in-my-other-channel").set(...AUTH_HEADER);
 
-    expect(res.status).toBe(403);
+    expect(mine.status).toBe(403);
+    expect(mine.body.code).toBe("wrong_account");
+    expect(mine.body.detail).toMatchObject({ accountId: OTHER_ACCOUNT_ID, displayName: "Finance Channel" });
+
+    mockContentService.getScriptById.mockRejectedValueOnce(AccountForbidden());
+
+    const strangers = await request(server()).get("/v1/scripts/a-strangers-script").set(...AUTH_HEADER);
+
+    expect(strangers.status).toBe(403);
+    expect(strangers.body.code).toBe("account_forbidden");
+    expect(strangers.body.detail).toBeUndefined();
   });
 });
 
@@ -177,7 +197,7 @@ describe("GET /v1/scripts/stream/:projectId — the EventSource exception", () =
   // read. After the stream opens it is too late — the controller must not try.
   it("returns a normal JSON error when generation fails before any bytes are written", async () => {
     mockContentService.generateScripts.mockRejectedValueOnce(
-      makeServiceError("Video project not found", 404)
+      NotFound("Video project not found")
     );
 
     const res = await request(server()).get("/v1/scripts/stream/proj-1?token=valid-token");
@@ -210,12 +230,16 @@ describe("GET /v1/scripts/stream/:projectId — the EventSource exception", () =
 
 describe("GET /v1/scripts and /:scriptId", () => {
   it("lists the caller's scripts in the standard envelope", async () => {
-    mockContentService.getUsersScript.mockResolvedValueOnce([{ id: "script-1" }]);
+    mockContentService.getUsersScript.mockResolvedValueOnce([
+      { id: "script-1", title: "How I Cook", script: "FULL TEXT", videoProjectId: "proj-1" },
+    ]);
 
     const res = await request(server()).get("/v1/scripts").set(...AUTH_HEADER);
 
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ success: true, data: [{ id: "script-1" }] });
+    expect(res.body.data).toEqual([
+      expect.objectContaining({ id: "script-1", title: "How I Cook", videoProjectId: "proj-1" }),
+    ]);
     // Identity comes from the verified token, never the query string.
     expect(mockContentService.getUsersScript).toHaveBeenCalledWith(
       testOwner("user-1"));
@@ -318,6 +342,21 @@ describe("PATCH /v1/scripts/edit/:scriptId", () => {
     });
   });
 
+  it("refuses an edit to another channel's script with the reason, not a bare 403", async () => {
+    mockContentService.editScript.mockRejectedValueOnce(
+      WrongAccount({ accountId: OTHER_ACCOUNT_ID, displayName: "Finance Channel" })
+    );
+
+    const res = await request(server())
+      .patch("/v1/scripts/edit/script-in-my-other-channel")
+      .set(...AUTH_HEADER)
+      .send({ script: "Rewritten" });
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("wrong_account");
+    expect(res.body.detail).toMatchObject({ accountId: OTHER_ACCOUNT_ID });
+  });
+
   it("surfaces the service's 404 as 404", async () => {
     mockContentService.editScript.mockRejectedValueOnce(makeServiceError("Script not found", 404));
 
@@ -345,7 +384,7 @@ describe("POST /v1/scripts/:scriptId/regenerate", () => {
 
     expect(res.status).toBe(200);
     expect(mockContentService.regenerateScript).toHaveBeenCalledWith(
-      testOwner("user-1"), "script-1");
+      testOwner("user-1"), "script-1", undefined, undefined);
     expect(res.body.data).toMatchObject({ id: "script-1" });
   });
 
@@ -376,5 +415,79 @@ describe("POST /v1/scripts/:scriptId/regenerate", () => {
     expect(masked.status).toBe(500);
     expect(masked.body.message).toBe("Something went wrong");
     expect(masked.body.message).not.toMatch(/FIRESTORE/);
+  });
+});
+
+
+// Native fetch observes bytes as they arrive; supertest's completed response
+// alone cannot prove that the POST is incremental rather than buffered.
+describe("POST regeneration SSE — independent HTTP lifecycle review", () => {
+  const endpoint = () => `http://127.0.0.1:${(server().address() as { port: number }).port}/v1/scripts/script-1/regenerate`;
+  const headers = { Authorization: "Bearer valid-token", Accept: "text/event-stream" };
+  it("delivers the first chunk before completion and the result only after saving resolves", async () => {
+    let finish!: () => void;
+    const saving = new Promise<void>(resolve => { finish = resolve; });
+    mockContentService.regenerateScript.mockImplementationOnce(async (_owner, _id, progress, chunk) => {
+      progress("generating", "Writing your new script.");
+      chunk("First paragraph café 🎬");
+      progress("saving", "Saving your new script.");
+      await saving;
+      return { id: "script-1", title: "Title", script: "First paragraph café 🎬" };
+    });
+    const response = await fetch(endpoint(), { method: "POST", headers });
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+    expect(response.headers.get("x-accel-buffering")).toBe("no");
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let body = "";
+    try {
+      while (!body.includes('"stage":"saving"')) body += decoder.decode((await reader.read()).value);
+      expect(body).toContain('event: chunk');
+      expect(body).toContain('First paragraph café 🎬');
+      expect(body).not.toContain('event: result');
+      expect(mockContentService.regenerateScript).toHaveBeenCalledTimes(1);
+      finish();
+      while (true) { const next = await reader.read(); if (next.done) break; body += decoder.decode(next.value); }
+      expect(body.match(/event: result/g)).toHaveLength(1);
+      expect(body.indexOf('event: result')).toBeGreaterThan(body.indexOf('"stage":"saving"'));
+    } finally { finish(); await reader.cancel(); }
+  });
+
+  it("preserves declared failure details after preview bytes, without emitting a result", async () => {
+    mockContentService.regenerateScript.mockImplementationOnce(async (_owner, _id, _progress, chunk) => {
+      chunk("Partial preview");
+      throw new (await import("../../src/utlils/errors")).HttpError("Generation stopped", 503, { charged: false, private: "secret" });
+    });
+    const response = await fetch(endpoint(), { method: "POST", headers });
+    const body = await response.text();
+    expect(body).toContain('event: chunk');
+    expect(body).toContain('event: generation_error');
+    expect(body).toContain('"charged":false');
+    expect(body).not.toContain('secret');
+    expect(body).not.toContain('event: result');
+  });
+
+  it("finishes the one accepted operation after client disconnect without replay", async () => {
+    let finish!: () => void;
+    let completed!: () => void;
+    const saving = new Promise<void>(resolve => { finish = resolve; });
+    const completion = new Promise<void>(resolve => { completed = resolve; });
+    mockContentService.regenerateScript.mockImplementationOnce(async (_owner, _id, progress, chunk) => {
+      chunk("Preview before disconnect");
+      await saving;
+      progress("saving", "Saving your new script.");
+      completed();
+      return { id: "script-1", script: "Saved replacement" };
+    });
+    const controller = new AbortController();
+    const response = await fetch(endpoint(), { method: "POST", headers, signal: controller.signal });
+    const reader = response.body!.getReader();
+    try {
+      expect(new TextDecoder().decode((await reader.read()).value)).toContain("Preview before disconnect");
+      controller.abort();
+      finish();
+      await completion;
+      expect(mockContentService.regenerateScript).toHaveBeenCalledTimes(1);
+    } finally { finish(); await reader.cancel().catch(() => {}); }
   });
 });

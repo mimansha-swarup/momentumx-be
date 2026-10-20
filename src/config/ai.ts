@@ -5,9 +5,15 @@ if (!apiKey) {
   throw new Error("API_KEY environment variable is required");
 }
 const genAI = new GoogleGenerativeAI(apiKey);
+// One explicit model for every generation path; never silently change models
+// during retries. Embeddings use their own fixed model below.
+export const GENERATION_MODEL = (process.env.GENERATION_MODEL ?? "gemini-3.8-flash").trim();
+if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(GENERATION_MODEL)) {
+  throw new Error("GENERATION_MODEL must be a nonempty model ID, without a URL or models/ prefix");
+}
 const genAIModel = (systemPrompt: string, generationConfig: GenerationConfig) =>
   genAI.getGenerativeModel({
-    model: "gemini-3.5-flash",
+    model: GENERATION_MODEL,
     systemInstruction: systemPrompt,
     generationConfig,
   });

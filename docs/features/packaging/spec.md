@@ -127,6 +127,7 @@ Packaging documents are saved with the client-provided fields plus server-set fi
 ```typescript
 {
   ...clientProvidedFields,       // whatever the client sends to /save
+  accountId: string          // active channel tenancy key
   createdBy: string,             // userId from authMiddleware
   createdAt: Timestamp,          // serverTimestamp()
   itemStatuses: {                // per-item; set to "completed" by each generate-*
@@ -266,3 +267,9 @@ After any `regenerateItem` completes, the service checks the **three packaging-o
 - [Hooks Feature Spec](../hooks/spec.md)
 - [Pipeline Spec](../../product/pipeline-spec.md)
 - [Product Roadmap](../../product/roadmap.md)
+
+## Channel tenancy and roles
+
+Content is scoped by `accountId`, resolved from verified channel membership.
+`createdBy` records authorship only. Owners and editors may mutate/generate; viewers
+may read and export. Member management and channel deletion require owner.

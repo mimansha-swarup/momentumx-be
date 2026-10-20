@@ -2,18 +2,25 @@
 title: "Multi-Account — Plan Overview"
 description: "Splitting login from channel so one person can manage and share several YouTube channels, each with its own data."
 date: 2026-08-19
-last_updated: 2026-08-26
-status: "planned"
+last_updated: 2026-10-18
+status: "implemented-locally-rollout-pending"
 tags: ["multi-account", "tenancy", "migration", "plan"]
 ---
 
 # Multi-Account — Plan Overview
 
+Backend hardening on 2026-10-18 adds private deleted-channel invite previews, stable-UID
+revocation across email changes and Auth deletion, bounded manual maintenance, and real
+Firestore contention acceptance. See [current evidence and remaining deployment gates](./operational-readiness.md#backend-hardening--2026-10-18).
+API compatibility covers Node 22/24/26; Node 24 is the default. Firebase Functions
+retains Node 22. See the root README for runtime upgrade checks. Frontend acceptance
+below remains the prior recorded evidence.
+
 ## The idea in one paragraph
 
-Today your login **is** your channel. One person, one YouTube channel, and everything
-you make belongs to you personally. After this change, your login and your channels
-are separate things: you sign in as **you**, and you own or belong to one or more
+The original design treated your login as your channel: one person, one YouTube
+channel, with content owned personally. The implemented model separates login from
+channels: you sign in as **you**, and you own or belong to one or more
 **channels**. Each channel keeps its own ideas, scripts, hooks, titles and packaging,
 completely separate from the others. You switch between them the way you switch
 Google accounts or Slack workspaces. Channels can be shared with other people, with
@@ -68,7 +75,7 @@ inside the phase documents; if one turns out to be wrong, change it here first.
 | Billing | Each account names a **`billingOwnerUid`**. All usage in that account bills that person, whoever ran it. |
 | Deleting your login | **Blocked** while you are the last owner of any account. |
 | Metering unit | One **credit** balance with a price list, replacing the separate `stats.ideas` / `stats.scripts` counters. |
-| **Credits reset** | **A monthly allowance that resets**, not a lifetime balance you top up. The reset is *lazy* — computed inside the debit transaction when the period is stale. A scheduled reset is forbidden; see the downgrade traps below. |
+| **Credits reset** | **A monthly allowance that resets**, not a lifetime balance you top up. The reset is *lazy* — computed inside the reservation transaction when the period is stale. A scheduled reset is forbidden; see the downgrade traps below. |
 | **User-facing noun** | **"Channel"**, with the rule stated in copy: *a channel is the content context you're making videos for — its niche, audience and voice. It isn't proof you own it.* `account`, `X-Account-Id` and the error codes stay internal and must never be rendered raw. |
 
 ---
@@ -135,17 +142,18 @@ account for.
 
 ---
 
-## Plan constraints: Blaze now, Spark later
+## Plan constraints: recorded Blaze usage, Spark-compatible operation
 
-**The project is on the Blaze (paid) plan today.** The intent is to operate within Spark
-(free) constraints. An earlier draft of this plan asserted the project was *on* Spark;
+**An earlier environment audit recorded the Blaze (paid) plan.** This implementation
+did not re-check or change billing. The intent is to operate within Spark (free) constraints. An earlier draft of this plan asserted the project was *on* Spark;
 that was wrong and never measured, and one review inherited the error.
 
 The working rule:
 
 > **The migration window may use Blaze. The steady state may not.**
 
-So a managed export before Phase 04 and before Phase 10 is available and should be taken.
+Before any future destructive cleanup, verify current billing and obtain/rehearse a
+backup. Phase 04 was dropped; no reset or export was executed in this work.
 But nothing in the shipped design may *depend* on a Blaze-only feature.
 
 ### Blaze-only features, and where the plan would have leaned on them
@@ -164,7 +172,7 @@ These are the dangerous ones. Each works today and stops working quietly.
 
 1. **A scheduled monthly credit reset.** On Spark it never fires, every user stays pinned
    at last period's `consumed`, and everyone is hard-blocked from generating with no error
-   that points at the cause. **Therefore the reset is lazy, inside the debit transaction —
+   that points at the cause. **Therefore the reset is lazy, inside the reservation transaction —
    and a scheduler-based reset is forbidden, not merely discouraged.**
 2. **TTL on `events.expireAt`.** `events` is the largest append-only collection and is
    never read. TTL is its only brake. On Spark the policy stops firing, `events` grows into
@@ -189,23 +197,32 @@ These are the dangerous ones. Each works today and stops working quietly.
 
 Each phase is a separate document and is meant to be shippable on its own.
 
+**Local implementation update, 2026-09-26:** account switching, explicit generation,
+configurable metering, sharing/roles and cleanup preparation are present in the workspace.
+These statuses describe local implementation and acceptance, not deployment. Backend
+and frontend independent review fixes and regression checks have passed locally. Historical “done” labels below
+record earlier work; no current live inventory or production rollout was performed.
+See [operational readiness](./operational-readiness.md) for validation and release gates.
+Metering defaults to enforcement disabled until an allowance is configured; description,
+thumbnail and short prices default to 2, 1 and 1 respectively and remain configurable.
+
 | # | Phase | What it does | Reversible? | Status |
 |---|---|---|---|---|
 | [00](./phase-00-secure-database-rules.md) | Secure the database rules | Replace expired test-mode rules with an explicit deny-all, in the repo | Yes | ✅ done |
 | [01](./phase-01-fix-foundations.md) | Fix foundations | Repair the bugs that make a safe migration impossible, and close the unvalidated-resource holes | Yes | ✅ done |
-| [01b](./phase-01b-generation-seam.md) | **The generation seam** | One place where locking, preconditions, credits and telemetry attach to a model call | Yes | 🟡 partial — 2/11 calls |
+| [01b](./phase-01b-generation-seam.md) | **The generation seam** | One place where locking, preconditions, credits and telemetry attach to a model call | Yes | ✅ implemented locally; shared seam covers generation |
 | [02](./phase-02-accounts-schema-and-indexes.md) | Accounts schema and indexes | Create the `accounts` collection and deploy every new index **before** any code needs them | Yes | ✅ done |
 | [03](./phase-03-dual-write-account-tag.md) | Dual-write the account tag | Start stamping `accountId` on new records; nothing reads it yet | Yes | 🟡 merged, **not deployed** |
-| [04](./phase-04-backfill.md) | ~~Backfill existing data~~ | **Dropped** — dev data is disposable, so it gets wiped before Phase 06 instead of migrated | n/a | ⬜ dropped |
+| [04](./phase-04-backfill.md) | ~~Backfill existing data~~ | **Dropped** — historical dev-reset decision replaces migration; reset not executed in this work | n/a | ⬜ dropped |
 | [05](./phase-05-account-context-api.md) | Account context in the API | `X-Account-Id` header, membership check, `req.accountId`, the error-code contract | Yes | 🟡 built, not deployed |
 | [05a](./phase-05a-packaging-deterministic-key.md) | **Packaging: one deterministic key** | Every packaging doc keyed on `videoProjectId`; every lookup query deleted | No | ✅ done |
 | [06](./phase-06-switch-reads-and-permissions.md) | Switch reads and permissions | Queries and permission checks move from `createdBy` to `accountId` | Yes, until Phase 07 | 🟡 code-complete, **not deployed** |
 | [06a](./phase-06a-accounts-api.md) | **The Accounts API** | List, create and activate channels — the endpoints the switcher talks to | Yes | 🟡 code-complete, **not deployed** |
-| [06b](./phase-06b-move-channel-context.md) | Move channel context to the account | Generation reads niche/competitors/website from the channel, not the person | ⚠️ Step 4 is a second door | 🟡 backend code-complete; frontend outstanding |
-| [07](./phase-07-frontend-account-switching.md) | Frontend account state and switching | Switcher UI, add a channel, per-channel onboarding | ⚠️ **One-way door** | — |
-| [08](./phase-08-credits-and-metering.md) | Credits and metering | Monthly allowance, price list, check-and-consume through the seam | Yes | — |
-| [09](./phase-09-sharing-invites-and-roles.md) | Sharing: invites and roles | Invite links, role enforcement, read-only UI | Yes | — |
-| [10](./phase-10-cleanup.md) | Cleanup | Delete the old indexes and the legacy profile fields | No (final) | — |
+| [06b](./phase-06b-move-channel-context.md) | Move channel context to the account | Generation reads niche/competitors/website from the channel, not the person | Historical migration path superseded | ✅ channel context and frontend integration implemented locally |
+| [07](./phase-07-frontend-account-switching.md) | Frontend account state and switching | Switcher UI, add a channel, per-channel onboarding | ⚠️ **One-way door** | ✅ locally accepted; deployment not performed |
+| [08](./phase-08-credits-and-metering.md) | Credits and metering | Monthly allowance, price list, check-and-consume through the seam | Yes | ✅ implemented locally; enforcement opt-in/configurable |
+| [09](./phase-09-sharing-invites-and-roles.md) | Sharing: invites and roles | Invite links, role enforcement, read-only UI | Yes | ✅ locally accepted; indexes/Functions rollout pending |
+| [10](./phase-10-cleanup.md) | Cleanup | Delete the old indexes and the legacy profile fields | No (final) | 🟡 safe tooling prepared; destructive cleanup deferred |
 
 Not a phase, but kept alongside them:
 [known-defects.md](./known-defects.md) — bugs found while reviewing this plan that are **not**
@@ -227,11 +244,10 @@ system being migrated away from. Phase 10 keeps only the final verification pass
 the old model would merge two channels' content into one jumbled view — the data
 carries an `accountId` the old code doesn't read.
 
-**Phase 06b step 4 is a second, quieter door.** Once writes stop hitting `users/{uid}`,
-that record freezes. Reverting after step 4 serves channel context that is stale by
-however long step 4 has been live — the same class of failure the phase exists to prevent,
-and equally invisible. Rolling back after step 4 requires a reverse re-sync (account →
-user), which must be **written and tested before step 4 ships**, not after it is needed.
+**Phase 06b historical migration door.** The dual-write/reverse-resync plan was
+superseded by the recorded dev-data reset/no-migration decision in Phase 06b. No
+reverse-resync script is required for that discarded path. A future production migration
+must establish a new rollback plan from actual deployed data.
 
 Phase 07's full precondition checklist lives in that document. Two items are easy to
 defer and expensive to skip: a frontend test covering the account-switch state reset, and
@@ -335,19 +351,19 @@ unreadable; see Phase 02.
 
 ## Known risks
 
-**The frontend has no test framework at all** — no vitest, no jest, no `*.test.*` files,
-and `package.json` has no test script (only `dev`, `build`, `preview`, `lint`, `format`,
-`typecheck`). The highest-risk phase in
-the plan (07) lands on the codebase with the least coverage. Phase 07 names the minimum:
-one test over the root reducer and the account-switch reset, which is the only cheap way to
-catch the two failure modes that fail *open* and are invisible until a second channel exists.
+**Local validation now exists on both sides.** The frontend has Vitest and account
+switch/reset tests; the backend has real-router sharing/role tests, transactional invite
+race tests and cleanup snapshot/restore fixtures. Run `npm test` in each repository and
+build the backend, frontend and separate Functions package before release. Latest measured
+local backend checkpoint (2026-09-26): **1,243 tests, 75 suites, passing**, independently rerun after final
+persistence-fencing and malformed-balance fixes. Frontend: **174 tests in 24 files**,
+including 19 mounted interaction checks and 11 stream parser/status checks. Backend,
+frontend and Functions builds plus standalone script typechecks pass. Frontend lint has
+zero errors and three existing warnings. See the readiness document for independent
+review coverage, build warnings and the observed transient HTTP test failure.
 
-**Backend suite status, measured 2026-09-07:** 1038 tests, 66 suites, **all passing.** An earlier draft of Phase 01 claimed the suite "fails about one
-run in three". That is **not currently reproducible** — thirteen consecutive clean runs
-have now been observed across two sessions. The claim has been removed rather than
-repeated. If intermittent failures return, treat it as a Phase 01 blocker for the reason
-originally given: during a tenancy migration, a genuine data-isolation bug and a flake look
-identical, and the habit of re-running until green hides the real one.
+The earlier 2026-09-07 measurement (1,038 tests, 66 suites) remains historical. Test
+failures must be investigated rather than repeatedly rerun until green.
 
 **Index changes have already caused one production outage** on this project, when a
 renamed collection left `firestore.indexes.json` stale. Phase 02 exists so that never
@@ -360,17 +376,13 @@ confused with "not fetched". The same mistakes at account level would show one c
 work under another channel's name. Phase 07 handles this with a single root-level state
 reset rather than per-slice resets, which is what failed before.
 
-**Generation is triggered by navigation today.** All four pipeline screens generate on
-mount, with no click — `momentumx-fe/src/pages/ProjectScript/index.tsx:93-98`,
-`ProjectHooks/index.tsx:143-150`, `ProjectTitles/index.tsx:76-84`,
-`ProjectPackaging/index.tsx:150-162`. Under Phase 08 that spends credits by navigating;
-under Phase 09 a viewer auto-fires an editor-gated endpoint and lands on an error screen
-whose only control retries into the same error. **Removing it is a precondition of both
-phases**, and the fix is specified in Phase 08.
+**Generation now requires explicit action.** Pipeline pages no longer generate on
+mount; viewers see read-only/empty states. Server role gates also protect mutation and
+quota-consuming GET routes, so UI omissions cannot grant generation permission.
 
 ---
 
-## Measure these before Phase 04
+## Historical pre-migration measurements (Phase 04 dropped)
 
 Do not guess any of them. Aggregation costs about one read per thousand documents.
 
@@ -450,7 +462,7 @@ actually landed.
 - **[Phase 06a's open decision disappears.](./phase-06a-accounts-api.md)** There is no longer
   a first-channel special case, so there are not two kinds of channel behaving differently.
 
-**What this costs — read before Phase 03:**
+**Historical migration implications (the Phase 04 backfill was later dropped):**
 
 - **The Phase 04 backfill is a lookup, not a field copy.** It must build
   `ownerUid → accountId` from the `accounts` collection first, then set

@@ -1,3 +1,4 @@
+jest.mock("../../src/config/firebase", () => require("../helpers/fake-firestore").mockFirebase());
 import ResearchContextService from "../../src/service/research-context.service";
 import ResearchRepository from "../../src/repository/research.repository";
 

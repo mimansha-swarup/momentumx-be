@@ -1,3 +1,4 @@
+import ts from "typescript";
 import fs from "fs";
 import path from "path";
 
@@ -10,17 +11,15 @@ import path from "path";
  * that sits outside it is a generation that is never charged and never rolled
  * back — and nothing else in the codebase would notice.
  *
- * This is a RATCHET. `UNWRAPPED` lists call sites not yet converted; it may
- * shrink, never grow. A NEW model call outside the seam fails this suite, and a
- * site that gets wrapped (or removed) must leave the list, so it cannot rot.
- *
- * Phase 01b conversion status is therefore readable straight off this list.
+ * Phase 01b's conversion is complete: every model call site in `src/service`
+ * must be inside the seam, full stop — no allowlist of not-yet-converted
+ * sites to maintain.
  */
 
 const SERVICE_DIR = path.join(process.cwd(), "src", "service");
-// Kept in sync with the seam's actual exports by the "exactly the two helpers"
-// test below — so a third helper cannot be added without this list being faced.
-const MODEL_CALL_G = /\b(generateContent|generateStreamingContent)\s*\(/g;
+// Kept in sync with the seam's actual exports by the "exactly the generation helpers"
+// test below — so another helper cannot be added without this list being faced.
+const MODEL_CALL_G = /\b(generateContent|generateStreamingContent|generateTextContent|streamScript)\s*\(/g;
 
 const stripComments = (source: string): string =>
   source
@@ -41,58 +40,62 @@ type CallSite = { file: string; line: number; insideSeam: boolean };
  */
 const collectCallSites = (): CallSite[] => {
   const sites: CallSite[] = [];
-
-  for (const file of fs.readdirSync(SERVICE_DIR).filter((f) => f.endsWith(".ts"))) {
-    const raw = stripComments(fs.readFileSync(path.join(SERVICE_DIR, file), "utf8"));
-
-    // Character offset of each line start, so we can map depth back to lines.
-    const seamRegions: Array<[number, number]> = [];
-    const runIdx = /\bsteps\.run\s*\(/g;
-    let match: RegExpExecArray | null;
-    while ((match = runIdx.exec(raw))) {
-      let depth = 0;
-      let i = match.index + match[0].length - 1;
-      for (; i < raw.length; i++) {
-        if (raw[i] === "(") depth++;
-        else if (raw[i] === ")") {
-          depth--;
-          if (depth === 0) break;
-        }
+  for (const file of fs.readdirSync(SERVICE_DIR).filter(f => f.endsWith(".ts"))) {
+    const source = ts.createSourceFile(file, fs.readFileSync(path.join(SERVICE_DIR, file), "utf8"), ts.ScriptTarget.Latest, true);
+    const modelPositions = new Set<number>();
+    const methods = new Map<string, { private: boolean; calls: { target: string; guarded: boolean }[]; models: { line: number; guarded: boolean }[] }>();
+    const visitClass = (node: ts.Node) => {
+      if (ts.isClassDeclaration(node)) for (const member of node.members) {
+        // Arrow PROPERTIES are this codebase's house style, but a METHOD
+        // declaration is valid TypeScript and was invisible here: its calls never
+        // entered the caller graph, so an unmetered `async freeTitles() { return
+        // this.runTitle(...) }` reached the model through a private helper and
+        // this file still passed. A bare model call in a method was caught by the
+        // separate unowned-site scan; only the indirect form slipped.
+        if (!ts.isPropertyDeclaration(member) && !ts.isMethodDeclaration(member)) continue;
+        const declared = member as ts.PropertyDeclaration | ts.MethodDeclaration;
+        const body = ts.isPropertyDeclaration(declared) ? declared.initializer : declared.body;
+        if (!declared.name || !body) continue;
+        const entry = { private: declared.modifiers?.some(m => m.kind === ts.SyntaxKind.PrivateKeyword) ?? false, calls: [] as {target: string; guarded: boolean}[], models: [] as {line: number; guarded: boolean}[] };
+        methods.set(declared.name.getText(source), entry);
+        const scan = (child: ts.Node, guarded: boolean) => {
+          if (ts.isCallExpression(child)) {
+            if (child.expression.getText(source) === "this.steps.run") {
+              child.arguments.forEach(arg => scan(arg, true));
+              return;
+            }
+            if (ts.isIdentifier(child.expression) && ["generateContent", "generateStreamingContent", "generateTextContent", "streamScript"].includes(child.expression.text)) {
+              modelPositions.add(child.getStart());
+              entry.models.push({ line: source.getLineAndCharacterOfPosition(child.getStart()).line + 1, guarded });
+            }
+            if (ts.isPropertyAccessExpression(child.expression) && child.expression.expression.kind === ts.SyntaxKind.ThisKeyword) entry.calls.push({ target: child.expression.name.text, guarded });
+          }
+          ts.forEachChild(child, n => scan(n, guarded));
+        };
+        scan(body, false);
       }
-      seamRegions.push([match.index, i]);
-    }
-
-    // Scanned over the whole source, not line by line: a call whose `(` lands on
-    // the next line was invisible, and the sibling ratchets in this repo were
-    // both explicitly de-lined while this one was left as it was.
-    for (const call of raw.matchAll(MODEL_CALL_G)) {
-      const inside = seamRegions.some(([s, e]) => call.index! >= s && call.index! <= e);
-      sites.push({
-        file,
-        line: raw.slice(0, call.index).split("\n").length,
-        insideSeam: inside,
-      });
-    }
+      ts.forEachChild(node, visitClass);
+    };
+    visitClass(source);
+    const scanUnowned = (node: ts.Node) => {
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)
+        && ["generateContent", "generateStreamingContent", "generateTextContent", "streamScript"].includes(node.expression.text)
+        && !modelPositions.has(node.getStart())) sites.push({ file, line: source.getLineAndCharacterOfPosition(node.getStart()).line + 1, insideSeam: false });
+      ts.forEachChild(node, scanUnowned);
+    };
+    scanUnowned(source);
+    // Shared PRIVATE prompt/model helpers are protected only if EVERY caller
+    // reaches them inside the seam. Public entry points cannot inherit a guard.
+    const protectedMethod = (name: string, seen = new Set<string>()): boolean => {
+      const method = methods.get(name);
+      if (!method?.private || seen.has(name)) return false;
+      const next = new Set(seen).add(name);
+      const callers = [...methods].flatMap(([caller, value]) => value.calls.filter(c => c.target === name).map(c => ({ caller, ...c })));
+      return callers.length > 0 && callers.every(c => c.guarded || protectedMethod(c.caller, next));
+    };
+    for (const [name, method] of methods) for (const call of method.models) sites.push({ file, line: call.line, insideSeam: call.guarded || protectedMethod(name) });
   }
-
   return sites;
-};
-
-/**
- * Model calls not yet inside the seam. Shrink this; never add to it.
- * Format: "<file>:<line-ish>" is deliberately NOT used — line numbers churn.
- * Keyed by file + the count still outstanding in it.
- */
-const UNWRAPPED: Record<string, number> = {
-  // Ideas generation (no project, so no lock — still needs the seam for metering
-  // and telemetry) plus the two script paths, which carry the OTHER real lock.
-  "content.service.ts": 3,
-  // The packaging fan-out: title / description / thumbnail / shorts, plus the
-  // shared private generateContent helper. Deliberately unlocked by design (see
-  // KIND_STEP), but still to be wrapped for metering.
-  "packaging.service.ts": 5,
-  // Onboarding prefill.
-  "user.service.ts": 1,
 };
 
 describe("generation seam — no model call escapes the runner", () => {
@@ -102,56 +105,9 @@ describe("generation seam — no model call escapes the runner", () => {
     expect(sites.length).toBeGreaterThan(0);
   });
 
-  it("has no unwrapped call in a file that is meant to be fully converted", () => {
-    const unwrappedByFile: Record<string, number> = {};
-    for (const site of sites) {
-      if (!site.insideSeam) {
-        unwrappedByFile[site.file] = (unwrappedByFile[site.file] ?? 0) + 1;
-      }
-    }
-
-    // A file absent from UNWRAPPED must have zero unwrapped calls.
-    const unexpected = Object.keys(unwrappedByFile).filter((f) => !(f in UNWRAPPED));
-    expect(unexpected).toEqual([]);
-  });
-
-  it("has no file with MORE unwrapped calls than recorded", () => {
-    const unwrappedByFile: Record<string, number> = {};
-    for (const site of sites) {
-      if (!site.insideSeam) {
-        unwrappedByFile[site.file] = (unwrappedByFile[site.file] ?? 0) + 1;
-      }
-    }
-
-    const grew = Object.entries(unwrappedByFile)
-      .filter(([file, count]) => count > (UNWRAPPED[file] ?? 0))
-      .map(([file, count]) => `${file}: ${count} > ${UNWRAPPED[file] ?? 0}`);
-
-    expect(grew).toEqual([]);
-  });
-
-  // Keeps the list honest: once a file is converted, its entry must go.
-  it("has no stale entries — a recorded file must still have that many unwrapped", () => {
-    const unwrappedByFile: Record<string, number> = {};
-    for (const site of sites) {
-      if (!site.insideSeam) {
-        unwrappedByFile[site.file] = (unwrappedByFile[site.file] ?? 0) + 1;
-      }
-    }
-
-    const stale = Object.entries(UNWRAPPED)
-      .filter(([file, count]) => (unwrappedByFile[file] ?? 0) !== count)
-      .map(([file, count]) => `${file}: recorded ${count}, actual ${unwrappedByFile[file] ?? 0}`);
-
-    expect(stale).toEqual([]);
-  });
-
-  // hooks.service.ts is the phase's reference conversion — both its model calls
-  // are inside the seam, and it must stay that way.
-  it("keeps hooks.service.ts fully wrapped", () => {
-    const hooks = sites.filter((s) => s.file === "hooks.service.ts");
-    expect(hooks.length).toBeGreaterThan(0);
-    expect(hooks.every((s) => s.insideSeam)).toBe(true);
+  it("has no unwrapped generation call sites", () => {
+    const unwrapped = sites.filter((s) => !s.insideSeam);
+    expect(unwrapped).toEqual([]);
   });
 });
 
@@ -174,6 +130,7 @@ describe("the model SDK is reachable from exactly one file", () => {
   // `content.ts` imports the EMBEDDING model, which is not a generation and is
   // not metered — it is a vector call for KMeans clustering.
   const EMBEDDING_DOOR = "src/utlils/content.ts";
+  const STARTUP_LOG = "src/server.ts";
 
   const walk = (dir: string): string[] =>
     fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -187,13 +144,20 @@ describe("the model SDK is reachable from exactly one file", () => {
     source: stripComments(fs.readFileSync(path.join(process.cwd(), rel), "utf8")),
   }));
 
-  it("only the seam and the embedding helper import the model factory", () => {
+  it("only the seam, embedding helper, and startup log import AI configuration", () => {
     const importers = sources
       .filter(({ source }) => /from\s+["'][^"']*config\/ai/.test(source))
       .map(({ rel }) => rel)
       .sort();
 
-    expect(importers).toEqual([EMBEDDING_DOOR, SDK_DOOR].sort());
+    expect(importers).toEqual([EMBEDDING_DOOR, SDK_DOOR, STARTUP_LOG].sort());
+  });
+
+  it("startup imports only the model ID for logging, never a callable model", () => {
+    const source = sources.find(({ rel }) => rel === STARTUP_LOG)!.source;
+    const imports = [...source.matchAll(/import\s+([^;]*?)\s+from\s+["'][^"']*config\/ai[^"']*["']/g)];
+    expect(imports).toHaveLength(1);
+    expect(imports[0][1].trim()).toBe("{ GENERATION_MODEL }");
   });
 
   // `content.ts` is exempt from the IMPORT rule because it needs the embedding
@@ -227,9 +191,9 @@ describe("the model SDK is reachable from exactly one file", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("the seam exports exactly the two generation helpers the ratchet scans for", () => {
-    // A third helper added here would be wrapped by nothing and counted by
-    // nothing — MODEL_CALL above only knows these two names.
+  it("the seam exports exactly the generation helpers the ratchet scans for", () => {
+    // Another helper added here would be wrapped by nothing and counted by
+    // nothing — MODEL_CALL above only knows these generation names.
     const seam = sources.find(({ rel }) => rel === SDK_DOOR)!.source;
     // EVERY export form, not just `export const x = (`. Executed against the
     // five ways this could be written, the first version saw exactly one:
@@ -247,6 +211,6 @@ describe("the model SDK is reachable from exactly one file", () => {
     ].flatMap((m) => m[1].split(",").map((name) => name.trim().split(/\s+as\s+/)[0]))
       .filter(Boolean);
 
-    expect(exported.sort()).toEqual(["collectJson", "generateContent", "generateStreamingContent"]);
+    expect(exported.sort()).toEqual(["collectJson", "generateContent", "generateStreamingContent", "generateTextContent", "streamScript"]);
   });
 });

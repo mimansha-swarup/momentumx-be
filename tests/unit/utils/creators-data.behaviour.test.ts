@@ -48,15 +48,14 @@ describe("formatCreatorsData tolerates every shape userTitle is stored in", () =
       []
     );
 
-    expect(result).toContain("https://youtube.com/@acme");
-    expect(result).toContain("1. First video");
-    expect(result).toContain("2. Second video");
+    const data = JSON.parse(result.slice(result.indexOf("{")));
+    expect(data.channelTitles).toEqual(["First video", "Second video"]);
   });
 
   it("still appends the avoid-list when previous titles exist", () => {
     const result = formatCreatorsData({ userName: "u", userTitle: [] }, ["Already generated"]);
 
-    expect(result).toContain("Avoid Similar Titles");
-    expect(result).toContain("1. Already generated");
+    const data = JSON.parse(result.slice(result.indexOf("{")));
+    expect(data.previousIdeasToAvoid).toEqual(["Already generated"]);
   });
 });

@@ -1,13 +1,9 @@
 import { firebase } from "../config/firebase.js";
-import { STEP_ORDER, STEP_LOCK_MS, downstreamOf } from "../constants/pipeline.js";
+import { STEP_ORDER, downstreamOf } from "../constants/pipeline.js";
 import { BadRequest, NotFound } from "../utlils/errors.js";
 import { forbidCrossAccount } from "./account.service.js";
 import { assertOwner, formatGeneratedTitle } from "../utlils/content.js";
 const VALID_MUTABLE_STEPS = ["script", "hooks", "title", "packaging"];
-// STEP_ORDER, downstreamOf (was the hand-written STALE_CASCADE map) and
-// STEP_LOCK_MS all live in constants/pipeline.ts now. Re-exported so the existing
-// importers of STEP_LOCK_MS don't all have to change in the same commit.
-export { STEP_LOCK_MS };
 // Single source of the overall-status arithmetic, shared by reconcileView (read path)
 // and refreshPackagingStep (write path) so the two can never drift.
 const computeOverallStatus = (pipeline) => {
@@ -110,10 +106,11 @@ class VideoProjectService {
             return project;
         };
         /**
-         * Read-time safety net (computed, NOT persisted): if a step's linking resource
+         * Legacy repair: if a step's linking resource
          * exists but the step is still not_started/in_progress, present it as completed.
          * Never touches `stale` or already-`completed` steps. Used only on the client read path,
-         * so the shared getById (used by mutators) keeps returning the raw stored doc.
+         * and getReconciledById persists changed statuses so filtered lists agree.
+         * The shared getById used by mutators keeps returning the raw stored document.
          */
         this.reconcileView = (project) => {
             const linked = {
@@ -143,9 +140,42 @@ class VideoProjectService {
                 recommendedNextStep,
             };
         };
-        this.getReconciledById = async (projectId, owner) => {
+        /**
+         * The read path. Repairs drifted step statuses so the filtered LIST agrees with
+         * what a project page shows — that is why it persists rather than only
+         * computing.
+         *
+         * `mayWrite` exists because this runs on `GET /v1/video-projects/:id`, which has
+         * no role gate: a VIEWER opening a project was writing to channel data, which
+         * contradicts both the read-only viewer contract and "GET has no side effects".
+         * A viewer still SEES the reconciled view; the repair simply waits for someone
+         * who is allowed to write. The write is also last-writer-wins, so withholding it
+         * from the role most likely to be idly browsing removes the clobber risk too.
+         */
+        this.getReconciledById = async (projectId, owner, mayWrite = true) => {
             const project = await this.getById(projectId, owner);
-            return this.reconcileView(project);
+            const reconciled = this.reconcileView(project);
+            if (!mayWrite)
+                return reconciled;
+            const updates = {};
+            for (const step of STEP_ORDER) {
+                if (reconciled.pipeline[step].status !== project.pipeline[step].status) {
+                    updates[`pipeline.${step}.status`] = reconciled.pipeline[step].status;
+                }
+            }
+            if (reconciled.overallStatus !== project.overallStatus)
+                updates.overallStatus = reconciled.overallStatus;
+            if (Object.keys(updates).length) {
+                // Conditional on the statuses this repair was computed FROM still being current.
+                // An unconditional write here erased a concurrent markStale (see the repository
+                // method). If it declines, the document changed under us, so the caller gets the
+                // freshly stored view instead of a repair computed from a stale read.
+                const expected = Object.fromEntries(STEP_ORDER.map((step) => [step, project.pipeline[step].status]));
+                const applied = await this.repo.updateIfStatusesUnchanged(projectId, expected, updates);
+                if (!applied)
+                    return this.reconcileView(await this.getById(projectId, owner));
+            }
+            return reconciled;
         };
         /**
          * Clear the project's stale packaging step after the last stale packaging item is
@@ -154,7 +184,7 @@ class VideoProjectService {
          * the step isn't stale. overallStatus stays "stale" if script/hooks are still stale.
          * Caller must gate on "no packaging item remains stale".
          */
-        this.refreshPackagingStep = async (projectId, owner) => {
+        this.refreshPackagingStep = async (projectId, owner, charge) => {
             const project = await this.getById(projectId, owner);
             if (project.pipeline.packaging.status !== "stale")
                 return;
@@ -166,13 +196,13 @@ class VideoProjectService {
                 "pipeline.packaging.status": "completed",
                 "pipeline.packaging.staleReason": null,
                 overallStatus: computeOverallStatus(updatedPipeline),
-            });
+            }, ...(charge ? [charge] : []));
         };
         // Keep the dashboard thumbnailHint in sync when the thumbnail is regenerated
         // (it is otherwise only set at save-time via linkResource, so a regen would leave it stale).
-        this.setThumbnailHint = async (projectId, hint, owner) => {
+        this.setThumbnailHint = async (projectId, hint, owner, charge) => {
             await this.getById(projectId, owner);
-            await this.repo.update(projectId, { thumbnailHint: hint });
+            await this.repo.update(projectId, { thumbnailHint: hint }, ...(charge ? [charge] : []));
         };
         this.update = async (projectId, owner, data) => {
             await this.getById(projectId, owner);
@@ -212,7 +242,7 @@ class VideoProjectService {
             }
             return { id: projectId, isDeleted: true };
         };
-        this.startStep = async (projectId, stepName, owner) => {
+        this.startStep = async (projectId, stepName, owner, charge) => {
             if (!VALID_MUTABLE_STEPS.includes(stepName)) {
                 throw BadRequest(`Invalid step. Must be one of: ${VALID_MUTABLE_STEPS.join(", ")}`);
             }
@@ -228,7 +258,7 @@ class VideoProjectService {
             if (currentStatus === "in_progress") {
                 await this.repo.update(projectId, {
                     [`pipeline.${step}.startedAt`]: firebase.firestore.FieldValue.serverTimestamp(),
-                });
+                }, ...(charge ? [charge] : []));
                 return { id: project.id, currentStep: project.currentStep };
             }
             const updates = {
@@ -241,7 +271,7 @@ class VideoProjectService {
             if (newStepIndex > currentStepIndex) {
                 updates["currentStep"] = step;
             }
-            await this.repo.update(projectId, updates);
+            await this.repo.update(projectId, updates, ...(charge ? [charge] : []));
             return { id: projectId, currentStep: step };
         };
         // Internal (no route): roll back an in_progress step that produced nothing,
@@ -252,7 +282,7 @@ class VideoProjectService {
                 [`pipeline.${stepName}.startedAt`]: null,
             });
         };
-        this.completeStep = async (projectId, stepName, owner) => {
+        this.completeStep = async (projectId, stepName, owner, charge) => {
             if (!VALID_MUTABLE_STEPS.includes(stepName)) {
                 throw BadRequest(`Invalid step. Must be one of: ${VALID_MUTABLE_STEPS.join(", ")}`);
             }
@@ -280,7 +310,7 @@ class VideoProjectService {
                 [`pipeline.${step}.staleReason`]: null,
             };
             // Auto-advance currentStep to the next in STEP_ORDER (terminal step stays put).
-            const nextStep = STEP_ORDER[STEP_ORDER.indexOf(step) + 1] ?? step;
+            const nextStep = STEP_ORDER[Math.max(STEP_ORDER.indexOf(project.currentStep), Math.min(STEP_ORDER.indexOf(step) + 1, STEP_ORDER.length - 1))];
             updates["currentStep"] = nextStep;
             // Check if all steps are completed
             const updatedPipeline = { ...project.pipeline };
@@ -293,7 +323,7 @@ class VideoProjectService {
             // kept its "Needs Update" badge for a project with nothing stale left in it.
             const newOverallStatus = computeOverallStatus(updatedPipeline);
             updates["overallStatus"] = newOverallStatus;
-            await this.repo.update(projectId, updates);
+            await this.repo.update(projectId, updates, ...(charge ? [charge] : []));
             // "Keep as-is" completes a STALE packaging step without regenerating anything.
             // The packaging document carries its own stale markers, and the per-card
             // "Outdated" chips read from those — so without this they'd outlive the banner
@@ -301,7 +331,7 @@ class VideoProjectService {
             // part that must not fail.
             if (step === "packaging" && currentStatus === "stale" && project.packagingId) {
                 try {
-                    await this.packagingRepo.clearStale(project.packagingId);
+                    await this.packagingRepo.clearStale(project.packagingId, ...(charge ? [charge] : []));
                 }
                 catch (clearError) {
                     console.error(JSON.stringify({ event: "packaging_stale_clear_failed", projectId, packagingId: project.packagingId, message: clearError?.message }));
@@ -318,7 +348,7 @@ class VideoProjectService {
                 overallStatus: newOverallStatus,
             };
         };
-        this.linkResource = async (projectId, resourceType, resourceId, owner) => {
+        this.linkResource = async (projectId, resourceType, resourceId, owner, charge) => {
             const validTypes = ["script", "hooks", "packaging"];
             if (!validTypes.includes(resourceType)) {
                 throw BadRequest(`Invalid resourceType. Must be one of: ${validTypes.join(", ")}`);
@@ -361,7 +391,7 @@ class VideoProjectService {
                 const picked = packagingDoc.selectedThumbnailIndex ?? 0;
                 updates["thumbnailHint"] = briefs?.[picked] ?? briefs?.[0] ?? null;
             }
-            await this.repo.update(projectId, updates);
+            await this.repo.update(projectId, updates, ...(charge ? [charge] : []));
             return { id: projectId, ...updates };
         };
         this.setSelectedHook = async (projectId, hooksId, hookIndex, owner) => {
@@ -374,30 +404,32 @@ class VideoProjectService {
         // the project is still NAMED after one of them. Move the step back to
         // "needs a pick" so the UI prompts instead of showing a green step over a title
         // that isn't in the list any more.
-        this.reopenTitleStep = async (projectId, owner) => {
-            await this.getById(projectId, owner);
+        this.reopenTitleStep = async (projectId, owner, charge) => {
+            const project = await this.getById(projectId, owner);
             await this.repo.update(projectId, {
+                overallStatus: computeOverallStatus({ ...project.pipeline, title: { ...project.pipeline.title, status: "in_progress" } }),
                 "pipeline.title.status": "in_progress",
                 "pipeline.title.completedAt": null,
-            });
+            }, ...(charge ? [charge] : []));
         };
-        this.clearSelectedHook = async (projectId, owner) => {
-            await this.getById(projectId, owner);
+        this.clearSelectedHook = async (projectId, owner, charge) => {
+            const project = await this.getById(projectId, owner);
             // Regenerating hooks invalidates the prior selection but NOT the batch
             // itself — the batch doc is updated in place, so hooksId still points at a
             // valid (newer) batch and must be kept. Clear only the selection and move
             // the step back to in_progress so it reads as "needs re-selection" instead
             // of staying "completed" with nothing selected.
             await this.repo.update(projectId, {
+                overallStatus: computeOverallStatus({ ...project.pipeline, hooks: { ...project.pipeline.hooks, status: "in_progress" } }),
                 selectedHookIndex: null,
                 "pipeline.hooks.status": "in_progress",
                 "pipeline.hooks.completedAt": null,
-            });
+            }, ...(charge ? [charge] : []));
         };
         this.getByScriptId = async (scriptId, owner) => {
             return this.repo.findByScriptId(scriptId, owner.accountId);
         };
-        this.markStale = async (projectId, fromStep) => {
+        this.markStale = async (projectId, fromStep, charge) => {
             const project = await this.repo.findById(projectId);
             if (!project)
                 return;
@@ -418,13 +450,13 @@ class VideoProjectService {
                 return;
             // A stale downstream step makes the whole project stale until it's re-completed.
             updates["overallStatus"] = "stale";
-            await this.repo.update(projectId, updates);
+            await this.repo.update(projectId, updates, ...(charge ? [charge] : []));
         };
-        this.markPackagingDocumentStale = async (projectId, reason) => {
+        this.markPackagingDocumentStale = async (projectId, reason, charge) => {
             const project = await this.repo.findById(projectId);
             if (!project || !project.packagingId)
                 return;
-            await this.packagingRepo.markStale(project.packagingId, reason);
+            await this.packagingRepo.markStale(project.packagingId, reason, ...(charge ? [charge] : []));
         };
     }
 }

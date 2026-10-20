@@ -1,3 +1,4 @@
+import { requireRole } from "../../middleware/role.js";
 import { Router } from "express";
 import { authMiddleware } from "../../middleware/auth.js";
 import { accountMiddleware } from "../../middleware/account.js";
@@ -7,9 +8,9 @@ import { userController } from "../../container.js";
 const router = Router();
 router.use(authMiddleware);
 router.use(accountMiddleware);
-router.post("/onboarding/prefill", validate(prefillSchema), userController.prefill);
-router.patch("/onboarding", validate(onboardingSchema), userController.saveOnboarding);
-router.post("/refresh-context", userController.refreshContext);
+router.post("/onboarding/prefill", requireRole("editor"), validate(prefillSchema), userController.prefill);
+router.patch("/onboarding", requireRole("editor"), validate(onboardingSchema), userController.saveOnboarding);
+router.post("/refresh-context", requireRole("editor"), userController.refreshContext);
 router.get("/profile", userController.getProfile);
-router.patch("/profile", validate(profileUpdateSchema), userController.updateProfile);
+router.patch("/profile", requireRole("editor"), validate(profileUpdateSchema), userController.updateProfile);
 export default router;

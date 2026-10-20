@@ -1,3 +1,4 @@
+import { requireRole } from "../../middleware/role.js";
 import { Router } from "express";
 import { authMiddleware } from "../../middleware/auth.js";
 import { accountMiddleware } from "../../middleware/account.js";
@@ -13,14 +14,14 @@ const router = Router();
 
 router.use(authMiddleware);
 router.use(accountMiddleware);
-router.post("/", validate(createVideoProjectSchema), videoProjectController.create);
+router.post("/", requireRole("editor"), validate(createVideoProjectSchema), videoProjectController.create);
 router.get("/", videoProjectController.list);
 router.get("/:projectId", videoProjectController.getById);
-router.patch("/:projectId", validate(updateVideoProjectSchema), videoProjectController.update);
-router.delete("/:projectId", videoProjectController.delete);
-router.patch("/:projectId/step/:stepName/complete", videoProjectController.completeStep);
+router.patch("/:projectId", requireRole("editor"), validate(updateVideoProjectSchema), videoProjectController.update);
+router.delete("/:projectId", requireRole("editor"), videoProjectController.delete);
+router.patch("/:projectId/step/:stepName/complete", requireRole("editor"), videoProjectController.completeStep);
 router.patch(
-  "/:projectId/link/:resourceType",
+  "/:projectId/link/:resourceType", requireRole("editor"),
   validate(linkResourceSchema),
   videoProjectController.linkResource
 );

@@ -1,9 +1,7 @@
 import { Timestamp } from "firebase-admin/firestore";
 
 /**
- * Multi-account schema (Phase 02). TYPES ONLY — nothing reads or writes these
- * yet. They exist ahead of the code so the indexes, the backfill and the API are
- * written against one declared shape rather than three guesses.
+ * Multi-account schema shared by repositories, request context and the API.
  *
  * The reasoning behind this shape — why the context is a subcollection, why
  * membership is three fields, why ids are UUID v4 — lives in
@@ -46,6 +44,9 @@ export interface IAccount {
 
   /** Tombstone, not a hard delete — distinguishes 410 Gone from 404. */
   deletedAt: Timestamp | null;
+  /** Direct auth deletion left no owner or billing payer; operator recovery required. */
+  orphanedAt?: Timestamp | null;
+  orphanedReason?: "billing_owner_deleted" | "last_owner_deleted";
 
   createdAt: Timestamp;
   updatedAt: Timestamp;

@@ -13,6 +13,12 @@ tags: ["multi-account", "phase-10", "cleanup"]
 **Depends on:** Phase 06 in production long enough to be confident, and Phase 07 shipped.
 **Blocks:** nothing.
 
+**2026-09-26 local preparation:** dry-run audit/snapshot/restore tooling, read-only index
+inventory, bounded event sampling and tenancy documentation are implemented. No live
+cleanup or deployment is claimed. See [operational readiness](./operational-readiness.md).
+`ensureDefaultAccount` still reads legacy context for first bootstrap; deleting legacy
+fields remains gated on removing that path or proving every user has migrated context.
+
 ---
 
 ## Why this is a separate phase
@@ -139,8 +145,8 @@ Check your logs for requests arriving without the header before flipping this.
   dead `topics` collection group are still deployed and will show up in step 1's
   verification as unexplained entries. Confirm they are gone.
 - **`functions/` collection names.** `functions/src/util/index.ts` keeps its own copy of the
-  collection constants and has already drifted — it's missing `EVENTS`. Either re-sync it
-  or, better, make it import from one shared source so it can't drift again.
+  collection constants. `EVENTS` is already synchronized; `ACCOUNTS` is now included
+  for auth-deletion reconciliation. Keep the separate build’s used constants aligned.
 - **Docs.** Update `docs/features/*/spec.md` and `docs/product/pipeline-spec.md`, which still
   describe `createdBy` as the tenancy key.
 

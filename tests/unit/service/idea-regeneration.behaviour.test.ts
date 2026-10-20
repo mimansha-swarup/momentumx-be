@@ -1,3 +1,5 @@
+import StepRunner from "../../../src/service/step-runner";
+import { unmeteredSteps } from "../../helpers/step-runner";
 // Regenerating ideas — the flow, not the code.
 //
 // Contract taken from docs/product/pipeline-spec.md and .claude/rules/api-design.md:
@@ -135,7 +137,7 @@ describe("Regenerate All — the batch is replaced and every project built on it
       id: "idea-new", title: idea.workingTitle, concept: idea.concept, ideaType: idea.type,
       evidence: null, embedding: [0.1], createdBy: userId, batchId: batchId ?? null,
     })) as never);
-    service = new ContentService(repo, userRepo, vpService as never, fakeAccountRepo(), researchContext);
+    service = new ContentService(repo, userRepo, vpService as never, fakeAccountRepo(), researchContext, unmeteredSteps);
   });
 
   it("stales EVERY project backed by an archived idea, not just one per idea", async () => {
@@ -166,7 +168,7 @@ describe("Regenerate All — the batch is replaced and every project built on it
   it("archives the old batch and saves a new one", async () => {
     const saved = await service.regenerateAll(testOwner("user-1"));
 
-    expect(repo.archiveUserIdeas).toHaveBeenCalledWith(TEST_ACCOUNT_ID);
+    expect(repo.archiveUserIdeas).toHaveBeenCalledWith(TEST_ACCOUNT_ID, expect.any(String));
     expect(saved).toHaveLength(2);
     expect(repo.batchSaveIdeas).toHaveBeenCalled();
   });
@@ -179,7 +181,7 @@ describe("Regenerate All — the batch is replaced and every project built on it
     expect(batchIds[0]).toBeTruthy();
   });
 
-  it("503s rather than returning an empty slate — the old batch is already gone", async () => {
+  it("503s without archiving the old batch when embeddings fail", async () => {
     mockFormat.mockRejectedValue(new Error("embedding service down"));
 
     const err = await service.regenerateAll(testOwner("user-1")).catch((e) => e);
@@ -187,7 +189,8 @@ describe("Regenerate All — the batch is replaced and every project built on it
     expect(err.statusCode).toBe(503);
     // Silent data loss is the failure being prevented: archived, nothing back,
     // and a 200 telling the user everything is fine.
-    expect(err.message).toMatch(/Couldn't regenerate/);
+    expect(err.message).toMatch(/Couldn't .*regenerate/);
+    expect(repo.archiveUserIdeas).not.toHaveBeenCalled();
   });
 
   it("still regenerates when the stale cascade fails — the cascade is bookkeeping, not a gate", async () => {
@@ -210,6 +213,16 @@ describe("Regenerate All — the batch is replaced and every project built on it
 
     expect(vpService.markStale).toHaveBeenCalledTimes(4); // 2 ideas × 2 projects
     expect(saved).toHaveLength(2);
+  });
+
+  it("charges nothing when embedding every replacement fails", async () => {
+    const charge = { debited: true };
+    const billing = { reserve: jest.fn().mockResolvedValue(charge), settle: jest.fn().mockResolvedValue(true) };
+    (service as any).steps = new StepRunner(billing as any);
+    mockFormat.mockRejectedValue(new Error("No embedding"));
+    await expect(service.regenerateAll(testOwner("user-1"))).rejects.toMatchObject({ detail: { charged: false } });
+    expect(billing.settle).toHaveBeenCalledWith(charge, true);
+    expect(repo.archiveUserIdeas).not.toHaveBeenCalled();
   });
 
   it("refuses an unauthenticated caller BEFORE destroying the batch", async () => {
@@ -269,7 +282,16 @@ describe("Regenerate one slot — the slot is replaced in place", () => {
       evidence: null, embedding: [0.1], createdBy: userId, batchId: batchId ?? null,
     })) as never);
     mockGenerate.mockImplementation(async () => makeStream(IDEAS));
-    service = new ContentService(repo, userRepo, vpService as never, fakeAccountRepo(), researchContext);
+    service = new ContentService(repo, userRepo, vpService as never, fakeAccountRepo(), researchContext, unmeteredSteps);
+  });
+
+  it("charges nothing when single-slot replacement persistence fails", async () => {
+    const charge = { debited: true };
+    const billing = { reserve: jest.fn().mockResolvedValue(charge), settle: jest.fn().mockResolvedValue(true) };
+    (service as any).steps = new StepRunner(billing as any);
+    repo.updateIdea.mockRejectedValueOnce(new Error("Save failed"));
+    await expect(service.regenerateOne(testOwner("user-1"), "idea-1")).rejects.toMatchObject({ detail: { charged: false } });
+    expect(billing.settle).toHaveBeenCalledWith(charge, true);
   });
 
   it("404s an unknown idea and 403s someone else's, without generating", async () => {

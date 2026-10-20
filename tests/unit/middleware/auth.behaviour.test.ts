@@ -3,8 +3,12 @@
 //    NEVER trusted from the client.
 //  - All auth failures respond through res.sendError({ message, statusCode: 401 })
 //    — never a raw res.status().json()/res.send().
-//  - sseAuthMiddleware reads the token from `?token=` (EventSource can't send an
-//    Authorization header), not from the header.
+//  - sseAuthMiddleware PREFERS the Authorization header and falls back to
+//    `?token=`. It was query-only because EventSource cannot send headers; the
+//    frontend now streams via axios's fetch adapter, which sends the header and
+//    no longer appends `?token=` — so query-only 401'd every script generation,
+//    and the client signs out on a 401. The fallback remains for tabs loaded
+//    before that deploy.
 //  - An empty/absent `uid` on an otherwise-verified token must be REFUSED — a
 //    verified token with uid "" would write "" as a real, shared owner value
 //    into every downstream record (see the guard's own comment in auth.ts).
@@ -129,7 +133,9 @@ describe("authMiddleware", () => {
     ["", "empty string"],
     [undefined, "absent"],
     [null, "null"],
-  ])("refuses a verified token whose uid is %s (%s)", async (uid) => {
+    // Both tuple members named: it.each passes the label too, and a one-parameter
+    // callback no longer matches the tuple under strict mode.
+  ])("refuses a verified token whose uid is %s (%s)", async (uid, _label) => {
     mockVerifyIdToken.mockResolvedValue({ uid });
     const req = makeReq({ headers: { authorization: "Bearer good-token" } as any });
     const res = makeRes();
@@ -152,10 +158,10 @@ describe("sseAuthMiddleware", () => {
     jest.clearAllMocks();
   });
 
-  it("reads the token from ?token=, not the Authorization header", async () => {
+  it("prefers the Authorization header over ?token=", async () => {
     mockVerifyIdToken.mockResolvedValue({ uid: "user-123" });
-    // A valid Authorization header is present but must be ignored by this
-    // middleware — SSE auth is query-param only (EventSource can't set headers).
+    // A token in a query string is written verbatim into access logs, proxy logs
+    // and Referer; the header is not. When both are offered, take the header.
     const req = makeReq({
       headers: { authorization: "Bearer header-token" } as any,
       query: { token: "query-token" } as any,
@@ -166,13 +172,35 @@ describe("sseAuthMiddleware", () => {
     sseAuthMiddleware(req, res, next as NextFunction);
     await flushPromises();
 
-    expect(mockVerifyIdToken).toHaveBeenCalledWith("query-token");
+    expect(mockVerifyIdToken).toHaveBeenCalledWith("header-token");
     expect(req.userId).toBe("user-123");
     expect(next).toHaveBeenCalledTimes(1);
   });
 
-  it("rejects with 401 when ?token= is missing, even with a valid Authorization header", () => {
-    const req = makeReq({ headers: { authorization: "Bearer header-token" } as any, query: {} });
+  it("authenticates from the header alone, which is how the client streams now", async () => {
+    // The regression this pins: `service/script.ts` streams through axios with
+    // `adapter: "fetch"` and sends NO `?token=`. Query-only auth 401'd every
+    // generation, and a 401 signs the user out — so clicking Generate logged
+    // you out. Nothing caught it because the FE test mocks baseFetch wholesale.
+    mockVerifyIdToken.mockResolvedValue({ uid: "user-123" });
+    const req = makeReq({
+      headers: { authorization: "Bearer header-token" } as any,
+      query: {},
+    });
+    const res = makeRes();
+    const next = jest.fn();
+
+    sseAuthMiddleware(req, res, next as NextFunction);
+    await flushPromises();
+
+    expect(mockVerifyIdToken).toHaveBeenCalledWith("header-token");
+    expect(req.userId).toBe("user-123");
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(res.sendError).not.toHaveBeenCalled();
+  });
+
+  it("rejects with 401 when NEITHER a header nor ?token= is present", () => {
+    const req = makeReq({ headers: {} as any, query: {} });
     const res = makeRes();
     const next = jest.fn();
 
@@ -186,7 +214,22 @@ describe("sseAuthMiddleware", () => {
     expect(mockVerifyIdToken).not.toHaveBeenCalled();
   });
 
-  it("rejects with 401 when ?token= is not a single string (e.g. repeated query param)", () => {
+  it("ignores a malformed Authorization scheme and falls back to ?token=", () => {
+    // `Basic abc` is not a bearer token. Falling through to the query param is
+    // what keeps a pre-deploy tab working; verifying "abc" as a Firebase ID
+    // token would not.
+    mockVerifyIdToken.mockResolvedValue({ uid: "user-123" });
+    const req = makeReq({
+      headers: { authorization: "Basic abc" } as any,
+      query: { token: "query-token" } as any,
+    });
+
+    sseAuthMiddleware(req, makeRes(), jest.fn() as NextFunction);
+
+    expect(mockVerifyIdToken).toHaveBeenCalledWith("query-token");
+  });
+
+  it("rejects with 401 when the ?token= fallback is not a single string (repeated query param)", () => {
     // Express/qs parses ?token=a&token=b as an array — the middleware's
     // `typeof token !== "string"` guard must reject that, not pass it to Firebase.
     const req = makeReq({ query: { token: ["a", "b"] } as any });

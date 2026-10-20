@@ -71,7 +71,8 @@ jest.mock("../../src/service/video-project.service", () => ({
 import request from "supertest";
 import app from "../../src/app";
 import { useSharedServer } from "./shared-server";
-import { TEST_ACCOUNT_ID, testOwner } from "../helpers/account";
+import { OTHER_ACCOUNT_ID, TEST_ACCOUNT_ID, testOwner } from "../helpers/account";
+import { AccountForbidden, NotFound, WrongAccount } from "../../src/utlils/errors";
 
 // One HTTP server for the whole file. `request(app)` starts and tears down a
 // FRESH ephemeral server per call; across ~113 requests that intermittently
@@ -103,6 +104,23 @@ function makeServiceError(message: string, statusCode: number) {
   return err;
 }
 
+/**
+ * What `VideoProjectService.list` actually hands back per row: a SEVEN-FIELD
+ * projection, not the stored document. The suite used to feed `[PROJECT_STUB]`
+ * — a full project, pipeline and `accountId` included — to the list mock and then
+ * assert only `data.projects).toHaveLength(1)`, so the list envelope (and which
+ * fields the dashboard card can rely on) was asserted by nothing.
+ */
+const PROJECT_CARD = {
+  id: "proj-1",
+  title: "Test Video",
+  currentStep: "research",
+  overallStatus: "in_progress",
+  updatedAt: "2024-01-01",
+  createdAt: "2024-01-01",
+  thumbnailHint: null,
+};
+
 const PROJECT_STUB = {
   id: "proj-1",
   createdBy: "test-user-id", accountId: TEST_ACCOUNT_ID,
@@ -131,7 +149,7 @@ const PROJECT_STUB = {
 // ---------------------------------------------------------------------------
 
 describe("POST /v1/video-projects", () => {
-  it("returns 201 with project data on success", async () => {
+  it("returns 201 with the created project, linked to the idea it came from", async () => {
     getService().create.mockResolvedValueOnce(PROJECT_STUB as any);
 
     const res = await request(server())
@@ -140,7 +158,17 @@ describe("POST /v1/video-projects", () => {
 
     expect(res.status).toBe(201);
     expect(res.body.success).toBe(true);
-    expect(res.body.data).toBeDefined();
+    // `data).toBeDefined()` is true for `{}` and for `null`-free junk alike. The
+    // client routes straight to `/project/:id` from this response and reads the
+    // pipeline to decide which step to open.
+    expect(res.body.data).toMatchObject({
+      id: "proj-1",
+      title: "Test Video",
+      ideaId: "idea-1",
+      currentStep: "research",
+      overallStatus: "in_progress",
+    });
+    expect(res.body.data.pipeline.script).toMatchObject({ status: "not_started" });
   });
 
   it("returns 201 creating from a title (project-first, no pre-existing idea)", async () => {
@@ -151,7 +179,7 @@ describe("POST /v1/video-projects", () => {
       .send({ title: "My Idea" });
 
     expect(res.status).toBe(201);
-    expect(res.body.success).toBe(true);
+    expect(res.body.data).toMatchObject({ id: "proj-1", title: "My Idea" });
     expect(getService().createFromTitle).toHaveBeenCalledWith(
       testOwner("test-user-id"), "My Idea");
     expect(getService().create).not.toHaveBeenCalled();
@@ -175,19 +203,41 @@ describe("POST /v1/video-projects", () => {
     expect(res.body.success).toBe(false);
   });
 
-  it("returns 403 when service throws Forbidden", async () => {
-    getService().create.mockRejectedValueOnce(makeServiceError("Forbidden", 403));
+  // `create` resolves the idea and hands a cross-channel one to
+  // `forbidCrossAccount`, so the refusal is always CODED. The fixture was a bare
+  // `Error` with `statusCode: 403`, a shape no service produces, and the assertion
+  // stopped at the status — which is the one thing the two refusals share.
+  it("offers a switch when the source idea lives in the caller's other channel", async () => {
+    // HARM PREVENTED: "Start a video from this idea" on an idea the user can see
+    // in their other channel must offer the switch, not eject them.
+    getService().create.mockRejectedValueOnce(
+      WrongAccount({ accountId: OTHER_ACCOUNT_ID, displayName: "Finance Channel" })
+    );
 
     const res = await request(server())
       .post("/v1/video-projects")
-      .send({ ideaId: "idea-1" });
+      .send({ ideaId: "idea-in-my-other-channel" });
 
     expect(res.status).toBe(403);
     expect(res.body.success).toBe(false);
+    expect(res.body.code).toBe("wrong_account");
+    expect(res.body.detail).toMatchObject({ accountId: OTHER_ACCOUNT_ID, displayName: "Finance Channel" });
+  });
+
+  it("ejects when the source idea belongs to a channel the caller is not in", async () => {
+    getService().create.mockRejectedValueOnce(AccountForbidden());
+
+    const res = await request(server())
+      .post("/v1/video-projects")
+      .send({ ideaId: "a-strangers-idea" });
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("account_forbidden");
+    expect(res.body.detail).toBeUndefined();
   });
 
   it("returns 404 when idea is not found", async () => {
-    getService().create.mockRejectedValueOnce(makeServiceError("Idea not found", 404));
+    getService().create.mockRejectedValueOnce(NotFound("Idea not found"));
 
     const res = await request(server())
       .post("/v1/video-projects")
@@ -203,18 +253,25 @@ describe("POST /v1/video-projects", () => {
 // ---------------------------------------------------------------------------
 
 describe("GET /v1/video-projects", () => {
-  it("returns 200 with project list", async () => {
+  it("returns the list envelope — the cards, hasMore and the cursor", async () => {
     getService().list.mockResolvedValueOnce({
-      projects: [PROJECT_STUB],
-      hasMore: false,
-      nextCursor: null,
+      projects: [PROJECT_CARD],
+      hasMore: true,
+      nextCursor: "proj-1",
     } as any);
 
     const res = await request(server()).get("/v1/video-projects");
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
-    expect(res.body.data.projects).toHaveLength(1);
+    // The whole envelope: `nextCursor` is "Load more", and the card fields are what
+    // the dashboard row renders. Only the LENGTH was asserted before, which a row
+    // of `{}` would have satisfied.
+    expect(res.body.data).toEqual({
+      projects: [PROJECT_CARD],
+      hasMore: true,
+      nextCursor: "proj-1",
+    });
   });
 
   // api.md documents "Maximum: 50" for `limit`. Nothing enforced it: the value
@@ -291,18 +348,61 @@ describe("GET /v1/video-projects", () => {
 // ---------------------------------------------------------------------------
 
 describe("GET /v1/video-projects/:projectId", () => {
-  it("returns 200 with project data", async () => {
+  // The passthrough role is module-level shared state: a test that fails before
+  // restoring it would otherwise run every later test as a viewer, turning one
+  // failure into a cascade that hides its own cause.
+  afterEach(() => {
+    require("../helpers/account").passthroughRole.value = "owner";
+  });
+
+  it("returns the full project, pipeline included — the step the UI opens", async () => {
     getService().getReconciledById.mockResolvedValueOnce(PROJECT_STUB as any);
 
     const res = await request(server()).get("/v1/video-projects/proj-1");
 
     expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
-    expect(res.body.data).toBeDefined();
+    expect(res.body.data).toMatchObject({
+      id: "proj-1",
+      title: "Test Video",
+      currentStep: "research",
+      ideaId: "idea-1",
+    });
+    // Unlike the list, the single read carries the whole pipeline: this is what
+    // decides which step the project screen lands on.
+    expect(res.body.data.pipeline).toMatchObject({
+      research: { status: "completed" },
+      script: { status: "not_started" },
+      hooks: { status: "not_started" },
+      packaging: { status: "not_started" },
+    });
+  });
+
+  it("asks the service NOT to persist the repair when the caller is a viewer", async () => {
+    // This route has no role gate — every member may read. The read-time repair
+    // used to WRITE, so a viewer opening a project mutated channel data. The
+    // controller is the only place that knows the role, so it is the only place
+    // this can be decided; a service-level test cannot prove the controller
+    // passes the right value.
+    const account = require("../helpers/account");
+    account.passthroughRole.value = "viewer";
+    getService().getReconciledById.mockResolvedValueOnce(PROJECT_STUB as any);
+
+    const res = await request(server()).get("/v1/video-projects/proj-1");
+
+    expect(res.status).toBe(200);
+    expect(getService().getReconciledById).toHaveBeenCalledWith("proj-1", expect.anything(), false);
+  });
+
+  it("lets an editor's GET persist the repair, so filtered lists stay in step", async () => {
+    getService().getReconciledById.mockResolvedValueOnce(PROJECT_STUB as any);
+
+    await request(server()).get("/v1/video-projects/proj-1");
+
+    expect(getService().getReconciledById).toHaveBeenCalledWith("proj-1", expect.anything(), true);
   });
 
   it("returns 404 when project not found", async () => {
-    getService().getReconciledById.mockRejectedValueOnce(makeServiceError("Not found", 404));
+    getService().getReconciledById.mockRejectedValueOnce(NotFound());
 
     const res = await request(server()).get("/v1/video-projects/missing");
 
@@ -310,13 +410,30 @@ describe("GET /v1/video-projects/:projectId", () => {
     expect(res.body.success).toBe(false);
   });
 
-  it("returns 403 when user does not own the project", async () => {
-    getService().getReconciledById.mockRejectedValueOnce(makeServiceError("Forbidden", 403));
+  // THE canonical case from api-design.md: "a bookmarked project living in the
+  // user's other channel renders as 'Project not found. It may have been
+  // deleted.' — when it is one switch away". This route is that bookmark.
+  it("tells the client the project is in another of the caller's channels, and which", async () => {
+    getService().getReconciledById.mockRejectedValueOnce(
+      WrongAccount({ accountId: OTHER_ACCOUNT_ID, displayName: "Finance Channel" })
+    );
 
-    const res = await request(server()).get("/v1/video-projects/proj-other");
+    const res = await request(server()).get("/v1/video-projects/proj-in-my-other-channel");
 
     expect(res.status).toBe(403);
     expect(res.body.success).toBe(false);
+    expect(res.body.code).toBe("wrong_account");
+    expect(res.body.detail).toMatchObject({ accountId: OTHER_ACCOUNT_ID, displayName: "Finance Channel" });
+  });
+
+  it("ejects, naming nothing, for a project in a channel the caller is not in", async () => {
+    getService().getReconciledById.mockRejectedValueOnce(AccountForbidden());
+
+    const res = await request(server()).get("/v1/video-projects/a-strangers-project");
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("account_forbidden");
+    expect(res.body.detail).toBeUndefined();
   });
 });
 
@@ -333,7 +450,24 @@ describe("PATCH /v1/video-projects/:projectId", () => {
       .send({ title: "New Title" });
 
     expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
+    // `update` returns `{ title }` and the client renames the row from it. A bare
+    // `success: true` held even if the controller answered with the request body
+    // or with nothing.
+    expect(res.body.data).toEqual({ title: "New Title" });
+  });
+
+  it("refuses a rename of another channel's project, with the reason", async () => {
+    getService().update.mockRejectedValueOnce(
+      WrongAccount({ accountId: OTHER_ACCOUNT_ID, displayName: "Finance Channel" })
+    );
+
+    const res = await request(server())
+      .patch("/v1/video-projects/proj-in-my-other-channel")
+      .send({ title: "Renamed" });
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("wrong_account");
+    expect(res.body.detail).toMatchObject({ accountId: OTHER_ACCOUNT_ID });
   });
 
   it("returns 400 when title missing (service throws 400)", async () => {
@@ -348,7 +482,7 @@ describe("PATCH /v1/video-projects/:projectId", () => {
   });
 
   it("returns 404 when project not found", async () => {
-    getService().update.mockRejectedValueOnce(makeServiceError("Not found", 404));
+    getService().update.mockRejectedValueOnce(NotFound());
 
     const res = await request(server())
       .patch("/v1/video-projects/missing")
@@ -363,29 +497,45 @@ describe("PATCH /v1/video-projects/:projectId", () => {
 // ---------------------------------------------------------------------------
 
 describe("DELETE /v1/video-projects/:projectId", () => {
-  it("returns 200 on success", async () => {
-    getService().delete.mockResolvedValueOnce({ id: "proj-1", isDeleted: true } as any);
+  it("returns the tombstoned project, so the client can drop the row", async () => {
+    getService().delete.mockResolvedValueOnce({ ...PROJECT_STUB, isDeleted: true } as any);
 
     const res = await request(server()).delete("/v1/video-projects/proj-1");
 
     expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
+    // Soft delete: `isDeleted` is the whole outcome. `success: true` alone was
+    // equally satisfied by a response that reported a delete which never happened.
+    expect(res.body.data).toMatchObject({ id: "proj-1", isDeleted: true });
   });
 
   it("returns 404 when project not found", async () => {
-    getService().delete.mockRejectedValueOnce(makeServiceError("Not found", 404));
+    getService().delete.mockRejectedValueOnce(NotFound());
 
     const res = await request(server()).delete("/v1/video-projects/missing");
 
     expect(res.status).toBe(404);
   });
 
-  it("returns 403 when user does not own the project", async () => {
-    getService().delete.mockRejectedValueOnce(makeServiceError("Forbidden", 403));
+  it("refuses to delete another channel's project, and says which refusal it is", async () => {
+    // HARM PREVENTED: the destructive case. `account_forbidden` here ejects the
+    // user; `wrong_account` keeps them where they are and names the channel that
+    // actually owns the project.
+    getService().delete.mockRejectedValueOnce(
+      WrongAccount({ accountId: OTHER_ACCOUNT_ID, displayName: "Finance Channel" })
+    );
 
-    const res = await request(server()).delete("/v1/video-projects/proj-other");
+    const res = await request(server()).delete("/v1/video-projects/proj-in-my-other-channel");
 
     expect(res.status).toBe(403);
+    expect(res.body.code).toBe("wrong_account");
+    expect(res.body.detail).toMatchObject({ accountId: OTHER_ACCOUNT_ID, displayName: "Finance Channel" });
+
+    getService().delete.mockRejectedValueOnce(AccountForbidden());
+
+    const strangers = await request(server()).delete("/v1/video-projects/a-strangers-project");
+
+    expect(strangers.status).toBe(403);
+    expect(strangers.body.code).toBe("account_forbidden");
   });
 });
 
@@ -407,13 +557,37 @@ describe("PATCH /v1/video-projects/:projectId/step/:stepName/start (removed)", (
 // ---------------------------------------------------------------------------
 
 describe("PATCH /v1/video-projects/:projectId/step/:stepName/complete", () => {
-  it("returns 200 on success", async () => {
-    getService().completeStep.mockResolvedValueOnce({ id: "proj-1", currentStep: "hooks" } as any);
+  it("returns the full transition the client patches its store from", async () => {
+    // The service documents this exactly: "it must still answer with the full
+    // shape the client patches from — a partial body here crashes the same
+    // reducer". So the shape IS the contract, and `success: true` asserted none of it.
+    getService().completeStep.mockResolvedValueOnce({
+      id: "proj-1",
+      currentStep: "hooks",
+      overallStatus: "in_progress",
+      pipeline: { ...PROJECT_STUB.pipeline, script: { status: "completed", startedAt: null, completedAt: null } },
+    } as any);
 
     const res = await request(server()).patch("/v1/video-projects/proj-1/step/script/complete");
 
     expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
+    expect(res.body.data).toMatchObject({
+      id: "proj-1",
+      currentStep: "hooks",
+      overallStatus: "in_progress",
+      pipeline: { script: { status: "completed" } },
+    });
+  });
+
+  it("refuses a step transition on another channel's project, with the reason", async () => {
+    getService().completeStep.mockRejectedValueOnce(
+      WrongAccount({ accountId: OTHER_ACCOUNT_ID, displayName: "Finance Channel" })
+    );
+
+    const res = await request(server()).patch("/v1/video-projects/proj-in-my-other-channel/step/script/complete");
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("wrong_account");
   });
 
   it("returns 400 when step is not_started", async () => {
@@ -436,7 +610,7 @@ describe("PATCH /v1/video-projects/:projectId/step/:stepName/complete", () => {
   });
 
   it("returns 404 when project not found", async () => {
-    getService().completeStep.mockRejectedValueOnce(makeServiceError("Not found", 404));
+    getService().completeStep.mockRejectedValueOnce(NotFound());
 
     const res = await request(server()).patch("/v1/video-projects/missing/step/script/complete");
 
@@ -457,15 +631,17 @@ describe("PATCH /v1/video-projects/:projectId/step/:stepName/complete", () => {
 // ---------------------------------------------------------------------------
 
 describe("PATCH /v1/video-projects/:projectId/link/:resourceType", () => {
-  it("returns 200 on success", async () => {
-    getService().linkResource.mockResolvedValueOnce({ id: "proj-1", scriptId: "script-abc" } as any);
+  it("returns the project with the resource now linked", async () => {
+    getService().linkResource.mockResolvedValueOnce({ ...PROJECT_STUB, scriptId: "script-abc" } as any);
 
     const res = await request(server())
       .patch("/v1/video-projects/proj-1/link/script")
       .send({ resourceId: "script-abc" });
 
     expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
+    // The link IS the outcome — a response that reported success without it would
+    // leave the client believing a script is attached when none is.
+    expect(res.body.data).toMatchObject({ id: "proj-1", scriptId: "script-abc" });
   });
 
   it("returns 400 when resourceId is missing", async () => {
@@ -488,18 +664,36 @@ describe("PATCH /v1/video-projects/:projectId/link/:resourceType", () => {
     expect(res.status).toBe(400);
   });
 
-  it("returns 403 when user does not own the project", async () => {
-    getService().linkResource.mockRejectedValueOnce(makeServiceError("Forbidden", 403));
+  // The body-supplied-id case: the project is yours, the RESOURCE is not.
+  // `linkResource` checks the resource's account too, and that refusal is coded.
+  it("refuses a foreign resource id linked onto a project the caller does own", async () => {
+    // HARM PREVENTED: without the discriminator, attaching a resource that lives
+    // in the caller's other channel ejects them from the channel they are in —
+    // instead of telling them the script they picked is in «Finance».
+    getService().linkResource.mockRejectedValueOnce(
+      WrongAccount({ accountId: OTHER_ACCOUNT_ID, displayName: "Finance Channel" })
+    );
 
     const res = await request(server())
       .patch("/v1/video-projects/proj-1/link/script")
-      .send({ resourceId: "script-abc" });
+      .send({ resourceId: "script-in-my-other-channel" });
 
     expect(res.status).toBe(403);
+    expect(res.body.code).toBe("wrong_account");
+    expect(res.body.detail).toMatchObject({ accountId: OTHER_ACCOUNT_ID, displayName: "Finance Channel" });
+
+    getService().linkResource.mockRejectedValueOnce(AccountForbidden());
+
+    const strangers = await request(server())
+      .patch("/v1/video-projects/proj-1/link/script")
+      .send({ resourceId: "a-strangers-script" });
+
+    expect(strangers.status).toBe(403);
+    expect(strangers.body.code).toBe("account_forbidden");
   });
 
   it("returns 404 when project not found", async () => {
-    getService().linkResource.mockRejectedValueOnce(makeServiceError("Not found", 404));
+    getService().linkResource.mockRejectedValueOnce(NotFound("script not found"));
 
     const res = await request(server())
       .patch("/v1/video-projects/missing/link/script")

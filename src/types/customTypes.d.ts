@@ -32,6 +32,8 @@ declare global {
 
     interface Request {
       userId: string;
+      userEmail?: string;
+      emailVerified?: boolean;
       /**
        * Phase 05. The channel this request is acting in, set by accountMiddleware
        * after it has verified membership. Nothing READS it until Phase 06 —

@@ -1,3 +1,4 @@
+import { unmeteredSteps } from "../../helpers/step-runner";
 // Behaviour tests for the Packaging generation → pipeline-step flow, derived
 // from the documented contract (not the implementation) in:
 //   - docs/features/packaging/spec.md   (persist-on-generate, per-item status,
@@ -178,7 +179,7 @@ function makeWiredServices(initialProject: IVideoProject) {
   } as unknown as jest.Mocked<PackagingRepository>;
 
   const vpService = new VideoProjectService(vpRepo, contentRepo, packagingRepo, hooksRepoForVp, fakeAccountRepo());
-  const packagingService = new PackagingService(packagingRepo, vpService, makeContextService(), fakeAccountRepo());
+  const packagingService = new PackagingService(packagingRepo, vpService, makeContextService(), fakeAccountRepo(), undefined, unmeteredSteps);
 
   return { vpRepo, packagingRepo, vpService, packagingService, getState: () => state };
 }
@@ -220,6 +221,28 @@ describe("Packaging generation flow — persist-on-generate drives the pipeline 
     expect(getState().pipeline.packaging.status).toBe("completed");
     // Title never auto-completes through generation — only through selectTitle.
     expect(getState().pipeline.title.status).toBe("in_progress");
+  });
+
+  it.each([
+    ["description", '{"description":""}'],
+    ["description", '{"description":"   "}'],
+    ["thumbnail", '{"descriptions":[]}'],
+  ])("refuses empty generated %s before anything is written", async (_item, output) => {
+    // These all satisfy the response schema and pass `normalizeField`, which only
+    // checks the TYPE. Persisting them marked the item completed, kept the charge,
+    // and left the project claiming packaging content it does not have. Thrown
+    // before the write, so `step-runner` releases the reservation unbilled.
+    const { packagingService, getState, packagingRepo } = makeWiredServices(makeProject());
+    mockGenerate.mockResolvedValueOnce(makeStream(output));
+
+    await expect(
+      _item === "description"
+        ? packagingService.generateDescription(testOwner("user-1"), "a script", "T1", "proj-1")
+        : packagingService.generateThumbnail(testOwner("user-1"), "a script", "T1", "proj-1")
+    ).rejects.toMatchObject({ statusCode: 503 });
+
+    expect(packagingRepo.upsertGeneratedItem).not.toHaveBeenCalled();
+    expect(getState().pipeline.packaging.status).toBe("not_started");
   });
 
   it("the packaging doc is linked to the project on the FIRST generated item only (subsequent items reuse it)", async () => {
@@ -293,7 +316,7 @@ describe("Door flow — a save with no videoProjectId creates exactly one projec
     formatGeneratedTitle.mockResolvedValue({ title: "My Title", createdBy: "user-1", accountId: TEST_ACCOUNT_ID });
 
     const vpService = new VideoProjectService(vpRepo, contentRepo, packagingRepoForSave as any, {} as any, fakeAccountRepo());
-    const service = new PackagingService(packagingRepoForSave as any, vpService, makeContextService(), fakeAccountRepo());
+    const service = new PackagingService(packagingRepoForSave as any, vpService, makeContextService(), fakeAccountRepo(), undefined, unmeteredSteps);
 
     await service.savePackaging(testOwner("user-1"), { titles: [{ title: "My Title", characterCount: 8 }] });
 
@@ -314,7 +337,7 @@ describe("Door flow — a save with no videoProjectId creates exactly one projec
 
     const contentRepo = { getIdea: jest.fn(), updateIdea: jest.fn(), batchSaveIdeas: jest.fn(), getScriptById: jest.fn() } as unknown as ContentRepository;
     const vpService = new VideoProjectService(vpRepo, contentRepo, packagingRepoForSave as any, {} as any, fakeAccountRepo());
-    const service = new PackagingService(packagingRepoForSave as any, vpService, makeContextService(), fakeAccountRepo());
+    const service = new PackagingService(packagingRepoForSave as any, vpService, makeContextService(), fakeAccountRepo(), undefined, unmeteredSteps);
     const createSpy = vpRepo.create as jest.Mock;
 
     // Client adopts the id from the first save and passes it explicitly this time.
@@ -378,7 +401,7 @@ describe("Stale lifecycle — a plain save never clears stale; only regenerate d
       clearStale: jest.fn(),
     } as unknown as PackagingRepository;
 
-    const saveService = new PackagingService(packagingRepoForSave as any, vpService, makeContextService(), fakeAccountRepo());
+    const saveService = new PackagingService(packagingRepoForSave as any, vpService, makeContextService(), fakeAccountRepo(), undefined, unmeteredSteps);
     await saveService.savePackaging(testOwner("user-1"), { description: "Edited text" }, "proj-1");
 
     const savedPatch = (packagingRepoForSave.update as jest.Mock).mock.calls[0][1];

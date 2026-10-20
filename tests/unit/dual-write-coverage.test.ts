@@ -90,15 +90,20 @@ describe("phase 06 — permissions are decided by the account, never the author"
 
   // `createdBy` is not banned — it is still authorship, and still written on
   // every record. It is banned from DECIDING anything.
-  it("still writes createdBy, so authorship is not lost", () => {
-    const sources = fs
-      .readdirSync(serviceDir)
-      .filter((f) => f.endsWith(".ts"))
-      .map((f) => fs.readFileSync(path.join(serviceDir, f), "utf8"))
-      .join("\n");
-
-    expect(/createdBy:\s*\w/.test(sources)).toBe(true);
-  });
+  //
+  // THE OTHER HALF OF THAT SENTENCE — "still written on every record" — lives in
+  // `tests/unit/authorship.behaviour.test.ts`, which drives all seven creation
+  // paths through their real document builder and real repository and reads the
+  // stored document back out of the fake Firestore.
+  //
+  // It used to be asserted here, as `/createdBy:\s*\w/` over the CONCATENATED
+  // service sources. That test survived every write path dropping the author, as
+  // long as one matching fragment remained anywhere in `src/service` — and since
+  // the sources were joined without `stripComments`, the fragment was allowed to
+  // be a comment. It claimed a per-record guarantee and asserted the existence of
+  // a substring, which is the failure this file's own docstring warns about two
+  // paragraphs up. Replaced rather than repaired: a text scan cannot see whether
+  // the value written is the authenticated uid, the account id, or `undefined`.
 });
 
 const stripComments = (source: string): string =>
@@ -192,16 +197,30 @@ describe("phase 05 — the account id enters at exactly one place", () => {
     expect(falsePositives).toEqual([]);
   });
 
-  it("the exemption list is exactly two files, each with a reason", () => {
-    // Shrink-only. This is the sibling of ACCOUNT_EXEMPT in auth-coverage, and
-    // it lacked the staleness check that makes that one hold.
+  // ALLOWLIST TRIPWIRE — not a security guarantee.
+  //
+  // Nothing here says anything about the code: it compares a constant declared 60
+  // lines up against the same two names written out again. Its only job is to make
+  // widening the exemption list a deliberate act with a written reason, so a third
+  // file cannot be waved through as a two-line convenience while the scan below
+  // keeps reporting zero offenders. The guarantee is the scan.
+  //
+  // It previously ALSO asserted `reason.length > 10`, which eleven spaces satisfy
+  // and which therefore checked that a string exists. Dropped for the check below,
+  // which has teeth: an exemption is stale the moment its file stops reading an
+  // account id, and a stale exemption is a live hole waiting for the next edit to
+  // that file.
+  it("allowlist tripwire: exactly two files are exempt, and each still needs it", () => {
     expect(Object.keys(EXEMPT_FILES).sort()).toEqual([
       "src/app.ts",
       "src/middleware/account.ts",
     ]);
-    for (const reason of Object.values(EXEMPT_FILES)) {
-      expect(reason.length).toBeGreaterThan(10);
-    }
+
+    const stale = Object.keys(EXEMPT_FILES).filter(
+      (file) => !READS_AN_ACCOUNT_ID.some((p) => p.test(stripComments(read(file))))
+    );
+
+    expect(stale).toEqual([]); // ← an exempt file that no longer reads one: SHRINK the list
   });
   it("only accountMiddleware reads an account id from the request", () => {
     // Phase 03's version of this asserted NOTHING read the header. Phase 05 is
@@ -296,6 +315,7 @@ describe("phase 06 — every tenancy query filters the account", () => {
       "account.repository.ts",
       "content.repository.ts",
       "packaging.repository.ts",
+      "sharing.repository.ts", // Owners list invitations scoped to the current channel.
       "video-project.repository.ts",
     ]);
   });

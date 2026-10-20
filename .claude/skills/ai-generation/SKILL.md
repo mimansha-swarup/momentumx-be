@@ -13,7 +13,7 @@ Code-level "how" for this repo. The enforced rules (config↔format matching, SS
 // The factory takes the system prompt and config — NOT a no-arg call
 const genAIModel = (systemPrompt: string, generationConfig: GenerationConfig) =>
   genAI.getGenerativeModel({
-    model: "gemini-3.5-flash",
+    model: GENERATION_MODEL, // process.env.GENERATION_MODEL, default gemini-3.8-flash
     systemInstruction: systemPrompt,
     generationConfig,
   });

@@ -51,6 +51,7 @@ import HooksService from "../../src/service/hooks.service";
 import PackagingService from "../../src/service/packaging.service";
 import ResearchContextService from "../../src/service/research-context.service";
 import ContextService from "../../src/service/context.service";
+import ExtractService from "../../src/service/extract.service";
 import StepRunner from "../../src/service/step-runner";
 import VideoProjectService from "../../src/service/video-project.service";
 
@@ -83,7 +84,8 @@ describe("container — every controller is wired to a real service", () => {
 
   it("shares one instance of each repository rather than minting duplicates", () => {
     expect(dep(container.videoProjectService, "repo")).toBe(container.videoProjectRepository);
-    expect(dep(container.stepRunner, "projects")).toBe(container.videoProjectRepository);
+    expect(dep(container.stepRunner, "billing")).toBe(container.billingRepository);
+    for (const service of [container.contentService, container.packagingService, container.userService, container.hooksService]) expect(dep(service, "steps")).toBe(container.stepRunner);
   });
 });
 
@@ -111,5 +113,14 @@ describe("container — the optional dependencies TypeScript cannot police", () 
 
   it("gives ContentService the video-project service, without which the stale cascade never fires", () => {
     expect(dep(container.contentService, "videoProjectService")).toBeInstanceOf(VideoProjectService);
+  });
+
+  it("gives UserService its ExtractService, so onboarding enrichment is wired here and not hidden", () => {
+    // UserService used to build `new ExtractService(new ExtractRepository())` inside
+    // its own constructor, so this suite — whose entire job is pinning the wiring —
+    // could not see one of its dependencies, and nothing caught the day it got the
+    // wrong one. It is a constructor parameter now.
+    expect(dep(container.userService, "extractService")).toBe(container.extractService);
+    expect(dep(container.extractService, "repo")).toBe(container.extractRepository);
   });
 });

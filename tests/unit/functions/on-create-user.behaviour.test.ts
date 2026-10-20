@@ -1,118 +1,69 @@
-// The auth trigger that gives every new user a profile record.
-//
-// `functions/` is a separate deploy artifact with its own package.json and no
-// test script, and the root jest config only *discovers* tests under `tests/` —
-// so nothing had ever executed this handler. All three things Phase 01 item 2
-// fixed here were unverified: returning the write, merging instead of clobbering,
-// and failing loudly. A regression to fire-and-forget would pass `npm test`
-// silently and show up as users with no profile record.
-//
-// (Discovery roots are unchanged; this file lives under `tests/` and imports
-// across. No jest config change was needed.)
-
-const docSet = jest.fn();
-const docFn = jest.fn((uid: string) => ({ uid, set: docSet }));
-const collectionFn = jest.fn(() => ({ doc: docFn }));
-
-let captured: ((user: unknown) => Promise<void>) | null = null;
-
-jest.mock("firebase-functions/v1/auth", () => ({
-  user: () => ({
-    onCreate: (handler: (u: unknown) => Promise<void>) => {
-      captured = handler;
-      return handler;
-    },
-  }),
+/** Handler tests use a storage double; real SDK registration is checked separately. */
+const records = new Map<string, Record<string, unknown>>();
+const create = jest.fn();
+const doc = jest.fn((uid: string) => ({ create: (value: Record<string, unknown>) => create(uid, value) }));
+const collection = jest.fn(() => ({ doc }));
+jest.mock(require.resolve("firebase-functions/v2/identity", { paths: [__dirname + "/../../../functions"] }), () => ({
+  IS_NOT_TENANT: "__no_tenant__",
+  onUserCreated: (_options: unknown, handler: unknown) => handler,
+  onUserDeleted: (_options: unknown, handler: unknown) => handler,
 }));
-
-jest.mock("firebase-admin", () => ({
+jest.mock(require.resolve("firebase-admin", { paths: [__dirname + "/../../../functions"] }), () => ({
   initializeApp: jest.fn(),
-  firestore: Object.assign(jest.fn(() => ({ collection: collectionFn })), {
+  firestore: Object.assign(() => ({ collection }), {
     FieldValue: { serverTimestamp: () => "server-ts" },
   }),
 }));
-
-import "../../../functions/src/index";
-
-const USER = {
-  uid: "uid-123",
-  displayName: "Ada",
-  email: "ada@example.com",
-  photoURL: "https://img/ada.png",
-};
-
-describe("onCreateUser — a new signup always ends up with a profile record", () => {
-  beforeEach(() => {
-    docSet.mockReset().mockResolvedValue(undefined);
-    docFn.mockClear();
-    collectionFn.mockClear();
-  });
-
-  it("registers a handler at module load", () => {
-    expect(captured).toBeInstanceOf(Function);
-  });
-
-  it("writes the record keyed on the auth uid", async () => {
-    await captured!(USER);
-
-    expect(collectionFn).toHaveBeenCalledWith("users");
-    expect(docFn).toHaveBeenCalledWith("uid-123");
-  });
-
-  it("MERGES, so it cannot clobber a profile onboarding already wrote", async () => {
-    // Onboarding can complete before this background trigger runs. A plain
-    // `.set()` would erase the niche/audience the user just typed.
-    await captured!(USER);
-
-    expect(docSet.mock.calls[0][1]).toEqual({ merge: true });
-  });
-
-  it("seeds the lifetime counters, so a user who never onboards still has a stats baseline", async () => {
-    await captured!(USER);
-
-    expect(docSet.mock.calls[0][0]).toMatchObject({
-      uid: "uid-123",
-      name: "Ada",
-      email: "ada@example.com",
-      stats: { ideas: 0, scripts: 0, credits: 0 },
-      createdAt: "server-ts",
-    });
-  });
-
-  it("falls back for an anonymous or email-less provider rather than writing undefined", async () => {
-    await captured!({ uid: "uid-456" });
-
-    expect(docSet.mock.calls[0][0]).toMatchObject({
-      name: "Anonymous",
-      email: "",
-      photoURL: "",
-    });
-  });
-
-  // The three-in-one regression guard. In a background Cloud Function the
-  // instance can be frozen the moment the handler returns, so a write that is
-  // not awaited is simply dropped.
-  it("AWAITS the write — a handler that resolves early loses it", async () => {
-    let settled = false;
-    docSet.mockImplementation(
-      () => new Promise((resolve) => setImmediate(() => { settled = true; resolve(undefined); }))
-    );
-
-    await captured!(USER);
-
-    expect(settled).toBe(true);
-  });
-
-  it("rethrows a failed write so the invocation is marked failed, not silently lost", async () => {
-    docSet.mockRejectedValue(new Error("permission denied"));
-    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
-
-    await expect(captured!(USER)).rejects.toThrow("permission denied");
-
-    // Logged structurally on the way out — a user with no profile record must not
-    // look identical to a healthy one.
-    expect(errorSpy).toHaveBeenCalled();
-    expect(String(errorSpy.mock.calls[0][0])).toContain("user_record_create_failed");
-    errorSpy.mockRestore();
+import { onCreateUserV2 } from "../../../functions/src/index";
+const invoke = onCreateUserV2 as unknown as (event: unknown) => Promise<void>;
+const user = { uid: "uid-123", displayName: "Ada", email: "ada@example.com", photoURL: "https://img/ada.png" };
+const event = (data: unknown) => ({ id: "event-1", type: "google.firebase.auth.user.v2.created", data });
+beforeEach(() => {
+  records.clear();
+  create.mockReset().mockImplementation(async (uid: string, value: Record<string, unknown>) => {
+    if (records.has(uid)) throw Object.assign(new Error("exists"), { code: 6 });
+    records.set(uid, value);
   });
 });
+it("creates the default profile from the v2 event data and auth uid", async () => {
+  await invoke(event(user));
+  expect(collection).toHaveBeenCalledWith("users");
+  expect(doc).toHaveBeenCalledWith(user.uid);
+  expect(records.get(user.uid)).toEqual({ uid: user.uid, name: "Ada", email: user.email, photoURL: user.photoURL,
+    stats: { ideas: 0, scripts: 0, credits: 0 }, createdAt: "server-ts" });
+});
+it("uses defined defaults for anonymous users", async () => {
+  await invoke(event({ uid: "anonymous" }));
+  expect(records.get("anonymous")).toMatchObject({ name: "Anonymous", email: "", photoURL: "" });
+});
+it("preserves onboarding, counters and creation time on duplicate delivery or existing profiles", async () => {
+  await invoke(event(user));
+  const existing = { ...records.get(user.uid), name: "Custom name", niche: "science", stats: { ideas: 7, scripts: 3, credits: 20 }, createdAt: "original" };
+  records.set(user.uid, existing);
+  await invoke(event(user));
+  await invoke({ ...event(user), id: "redelivery" });
+  expect(records.get(user.uid)).toEqual(existing);
+});
+it("awaits the create operation", async () => {
+  let completed = false;
+  create.mockImplementation(() => new Promise(resolve => setImmediate(() => { completed = true; resolve(undefined); })));
+  await invoke(event(user));
+  expect(completed).toBe(true);
+});
+it("rejects storage failures and succeeds on a later retry", async () => {
+  const error = Object.assign(new Error("unavailable"), { code: 14 });
+  create.mockRejectedValueOnce(error);
+  const log = jest.spyOn(console, "error").mockImplementation(() => undefined);
+  try {
+    await expect(invoke(event(user))).rejects.toBe(error);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("user_record_create_failed"));
+    await invoke(event(user));
+    expect(records.has(user.uid)).toBe(true);
+  } finally { log.mockRestore(); }
+});
+it.each([undefined, {}, { data: null }, { data: {} }, { data: { uid: "" } }, { data: { uid: 42 } }, { data: { uid: "bad/path" } }])(
+  "rejects malformed input before accessing storage: %p", async input => {
+    await expect(invoke(input)).rejects.toThrow();
+    expect(collection).not.toHaveBeenCalled();
+  }
+);

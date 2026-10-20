@@ -23,12 +23,13 @@ export const getUserObject = (user: UserRecord) => {
  * two in step anyway: the day something here writes a second collection, a
  * missing name becomes a hardcoded string.
  *
- * The multi-account names (accounts/billing/invites/migrations) are deliberately
- * NOT copied down. Nothing in `functions/` writes them, and mirroring names on
+ * Unused multi-account names (billing/invites) are deliberately
+ * NOT copied down. The deletion reconciler writes accounts; nothing writes the others, and mirroring names on
  * spec is how the drift started.
  */
 export const enum COLLECTIONS {
   USERS = "users",
+  ACCOUNTS = "accounts",
   SCRIPTS = "scripts",
   IDEAS = "ideas",
   PACKAGING = "packaging",

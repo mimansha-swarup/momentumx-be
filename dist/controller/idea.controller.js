@@ -1,6 +1,5 @@
-import { randomUUID } from "crypto";
-import { formatGeneratedIdea, logDroppedFormats } from "../utlils/content.js";
-import { ServiceUnavailable } from "../utlils/errors.js";
+import { generationResponse } from "../utlils/generation-progress.js";
+import { publicIdea } from "../utlils/public-response.js";
 import { IDEAS_PAGE, parseListLimit } from "../utlils/pagination.js";
 import { asyncHandler } from "../middleware/async_handler.js";
 import { ownerOf } from "../utlils/content.js";
@@ -39,35 +38,15 @@ class IdeaController {
             });
             res.sendSuccess({
                 message: "successfully retrieved ideas",
-                data,
+                data: { ...data, lists: data.lists.map(publicIdea) },
             });
         });
         this.generateIdeas = asyncHandler(async (req, res) => {
             // Optional instant-first-idea context (validated by generateIdeasSchema) —
             // absent means generate from the persisted user record as before.
-            const ideas = await this.service.generateIdeas(ownerOf(req), true, req.body.context);
-            const batchId = randomUUID();
-            // Phase 06: the account arrives on the request, already membership-checked, so
-            // there is nothing to resolve and nothing to race. This used to call
-            // `resolveOwner` → `ensureDefaultAccount`, and the only reason that lookup was
-            // hoisted out of the map below was that ten concurrent first-calls would
-            // otherwise race to mint an account.
-            const owner = ownerOf(req);
-            const modifiedDataResults = await Promise.allSettled((ideas || [])?.map(async (idea) => formatGeneratedIdea(idea, owner, batchId)));
-            const modifiedData = modifiedDataResults
-                .filter((result) => result.status === "fulfilled")
-                .map((result) => result.value);
-            logDroppedFormats("generateIdeas", req.userId, modifiedDataResults);
-            if (!modifiedData?.length) {
-                // A bare Error resolves to 500 "Something went wrong". Every realistic cause
-                // here is upstream (embedding call failed for every idea), which is a retry,
-                // not a defect in the request.
-                throw ServiceUnavailable("Couldn't generate ideas right now. Please try again.");
-            }
-            const updatedData = await this.service.saveBatchIdeas(modifiedData);
-            res.sendSuccess({
-                message: "successfully generated ideas",
-                data: updatedData,
+            await generationResponse(req, res, "Ideas generated successfully", async (progress) => {
+                const data = await this.service.generateIdeas(ownerOf(req), true, req.body.context, progress);
+                return data.map(publicIdea);
             });
         });
         this.editIdea = asyncHandler(async (req, res) => {
@@ -79,14 +58,18 @@ class IdeaController {
             });
         });
         this.regenerateAll = asyncHandler(async (req, res) => {
-            const data = await this.service.regenerateAll(ownerOf(req));
-            eventService.capture(ownerOf(req), "regenerate" /* EventType.REGENERATE */, { resource: "idea", scope: "all" });
-            res.sendSuccess({ message: "Ideas regenerated successfully", data });
+            await generationResponse(req, res, "Ideas regenerated successfully", async (progress) => {
+                const data = await this.service.regenerateAll(ownerOf(req), progress);
+                eventService.capture(ownerOf(req), "regenerate" /* EventType.REGENERATE */, { resource: "idea", scope: "all" });
+                return data.map(publicIdea);
+            });
         });
         this.regenerateOne = asyncHandler(async (req, res) => {
-            const data = await this.service.regenerateOne(ownerOf(req), req.params.ideaId);
-            eventService.capture(ownerOf(req), "regenerate" /* EventType.REGENERATE */, { resource: "idea", ideaId: req.params.ideaId });
-            res.sendSuccess({ message: "Idea regenerated successfully", data });
+            await generationResponse(req, res, "Idea regenerated successfully", async (progress) => {
+                const data = await this.service.regenerateOne(ownerOf(req), req.params.ideaId, progress);
+                eventService.capture(ownerOf(req), "regenerate" /* EventType.REGENERATE */, { resource: "idea", ideaId: req.params.ideaId });
+                return publicIdea(data);
+            });
         });
         this.exportIdeas = asyncHandler(async (req, res) => {
             const data = await this.service.exportIdeas(ownerOf(req));

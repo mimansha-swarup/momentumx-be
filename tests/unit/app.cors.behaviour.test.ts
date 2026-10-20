@@ -36,11 +36,17 @@ import fs from "fs";
 import path from "path";
 import request from "supertest";
 import app from "../../src/app";
+import { useSharedServer } from "../integration/shared-server";
+
+// Bound ONCE. `request(<app>)` makes supertest bind and tear down an ephemeral port
+// per request; that churn causes an intermittent process-wide connection failure (see
+// tests/integration/shared-server.ts).
+const server = useSharedServer(app);
 
 const ORIGIN = "http://localhost:5173";
 
 const preflight = (requested: string) =>
-  request(app)
+  request(server())
     .options("/v1/ideas")
     .set("Origin", ORIGIN)
     .set("Access-Control-Request-Method", "GET")
@@ -75,7 +81,7 @@ describe("the allowlist is explicit, not reflected", () => {
     // The behavioural half of the same check. With no `Access-Control-Request-
     // Headers` there is nothing to reflect, so whatever comes back is the
     // configured list — which is the only way a preflight can observe it.
-    const res = await request(app)
+    const res = await request(server())
       .options("/v1/ideas")
       .set("Origin", ORIGIN)
       .set("Access-Control-Request-Method", "GET");
@@ -114,7 +120,7 @@ describe("preflight lets the browser send the channel header", () => {
   it("answers the preflight for every method the API actually uses", async () => {
     // PATCH is the one that gets forgotten — the API uses it for every partial
     // update, and it is always preflighted.
-    const res = await request(app)
+    const res = await request(server())
       .options("/v1/user/profile")
       .set("Origin", ORIGIN)
       .set("Access-Control-Request-Method", "PATCH");

@@ -3,11 +3,31 @@ title: "Phase 01b — The Generation Seam"
 description: "One place where locking, preconditions, credits and telemetry attach to a model call."
 date: 2026-08-24
 last_updated: 2026-08-26
-status: "partial — 2 of 11 model calls routed"
+status: "implemented — all model paths routed; not deployed"
 tags: ["multi-account", "phase-01b", "architecture", "generation"]
 ---
 
 # Phase 01b — The Generation Seam
+
+## Completion — 2026-09-26
+
+All model calls now run through `StepRunner`, including ideas, SSE scripts, script
+regeneration, private packaging helpers, and free onboarding prefill. Packaging wraps the
+public generate/regenerate operation so persistence failures also refund; the coverage test
+follows private helper call chains and rejects any unguarded public path. There are no
+unwrapped exceptions.
+
+Phase 08's billing repository now atomically owns the real in-flight lock and debit.
+Pipeline `in_progress` is no longer mistaken for an active generation. Regenerations can
+repair stale inputs immediately while duplicate concurrent requests conflict. Token-checked
+settlement prevents late rollback over a successor. Script replay remains outside metering;
+a transactional recheck closes the read-before-lock race, and missing linked script documents
+can still be repaired. Empty/interrupted streams throw and refund before SSE completion.
+
+The three pipeline canaries are ordinary passing tests: completing an earlier step never
+rewinds `currentStep`, reopening title/hooks recomputes overall status, and reconciled linked
+resource completion persists its repair for subsequent filtered list queries.
+
 
 **Size:** medium. One new constants file, two new repository methods, one new service, and
 a conversion per generation service.

@@ -1,3 +1,6 @@
+import ExtractService from "../../../src/service/extract.service";
+import ExtractRepository from "../../../src/repository/extract.repository";
+import { unmeteredSteps } from "../../helpers/step-runner";
 // Behaviour tests for the Onboarding flow, derived from the documented
 // contract (not the implementation) in:
 //   - .claude/rules/api-design.md (route table: "PATCH /onboarding — complete
@@ -85,12 +88,12 @@ afterAll(() => {
 const accountRepo = {
   getContext: jest.fn(),
   // Parameters declared so `mock.calls[n][1]` is the patch, not `never`.
-  writeContext: jest.fn(async (_accountId: string, _patch: Record<string, unknown>) => undefined),
+  writeContext: jest.fn(async (_accountId: string, _patch: Record<string, unknown>, _actorUserId: string) => undefined),
   // Reached by `adoptChannelIdentity`, which names the channel from whatever
   // onboarding just wrote. Null here means "no account document", so the naming
   // step no-ops and these tests stay about the context write.
   findById: jest.fn(async (_accountId: string) => null as Record<string, unknown> | null),
-  update: jest.fn(async (_accountId: string, _patch: Record<string, unknown>) => undefined),
+  update: jest.fn(async (_accountId: string, _patch: Record<string, unknown>, _actorUserId: string) => undefined),
 };
 const channelRepo = () => accountRepo as never;
 
@@ -106,7 +109,7 @@ describe("Onboarding — the required minimum (channel URL OR niche+targetAudien
   beforeEach(() => {
     jest.clearAllMocks();
     repo = new UserRepository() as jest.Mocked<UserRepository>;
-    service = new UserService(repo as never, channelRepo());
+    service = new UserService(repo as never, channelRepo(), unmeteredSteps, new ExtractService(new ExtractRepository()));
     repo.add = jest.fn().mockResolvedValue(undefined);
   });
 
@@ -117,7 +120,7 @@ describe("Onboarding — the required minimum (channel URL OR niche+targetAudien
     const result = await service.createOnboardingData(testOwner("user-1"), parsed as never);
 
     expect(accountRepo.writeContext).toHaveBeenCalledWith(
-      TEST_ACCOUNT_ID, parsed);
+      TEST_ACCOUNT_ID, parsed, "user-1");
     expect(result).toBe(parsed);
   });
 
@@ -128,7 +131,7 @@ describe("Onboarding — the required minimum (channel URL OR niche+targetAudien
     const result = await service.createOnboardingData(testOwner("user-1"), parsed as never);
 
     expect(accountRepo.writeContext).toHaveBeenCalledWith(
-      TEST_ACCOUNT_ID, parsed);
+      TEST_ACCOUNT_ID, parsed, "user-1");
     expect(result).toBe(parsed);
   });
 
@@ -152,7 +155,7 @@ describe("Onboarding — the required minimum (channel URL OR niche+targetAudien
     expect(accountRepo.update).toHaveBeenCalledWith(TEST_ACCOUNT_ID, {
       displayName: "MomentumX",
       handle: "@me",
-    });
+    }, "user-1");
   });
 
   it("neither path satisfied — the schema itself rejects before any service call would happen", () => {
@@ -172,13 +175,13 @@ describe("Onboarding prefill — persists NOTHING (suggestions only)", () => {
     repo = new UserRepository() as jest.Mocked<UserRepository>;
     repo.add = jest.fn();
     repo.update = jest.fn();
-    service = new UserService(repo as never, channelRepo());
+    service = new UserService(repo as never, channelRepo(), unmeteredSteps, new ExtractService(new ExtractRepository()));
   });
 
   it("never touches the user repository, on a resolvable channel", async () => {
     mockResolveChannel.mockResolvedValue({ id: "chan-1", description: "", titles: [] });
 
-    await service.prefillFromChannel("https://youtube.com/@x");
+    await service.prefillFromChannel("https://youtube.com/@x", { userId: "user-1", accountId: "account-1" });
 
     expect(accountRepo.writeContext).not.toHaveBeenCalled();
     expect(accountRepo.writeContext).not.toHaveBeenCalled();
@@ -187,7 +190,7 @@ describe("Onboarding prefill — persists NOTHING (suggestions only)", () => {
   it("never touches the user repository, even when channel resolution fails entirely", async () => {
     mockResolveChannel.mockResolvedValue(null);
 
-    await service.prefillFromChannel("https://youtube.com/@x");
+    await service.prefillFromChannel("https://youtube.com/@x", { userId: "user-1", accountId: "account-1" });
 
     expect(accountRepo.writeContext).not.toHaveBeenCalled();
     expect(accountRepo.writeContext).not.toHaveBeenCalled();
@@ -201,7 +204,7 @@ describe("Refresh-context — a source failure never blanks stored enrichment (r
   beforeEach(() => {
     jest.clearAllMocks();
     repo = new UserRepository() as jest.Mocked<UserRepository>;
-    service = new UserService(repo as never, channelRepo());
+    service = new UserService(repo as never, channelRepo(), unmeteredSteps, new ExtractService(new ExtractRepository()));
     repo.update = jest.fn().mockResolvedValue(undefined);
   });
 
@@ -253,4 +256,14 @@ describe("Refresh-context — a source failure never blanks stored enrichment (r
 
     expect(result.completeness.score).toBeGreaterThan(0);
   });
+});
+
+it("profile excludes snapshots and legacy context while preserving identity and current channel", async () => {
+  const repo = new UserRepository();
+  repo.get = jest.fn().mockResolvedValue({ name: "Ada", email: "ada@example.com", stats: { ideas: 9 }, lastActiveAccountId: "active", niche: "Old channel", websiteContent: "Old scrape", legacyChannelSnapshot: { fields: { niche: "Private old context" } } });
+  const accounts = fakeAccountRepo({ niche: "Current channel" });
+  const result = await new UserService(repo, accounts, unmeteredSteps, new ExtractService(new ExtractRepository())).getProfile(testOwner("uid"));
+  expect(result).toMatchObject({ uid: "uid", name: "Ada", email: "ada@example.com", stats: { ideas: 9 }, niche: "Current channel", lastActiveAccountId: "active" });
+  expect(result).not.toHaveProperty("legacyChannelSnapshot");
+  expect(result).not.toHaveProperty("websiteContent");
 });

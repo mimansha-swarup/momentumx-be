@@ -324,6 +324,9 @@ describe("HooksService — generate (idempotency, lock, rollback)", () => {
     mockVpService.startStep = jest.fn().mockResolvedValue(undefined) as any;
     mockVpService.abandonStep = jest.fn().mockResolvedValue(undefined) as any;
     mockVpService.linkResource = jest.fn().mockResolvedValue(undefined) as any;
+    mockVpService.clearSelectedHook = jest.fn().mockResolvedValue(undefined);
+    mockVpService.markStale = jest.fn().mockResolvedValue(undefined);
+    mockVpService.markPackagingDocumentStale = jest.fn().mockResolvedValue(undefined);
     mockRepo.findById = jest.fn();
     mockRepo.save = jest.fn().mockResolvedValue(mockBatch);
   });
@@ -339,9 +342,32 @@ describe("HooksService — generate (idempotency, lock, rollback)", () => {
     expect(mockRepo.save).not.toHaveBeenCalled();
   });
 
+  it("fences every missing-batch recovery write with the same reservation", async () => {
+    const reservation = { id: "reservation" };
+    mockVpService.getById.mockResolvedValue(makeProj({ hooksId: "missing" }) as never);
+    mockRepo.findById.mockResolvedValue(null);
+    service = new HooksService(mockRepo, mockVpService, undefined, {
+      run: async (_spec: unknown, work: (charge: unknown) => unknown) => work(reservation),
+    } as never, fakeAccountRepo());
+    await service.generate(testOwner("user-1"), "proj-1", "saved script");
+    expect(mockRepo.save).toHaveBeenCalledWith(expect.any(Object), reservation);
+    expect(mockVpService.clearSelectedHook).toHaveBeenCalledWith("proj-1", testOwner("user-1"), reservation);
+    expect(mockVpService.markStale).toHaveBeenCalledWith("proj-1", "hooks", reservation);
+    expect(mockVpService.markPackagingDocumentStale).toHaveBeenCalledWith("proj-1", "hooks_regenerated", reservation);
+    expect(mockVpService.linkResource).toHaveBeenCalledWith("proj-1", "hooks", "hooks-1", testOwner("user-1"), reservation);
+  });
+
+  it("does not link replacement hooks when the downstream invalidation fails", async () => {
+    mockVpService.getById.mockResolvedValue(makeProj({ hooksId: "missing" }) as never);
+    mockRepo.findById.mockResolvedValue(null);
+    mockVpService.markPackagingDocumentStale.mockRejectedValue(new Error("Storage unavailable"));
+    await expect(service.generate(testOwner("user-1"), "proj-1", "saved script")).rejects.toThrow("Storage unavailable");
+    expect(mockVpService.linkResource).not.toHaveBeenCalled();
+  });
+
   // The lock and the rollback moved into the generation seam (Phase 01b).
   //
-  // The lock ITSELF is tested in `tests/unit/repository/step-lock.behaviour.test.ts`
+  // The lock ITSELF is tested in `tests/unit/repository/billing.repository.behaviour.test.ts`
   // against the real transaction — asserting a 409 here would only assert the
   // status code this file's own fake throws, which is what the earlier version of
   // this test did. What belongs here is the service's half of the contract: when
@@ -360,7 +386,7 @@ describe("HooksService — generate (idempotency, lock, rollback)", () => {
       mockRepo,
       mockVpService,
       undefined,
-      makeTestStepRunner({ project: inFlight as never }),
+      makeTestStepRunner({ project: inFlight as never, reject: new Error("Generation already in progress") }),
       fakeAccountRepo()
     );
 

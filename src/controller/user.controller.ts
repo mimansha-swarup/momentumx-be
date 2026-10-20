@@ -1,3 +1,4 @@
+import { publicProfile } from "../utlils/public-response.js";
 import { Request, Response } from "express";
 import UserService from "../service/user.service.js";
 import { asyncHandler } from "../middleware/async_handler.js";
@@ -22,14 +23,14 @@ class UserController {
     );
     res.sendSuccess({
       message: "Onboarded successfully",
-      data: { payload },
+      data: { payload: publicProfile(payload) },
     });
   });
 
   // Body validated by `validate(prefillSchema)` — channelUrl is a valid YouTube
   // channel URL. Returns inferred suggestions (not persisted).
   prefill = asyncHandler(async (req: Request, res: Response) => {
-    const data = await this.service.prefillFromChannel(req.body.channelUrl);
+    const data = await this.service.prefillFromChannel(req.body.channelUrl, ownerOf(req));
     res.sendSuccess({
       message: "Prefill suggestions generated",
       data,
@@ -41,7 +42,7 @@ class UserController {
     const payload = await this.service.refreshContext(ownerOf(req));
     res.sendSuccess({
       message: "Context refreshed successfully",
-      data: { ...payload },
+      data: publicProfile(payload),
     });
   });
 
@@ -50,7 +51,7 @@ class UserController {
 
     res.sendSuccess({
       message: "Fetched onboarding data successfully",
-      data: { ...(payload ?? {}) },
+      data: publicProfile(payload),
     });
   });
 
@@ -59,7 +60,7 @@ class UserController {
 
     res.sendSuccess({
       message: "Profile updated successfully",
-      data: { payload },
+      data: { payload: publicProfile(payload) },
     });
   });
 }

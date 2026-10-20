@@ -1,3 +1,4 @@
+import { unmeteredSteps } from "../../helpers/step-runner";
 // Paging through ideas — including the search case, which is a DIFFERENT ordering
 // and therefore a different cursor.
 //
@@ -64,7 +65,7 @@ const makeService = (docs: unknown[]) => {
     docs.slice(0, limit)
   ) as unknown as typeof repo.getIdeas;
   const userRepo = new (UserRepository as jest.MockedClass<typeof UserRepository>)() as jest.Mocked<UserRepository>;
-  return { service: new ContentService(repo, userRepo, {} as never, fakeAccountRepo()), repo };
+  return { service: new ContentService(repo, userRepo, {} as never, fakeAccountRepo(), undefined, unmeteredSteps), repo };
 };
 
 describe("getPaginatedUsersIdeas — the cursor must match the ordering the page used", () => {

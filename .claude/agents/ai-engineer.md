@@ -28,7 +28,7 @@ Treat every prompt change as a product decision: the goal is output a real YouTu
 ## Models and Configs
 
 ```
-gemini-3.5-flash      → all text/content generation (titles, scripts, packaging)
+gemini-3.8-flash      → all text/content generation (titles, scripts, packaging)
 gemini-embedding-001  → embeddings only (topics for KMeans clustering)
 ```
 

@@ -1,15 +1,19 @@
+import { generationWrite } from "./generation-guard.js";
 import { isDocumentId } from "../utlils/firestore-id.js";
 import { db, firebase } from "../config/firebase.js";
 class HooksRepository {
     constructor() {
-        this.save = async (data) => {
+        this.save = async (data, charge) => {
             const docRef = this.db.collection(this.collection).doc();
             const doc = {
                 ...data,
                 id: docRef.id,
                 createdAt: firebase.firestore.FieldValue.serverTimestamp(),
             };
-            await docRef.set(doc);
+            if (charge)
+                await generationWrite(charge, tx => tx.set(docRef, doc));
+            else
+                await docRef.set(doc);
             return doc;
         };
         this.findById = async (hooksId) => {
@@ -23,8 +27,12 @@ class HooksRepository {
                 return null;
             return doc.data();
         };
-        this.update = async (hooksId, data) => {
-            await this.db.collection(this.collection).doc(hooksId).update(data);
+        this.update = async (hooksId, data, charge) => {
+            const ref = this.db.collection(this.collection).doc(hooksId);
+            if (charge)
+                await generationWrite(charge, tx => tx.update(ref, data));
+            else
+                await ref.update(data);
         };
         this.db = db;
         this.collection = "hooks" /* COLLECTIONS.HOOKS */;

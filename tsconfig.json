@@ -13,14 +13,24 @@
 {
   "compilerOptions": {
     "target": "ES2020",
+    // `lib` raised WITHOUT raising `target`. This is what makes Object.hasOwn and
+    // Error(msg, { cause }) available — both were worked around earlier in ways that
+    // cost real clarity. Raising `target` to ES2022 instead also typechecks, but it
+    // flips `useDefineForClassFields`, which changes class-field initialisation
+    // semantics (order, inherited setters, own properties) and rewrote 37 of 90
+    // emitted files. `lib` alone changes the emitted output by nothing.
+    "lib": ["ES2022"],
     "module": "ESNext",
     "moduleResolution": "node",
     "allowSyntheticDefaultImports": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "outDir": "dist",
-    "strict": false,
-    "noImplicitAny": false,
+    // backend-standards.md: "Strict mode on — do not disable". These were BOTH
+    // false, so every `tsc --noEmit` that reported clean was checking loosely —
+    // a `const x: string = null` passed. src needed no changes to satisfy strict.
+    "strict": true,
+    "noImplicitAny": true,
     "skipLibCheck": true,
     "noUnusedLocals": false,
     "noUnusedParameters": false,
@@ -28,5 +38,10 @@
     "typeRoots": ["src/types", "./node_modules/@types"],
     "types": ["node", "express"],
   },
-  "include": ["src"]
+  // `scripts` was in NO tsconfig: legacy-channel.ts is reached transitively from a
+  // test, but legacy-channel-cli.ts and inventory-indexes.ts were unchecked entirely.
+  // They live here rather than in tsconfig.test.json because they are ESM — top-level
+  // await and import.meta need this config's "module": "ESNext".
+  // tsconfig.build.json narrows include to src/**/* so nothing extra is emitted.
+  "include": ["src", "scripts"]
 }

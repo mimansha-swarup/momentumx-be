@@ -57,6 +57,7 @@ type RouteRegistration = {
   routePath: string;
   handler: string; // bare controller method name
   validated: boolean;
+  inlineBodyReader: boolean;
 };
 
 const collectRoutes = (): RouteRegistration[] => {
@@ -99,6 +100,7 @@ const collectRoutes = (): RouteRegistration[] => {
         routePath: pathMatch[1],
         handler: handlerRef.split(".").pop() ?? "",
         validated: /validate\s*\(/.test(rest),
+        inlineBodyReader: /\breq\.body\b/.test(rest),
       });
     }
   }
@@ -134,7 +136,7 @@ describe("validation coverage — every body-reading route mounts a schema", () 
     expect(routes.length).toBe(countRegistrations());
   });
 
-  const bodyRoutes = routes.filter((r) => bodyReaders.has(r.handler));
+  const bodyRoutes = routes.filter((r) => r.inlineBodyReader || bodyReaders.has(r.handler));
 
   it("finds routes whose controller reads req.body", () => {
     expect(bodyRoutes.length).toBeGreaterThan(0);
@@ -150,7 +152,7 @@ describe("validation coverage — every body-reading route mounts a schema", () 
   // usually a copy-paste, occasionally a sign the controller stopped reading input.
   it("mounts no schema on a route that never reads a body", () => {
     const pointless = routes
-      .filter((r) => r.validated && !bodyReaders.has(r.handler))
+      .filter((r) => r.validated && !r.inlineBodyReader && !bodyReaders.has(r.handler))
       .map(describeRoute);
 
     expect(pointless).toEqual([]);

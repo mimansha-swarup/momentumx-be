@@ -1,3 +1,7 @@
+import ScriptController from "../../src/controller/script.controller";
+import { ServiceUnavailable } from "../../src/utlils/errors";
+import StepRunner from "../../src/service/step-runner";
+import { unmeteredSteps } from "../helpers/step-runner";
 jest.mock("firebase-admin", () => ({
   apps: [],
   initializeApp: jest.fn(),
@@ -27,17 +31,19 @@ jest.mock("../../src/utlils/ai", () => ({
   collectJson: jest.requireActual("../../src/utlils/ai").collectJson,
   generateContent: jest.fn(),
   generateStreamingContent: jest.fn(),
+  generateTextContent: jest.fn(),
 }));
 
 import ContentService from "../../src/service/content.service";
 import ContentRepository from "../../src/repository/content.repository";
 import UserRepository from "../../src/repository/user.repository";
-import { generateStreamingContent } from "../../src/utlils/ai";
+import { generateStreamingContent, generateTextContent } from "../../src/utlils/ai";
 import { makeTestAccountService, TEST_ACCOUNT_ID, testOwner, OTHER_ACCOUNT_ID, fakeAccountRepo } from "../helpers/account";
 
 jest.mock("../../src/repository/content.repository");
 jest.mock("../../src/repository/user.repository");
 
+const mockGenerateText = generateTextContent as jest.MockedFunction<typeof generateTextContent>;
 const mockGenerateStreaming = generateStreamingContent as jest.MockedFunction<typeof generateStreamingContent>;
 
 function makeScriptStream(text: string) {
@@ -65,11 +71,12 @@ describe("ContentService — regenerateScript", () => {
   beforeEach(() => {
     mockContentRepo = new MockContentRepo() as jest.Mocked<ContentRepository>;
     mockUserRepo = new MockUserRepo() as jest.Mocked<UserRepository>;
-    service = new ContentService(mockContentRepo, mockUserRepo, mockVpService as any, fakeAccountRepo());
+    service = new ContentService(mockContentRepo, mockUserRepo, mockVpService as any, fakeAccountRepo(), undefined, unmeteredSteps);
     mockContentRepo.getScriptById = jest.fn().mockResolvedValue(scriptDoc);
+    mockContentRepo.getIdea = jest.fn().mockResolvedValue(undefined);
     mockUserRepo.get = jest.fn().mockResolvedValue(userRecord);
     mockContentRepo.editScript = jest.fn().mockResolvedValue(undefined);
-    mockGenerateStreaming.mockResolvedValue(makeScriptStream("Generated script text."));
+    mockGenerateText.mockResolvedValue({ response: { text: () => "Generated script text.", candidates: [{ finishReason: "STOP" }] } } as any);
     mockVpService.getById.mockResolvedValue({ id: "proj-1" });
     mockVpService.markStale.mockResolvedValue(undefined);
     mockVpService.markPackagingDocumentStale.mockResolvedValue(undefined);
@@ -77,6 +84,32 @@ describe("ContentService — regenerateScript", () => {
 
   afterEach(() => {
     jest.clearAllMocks();
+  });
+
+  it("regeneration uses the linked idea's current concept and type without exposing internal fields", async () => {
+    mockContentRepo.getScriptById.mockResolvedValue({ ...scriptDoc, ideaId: "idea-1" } as any);
+    mockContentRepo.getIdea.mockResolvedValue({ accountId: TEST_ACCOUNT_ID, title: "Current title", concept: "Compare invoice workflows", ideaType: "long", evidence: "Supplied signal", embedding: [12345] } as any);
+    await service.regenerateScript(testOwner("user-1"), "script-1");
+    const prompt = mockGenerateText.mock.calls[0][1];
+    expect(prompt).toContain("Current title");
+    expect(prompt).toContain('"concept":"Compare invoice workflows"');
+    expect(prompt).toContain('"type":"long"');
+    expect(prompt).toContain('"evidence":"Supplied signal"');
+    expect(prompt).not.toContain("12345");
+  });
+
+  it("rejects a cross-channel linked idea before regeneration", async () => {
+    mockContentRepo.getScriptById.mockResolvedValue({ ...scriptDoc, ideaId: "foreign" } as any);
+    mockContentRepo.getIdea.mockResolvedValue({ accountId: OTHER_ACCOUNT_ID, concept: "private" } as any);
+    await expect(service.regenerateScript(testOwner("user-1"), "script-1")).rejects.toMatchObject({ statusCode: 403 });
+    expect(mockGenerateText).not.toHaveBeenCalled();
+  });
+
+  it("keeps legacy scripts usable when their source idea has been removed", async () => {
+    mockContentRepo.getScriptById.mockResolvedValue({ ...scriptDoc, ideaId: "deleted" } as any);
+    mockContentRepo.getIdea.mockResolvedValue(undefined);
+    await service.regenerateScript(testOwner("user-1"), "script-1");
+    expect(mockGenerateText.mock.calls[0][1]).toContain("My Title");
   });
 
   it("throws 404 if script not found", async () => {
@@ -134,7 +167,7 @@ describe("ContentService — exportScript", () => {
   beforeEach(() => {
     mockContentRepo = new MockContentRepo() as jest.Mocked<ContentRepository>;
     mockUserRepo = new MockUserRepo() as jest.Mocked<UserRepository>;
-    service = new ContentService(mockContentRepo, mockUserRepo, {} as any, fakeAccountRepo());
+    service = new ContentService(mockContentRepo, mockUserRepo, {} as any, fakeAccountRepo(), undefined, unmeteredSteps);
   });
 
   it("throws 404 if script not found", async () => {
@@ -170,7 +203,7 @@ describe("ContentService — edit whitelist & SSE ownership guard", () => {
   beforeEach(() => {
     mockContentRepo = new MockContentRepo() as jest.Mocked<ContentRepository>;
     mockUserRepo = new MockUserRepo() as jest.Mocked<UserRepository>;
-    service = new ContentService(mockContentRepo, mockUserRepo, {} as any, fakeAccountRepo());
+    service = new ContentService(mockContentRepo, mockUserRepo, {} as any, fakeAccountRepo(), undefined, unmeteredSteps);
   });
 
   afterEach(() => jest.clearAllMocks());
@@ -220,7 +253,7 @@ describe("ContentService — edit whitelist & SSE ownership guard", () => {
       completeStep: jest.fn(),
       linkResource: jest.fn(),
     };
-    service = new ContentService(mockContentRepo, mockUserRepo, mockVp as any, fakeAccountRepo());
+    service = new ContentService(mockContentRepo, mockUserRepo, mockVp as any, fakeAccountRepo(), undefined, unmeteredSteps);
     mockUserRepo.get = jest.fn().mockResolvedValue({});
     const res = { setHeader: jest.fn(), flushHeaders: jest.fn(), write: jest.fn(), end: jest.fn() };
     const err = await service.generateScripts(testOwner("user-1"), "proj-1", res as any).catch((e) => e);
@@ -263,7 +296,7 @@ describe("ContentService — generateScripts project-scoped script id & FKs", ()
       linkResource: jest.fn().mockResolvedValue(undefined),
       abandonStep: jest.fn().mockResolvedValue(undefined),
     };
-    service = new ContentService(mockContentRepo, mockUserRepo, mockVp as any, fakeAccountRepo());
+    service = new ContentService(mockContentRepo, mockUserRepo, mockVp as any, fakeAccountRepo(), undefined, unmeteredSteps);
     mockUserRepo.get = jest.fn().mockResolvedValue({ brandName: "B", targetAudience: "a", competitors: [], niche: "n", websiteContent: "c" });
     mockUserRepo.update = jest.fn().mockResolvedValue(undefined);
     mockContentRepo.getIdea = jest.fn().mockResolvedValue({ id: "idea-1", createdBy: "user-1", accountId: TEST_ACCOUNT_ID, title: "My Idea" });
@@ -274,6 +307,16 @@ describe("ContentService — generateScripts project-scoped script id & FKs", ()
   });
 
   afterEach(() => jest.clearAllMocks());
+
+  it("passes the full source idea to initial generation, preserving literal placeholders", async () => {
+    mockVp.getById.mockResolvedValue(makeProj());
+    mockContentRepo.getIdea.mockResolvedValue({ accountId: TEST_ACCOUNT_ID, title: "Shortcut", concept: "Explain {targetAudience} literally", ideaType: "short", evidence: "Observed interest" } as any);
+    await service.generateScripts(testOwner("user-1"), "proj-1", makeRes() as any);
+    const prompt = mockGenerateStreaming.mock.calls[0][1];
+    expect(prompt).toContain('"concept":"Explain {targetAudience} literally"');
+    expect(prompt).toContain('"type":"short"');
+    expect(prompt).toContain('"evidence":"Observed interest"');
+  });
 
   it("saves a script whose id !== ideaId and carries ideaId + videoProjectId FKs (first generation)", async () => {
     mockVp.getById.mockResolvedValue(makeProj());
@@ -352,10 +395,71 @@ describe("ContentService — generateScripts project-scoped script id & FKs", ()
     );
     const res = makeRes();
 
+    (service as any).steps = { run: async () => { throw Object.assign(new Error("Generation already in progress"), { statusCode: 409 }); } };
     const err = await service.generateScripts(testOwner("user-1"), "proj-1", res as any).catch((e) => e);
 
     expect(err.statusCode).toBe(409);
     expect(res.flushHeaders).not.toHaveBeenCalled();
     expect(mockGenerateStreaming).not.toHaveBeenCalled();
+  });
+  it.each(["empty", "connection", "partial"])("charges nothing for a %s script stream, and persists nothing", async failure => {
+    mockVp.getById.mockResolvedValue(makeProj());
+    const charge = { token: "reservation", debited: true };
+    const billing = { reserve: jest.fn().mockResolvedValue(charge), settle: jest.fn().mockResolvedValue(true) };
+    (service as any).steps = new StepRunner(billing as any);
+    if (failure === "connection") mockGenerateStreaming.mockRejectedValueOnce(new Error("Connection failed"));
+    else mockGenerateStreaming.mockResolvedValueOnce({ stream: (async function* () {
+      if (failure === "partial") { yield { text: () => "partial" }; throw new Error("Stream interrupted"); }
+    })() } as any);
+    const res = makeRes();
+    await expect(service.generateScripts(testOwner("user-1"), "proj-1", res as any)).rejects.toMatchObject({ detail: { charged: false } });
+    expect(billing.settle).toHaveBeenCalledWith(charge, true);
+    expect(mockContentRepo.saveScript).not.toHaveBeenCalled();
+    // Controller delivers generation_error + DONE after the refund is settled.
+    expect(res.end).not.toHaveBeenCalled();
+  });
+
+  it("checks credits before opening SSE, while replay bypasses charging", async () => {
+    mockVp.getById.mockResolvedValue(makeProj());
+    const billing = { reserve: jest.fn().mockRejectedValue(Object.assign(new Error("No credits"), { statusCode: 402 })), settle: jest.fn() };
+    (service as any).steps = new StepRunner(billing as any);
+    const res = makeRes();
+    await expect(service.generateScripts(testOwner("user-1"), "proj-1", res as any)).rejects.toMatchObject({ statusCode: 402 });
+    expect(res.flushHeaders).not.toHaveBeenCalled();
+    expect(mockGenerateStreaming).not.toHaveBeenCalled();
+    billing.reserve.mockClear();
+    mockVp.getById.mockResolvedValue(makeProj({ scriptId: "existing" }));
+    mockContentRepo.getScriptById.mockResolvedValue({ script: "Already saved" } as any);
+    await service.generateScripts(testOwner("user-1"), "proj-1", makeRes() as any);
+    expect(billing.reserve).not.toHaveBeenCalled();
+  });
+
+  it("still charges a persisted script when lifetime stats fail", async () => {
+    mockVp.getById.mockResolvedValue(makeProj());
+    mockUserRepo.update.mockRejectedValueOnce(new Error("Stats unavailable"));
+    const charge = { debited: true };
+    const billing = { reserve: jest.fn().mockResolvedValue(charge), settle: jest.fn().mockResolvedValue(true) };
+    (service as any).steps = new StepRunner(billing as any);
+    await expect(service.generateScripts(testOwner("user-1"), "proj-1", makeRes() as any)).resolves.toBe("Streamed script body.");
+    expect(billing.settle).toHaveBeenCalledWith(charge, false);
+    expect(billing.settle).not.toHaveBeenCalledWith(charge, true);
+  });
+
+});
+
+describe("SSE error disclosure", () => {
+  it.each([false, true])("masks unexpected errors after headersSent=%s", async headersSent => {
+    const service = { generateScripts: jest.fn().mockRejectedValue(new Error("private driver credentials")) };
+    const res = { headersSent, write: jest.fn(), end: jest.fn(), sendError: jest.fn() };
+    await new ScriptController(service as any).generateScript({ params: { projectId: "p" }, userId: "u", accountId: "a" } as any, res as any);
+    expect(JSON.stringify([...res.write.mock.calls, ...res.sendError.mock.calls])).not.toContain("private driver");
+    expect(JSON.stringify([...res.write.mock.calls, ...res.sendError.mock.calls])).toContain("Failed to generate script");
+  });
+  it("forwards only proven charge metadata for a curated streamed failure", async () => {
+    const service = { generateScripts: jest.fn().mockRejectedValue(ServiceUnavailable("Try again", { charged: false, internal: "private" })) };
+    const res = { headersSent: true, write: jest.fn(), end: jest.fn() };
+    await new ScriptController(service as any).generateScript({ params: { projectId: "p" }, userId: "u", accountId: "a" } as any, res as any);
+    expect(res.write.mock.calls[0][0]).toContain('"charged":false');
+    expect(res.write.mock.calls[0][0]).not.toContain("private");
   });
 });

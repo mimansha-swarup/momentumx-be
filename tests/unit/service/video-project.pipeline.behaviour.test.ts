@@ -228,7 +228,7 @@ describe("VideoProjectService — pipeline state machine (behaviour)", () => {
     // and never tells you the bug is gone. `it.failing` passes only while the
     // defect exists and fails the moment someone fixes it — which is the prompt
     // to promote it to a normal `it(...)`.
-    it.failing("re-visiting (and even completing) an earlier step never rewinds currentStep", async () => {
+    it("re-visiting (and even completing) an earlier step never rewinds currentStep", async () => {
       repo.findById.mockResolvedValue(
         makeProject({
           currentStep: "packaging",
@@ -400,7 +400,7 @@ describe("VideoProjectService — pipeline state machine (behaviour)", () => {
   // reopened under it.
   // -------------------------------------------------------------------------
   describe("known defect — overallStatus is not recomputed by reopenTitleStep / clearSelectedHook", () => {
-    it.failing("reopenTitleStep recomputes overallStatus back to 'in_progress' when the project was 'completed'", async () => {
+    it("reopenTitleStep recomputes overallStatus back to 'in_progress' when the project was 'completed'", async () => {
       repo.findById.mockResolvedValue(makeProject({ overallStatus: "completed", pipeline: allCompletedPipeline() }));
 
       await service.reopenTitleStep("proj-1", testOwner("user-1"));
@@ -410,7 +410,7 @@ describe("VideoProjectService — pipeline state machine (behaviour)", () => {
       expect(written.overallStatus).toBe("in_progress");
     });
 
-    it.failing("clearSelectedHook recomputes overallStatus back to 'in_progress' when the project was 'completed'", async () => {
+    it("clearSelectedHook recomputes overallStatus back to 'in_progress' when the project was 'completed'", async () => {
       repo.findById.mockResolvedValue(
         makeProject({
           overallStatus: "completed",

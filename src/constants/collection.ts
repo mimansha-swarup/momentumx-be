@@ -10,10 +10,11 @@ export const enum COLLECTIONS {
   // Multi-account (Phase 02). Declared with the schema rather than when the
   // first repository needs them — firestore-conventions.md requires every
   // collection name to live here, and a name added later gets hardcoded in four
-  // places first. Nothing reads or writes these yet.
+  // places first. Repositories now use these for tenancy, billing and sharing.
   ACCOUNTS = "accounts",
   BILLING = "billing",
   INVITES = "invites",
+  YOUTUBE_CACHE = "youtubeCache",
 }
 
 /**
@@ -26,6 +27,8 @@ export const enum SUBCOLLECTIONS {
   CONTEXT = "context",
   /** accounts/{accountId}/usage/{YYYY-MM} — month-keyed counters (Phase 08). */
   USAGE = "usage",
+  /** One timestamp per changed member; prevents stale invitations restoring access. */
+  MEMBERSHIP_CHANGES = "membershipChanges",
 }
 
 /** The single document id inside `accounts/{accountId}/context`. */

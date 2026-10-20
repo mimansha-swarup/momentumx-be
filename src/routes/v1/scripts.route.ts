@@ -1,3 +1,4 @@
+import { requireRole } from "../../middleware/role.js";
 import { Router } from "express";
 import { authMiddleware, sseAuthMiddleware } from "../../middleware/auth.js";
 import {
@@ -17,6 +18,7 @@ router.get(
   "/stream/:projectId",
   sseAuthMiddleware,
   resolveAccountFromProject,
+  requireRole("editor"),
   scriptController.generateScript
 );
 
@@ -24,9 +26,9 @@ router.use(authMiddleware);
 router.use(accountMiddleware);
 
 router.get("/", scriptController.retrieveScripts);
-router.patch("/edit/:scriptId", validate(editScriptSchema), scriptController.editScript);
+router.patch("/edit/:scriptId", requireRole("editor"), validate(editScriptSchema), scriptController.editScript);
 router.get("/:scriptId/export", scriptController.exportScript);
-router.post("/:scriptId/regenerate", scriptController.regenerateScript);
+router.post("/:scriptId/regenerate", requireRole("editor"), scriptController.regenerateScript);
 router.get("/:scriptId", scriptController.retrieveScriptById);
 
 export default router;

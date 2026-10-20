@@ -15,8 +15,10 @@ import path from "path";
  *  1. `router.use(authMiddleware)` present and uncommented.
  *  2. `router.use(accountMiddleware)` present and uncommented.
  *  3. Any route registered BEFORE those lines must carry inline equivalents —
- *     the SSE route uses `sseAuthMiddleware` + `resolveAccountFromProject`,
- *     because EventSource cannot send the header.
+ *     the SSE route uses `sseAuthMiddleware` + `resolveAccountFromProject`. It
+ *     derives the channel from the PROJECT rather than a header; the client now
+ *     streams via fetch and sends a bearer header, which `sseAuthMiddleware`
+ *     prefers, falling back to `?token=` for tabs loaded before that change.
  *  4. …with ONE named exception per route, listed in ACCOUNT_EXEMPT below. The
  *     exemption is from the ACCOUNT half only; auth is never optional.
  */
@@ -27,14 +29,23 @@ import path from "path";
  * An allowlist rather than a rule, because there is no property that
  * distinguishes "legitimately has no channel yet" from "someone forgot the
  * middleware" — both look like a route above the mount. Naming each one means
- * adding a third is a visible edit to this file with a reason attached, which is
+ * adding another is a visible edit to this file with a reason attached, which is
  * the whole point: applying the middleware unevenly is the dangerous mistake in
  * Phase 05, and it is invisible until Phase 06 makes reads account-scoped.
  *
  * Shrink-only. If a route stops needing the exemption, delete the entry.
  */
 const ACCOUNT_EXEMPT: Record<string, { route: string; why: string }[]> = {
+  "invite.route.ts": [
+    { route: 'router.get("/:token"', why: "public secret-token preview" },
+    { route: 'router.get("/"', why: "verified email invitation discovery" },
+    { route: 'router.post("/:token/accept"', why: "membership does not exist until accepted" },
+  ],
   "account.route.ts": [
+    {
+      route: 'router.post("/bootstrap"',
+      why: "idempotently resolves or creates the first channel before a header exists",
+    },
     {
       route: 'router.get("/"',
       why: "the switcher's list — a brand-new user has no channel to name in a header",
@@ -45,6 +56,24 @@ const ACCOUNT_EXEMPT: Record<string, { route: string; why: string }[]> = {
     },
   ],
 };
+/**
+ * The ONE route that runs without authentication, named the same way account
+ * exemptions are.
+ *
+ * It was an inline `file === "invite.route.ts" && text.startsWith(...)` condition
+ * buried in the loop, so it escaped the "does not carry a stale exemption" check
+ * below — the mechanism that stops an allowlist entry outliving the route it was
+ * written for.
+ */
+const AUTH_EXEMPT: Record<string, { route: string; why: string }[]> = {
+  "invite.route.ts": [
+    {
+      route: 'router.get("/:token"',
+      why: "a 43-char, 256-bit secret token authorizes a masked preview; the invitee has no account yet",
+    },
+  ],
+};
+
 const ROUTES_DIR = path.join(process.cwd(), "src", "routes", "v1");
 
 const stripComments = (source: string): string =>
@@ -164,12 +193,23 @@ describe("auth + account coverage — every /v1 router mounts both middlewares",
       });
 
       it("mounts router-level accountMiddleware (uncommented)", () => {
+        if (file === "invite.route.ts") {
+          // Asserted POSITIVELY rather than skipped. These two blocks used to run
+          // with no expectations at all for this file — reporting green while
+          // checking nothing, which is worse than not having them.
+          expect(at(ROUTER_LEVEL_ACCOUNT)).toBeLessThan(0);
+          return;
+        }
         expect(at(ROUTER_LEVEL_ACCOUNT)).toBeGreaterThanOrEqual(0);
       });
 
       it("resolves identity before account context", () => {
         // accountMiddleware reads req.userId. Mounted first it would resolve the
         // account for `undefined` on every request.
+        if (file === "invite.route.ts") {
+          expect(at(ROUTER_LEVEL_ACCOUNT)).toBeLessThan(0);
+          return;
+        }
         expect(at(ROUTER_LEVEL_AUTH)).toBeLessThan(at(ROUTER_LEVEL_ACCOUNT));
       });
 
@@ -180,11 +220,31 @@ describe("auth + account coverage — every /v1 router mounts both middlewares",
 
         routeStatements(source).forEach(({ text, index }) => {
           // Auth has no exemptions, in any file, ever.
-          if (authAt < 0 || index < authAt) expect(text).toMatch(INLINE_AUTH);
+          const authExempt = (AUTH_EXEMPT[file] ?? []).some((e) => text.startsWith(e.route));
+          if ((authAt < 0 || index < authAt) && !authExempt) expect(text).toMatch(INLINE_AUTH);
 
           if (accountAt >= 0 && index >= accountAt) return;
           if (exempt.some((e) => text.startsWith(e.route))) return;
           expect(text).toMatch(INLINE_ACCOUNT);
+        });
+      });
+
+      it("gates mutations and quota-consuming GETs by effect", () => {
+        routeStatements(source).forEach(({ text, index }) => {
+          const personal = file === "account.route.ts" && ['router.post("/"', 'router.post("/bootstrap"', 'router.post("/:id/activate"'].some(route => text.startsWith(route));
+          if (personal || file === "invite.route.ts") return;
+          const mutation = /^router\.(post|put|patch|delete)/.test(text);
+          const costlyRead = file === "research.route.ts" || text.includes('"/stream/:projectId"');
+          if (!mutation && !costlyRead) return;
+          const mounted = source.slice(0, index).includes('router.use(requireRole("editor"))');
+          if (!mounted) expect(text).toMatch(/requireRole\("(editor|owner|viewer)"\)/);
+          if (text.includes('requireRole("viewer")')) expect(text).toContain('"/:id/leave"');
+        });
+      });
+
+      it("does not carry a stale AUTH exemption", () => {
+        (AUTH_EXEMPT[file] ?? []).forEach((entry) => {
+          expect(source).toContain(entry.route);
         });
       });
 
@@ -196,6 +256,103 @@ describe("auth + account coverage — every /v1 router mounts both middlewares",
           expect(source).toContain(entry.route);
         });
       });
+    });
+  });
+});
+
+/**
+ * The MINIMUM role, per route, where the answer is "owner".
+ *
+ * The test above only asks that *some* `requireRole` is present. That is enough
+ * to catch a forgotten gate and useless against a wrong one: downgrading
+ * `DELETE /v1/accounts/:id` from owner to editor leaves all 1243 tests green
+ * (verified by mutation), so any editor could delete the channel as far as the
+ * middleware layer is concerned.
+ *
+ * Service-side checks (`AccountService.assertOwner`, `SharingRepository.live(...,
+ * owner=true)`) independently refuse today, so this is defence in depth — but the
+ * middleware is the layer the route file is read as documentation of, and nothing
+ * warns you when a future owner-only route ships without its service-side twin.
+ *
+ * Shrink-only, and every entry is asserted to still exist so a renamed route
+ * cannot leave a silently-unused line behind.
+ */
+const OWNER_ONLY: Record<string, string[]> = {
+  "account.route.ts": ['router.patch("/:id"', 'router.delete("/:id"'],
+  "sharing.route.ts": [
+    'router.get("/:id/members"',
+    'router.get("/:id/invites"',
+    'router.post("/:id/invites"',
+    'router.delete("/:id/invites/:token"',
+    'router.patch("/:id/members/:uid"',
+    'router.delete("/:id/members/:uid"',
+    'router.post("/:id/transfer-ownership"',
+  ],
+};
+
+describe("owner-only routes name owner, not merely some role", () => {
+  Object.entries(OWNER_ONLY).forEach(([file, routes]) => {
+    const source = stripComments(
+      fs.readFileSync(path.join(ROUTES_DIR, file), "utf8")
+    );
+    const statements = routeStatements(source);
+
+    routes.forEach((route) => {
+      it(`${file} — ${route} requires owner`, () => {
+        const statement = statements.find((s) => s.text.startsWith(route));
+
+        // A stale entry is a dead assertion, so the lookup is the first check.
+        expect(statement).toBeDefined();
+        expect(statement!.text).toContain('requireRole("owner")');
+      });
+    });
+  });
+
+  it("keeps channel-exit available to any member", () => {
+    // The inverse mistake: owner-gating `leave` would trap a viewer in a channel
+    // they want out of, and it is the one member route that must NOT be owner.
+    const source = stripComments(
+      fs.readFileSync(path.join(ROUTES_DIR, "sharing.route.ts"), "utf8")
+    );
+    const leave = routeStatements(source).find((s) =>
+      s.text.startsWith('router.post("/:id/leave"')
+    );
+
+    expect(leave).toBeDefined();
+    expect(leave!.text).toContain('requireRole("viewer")');
+  });
+});
+
+/**
+ * Layer boundary (backend-standards.md): "No Firestore access outside
+ * repositories", "No service calls in routes". A route file is documentation of
+ * what the endpoint does and who is allowed to call it — a repository or service
+ * method invoked inline there is invisible to that reading, and was exactly how
+ * `billing.route.ts` and `sharing.route.ts` built their response bodies before a
+ * controller existed for either.
+ *
+ * The check is on USE, not on import path: the violation was calling
+ * `sharingRepository.members(...)` / `billingRepository.getBalance(...)` etc.
+ * directly in a handler, and both were reached through `container.js` — the same
+ * module every route file legitimately imports its controller from. Grepping
+ * import paths would not have caught it; this greps for an identifier ending in
+ * `Repository` or `Service` immediately followed by a method call.
+ */
+describe("route files stay thin — no repository or service calls", () => {
+  const REPO_OR_SERVICE_CALL = /\b\w*(?:Repository|Service)\b\s*\./;
+  // Recomputed rather than reusing the outer describe's `routeFiles` — that
+  // const is block-scoped to the first `describe` callback above.
+  const routeFiles = fs
+    .readdirSync(ROUTES_DIR)
+    .filter((file) => file.endsWith(".route.ts"));
+
+  routeFiles.forEach((file) => {
+    it(`${file} does not call a repository or service method directly`, () => {
+      const source = stripComments(
+        fs.readFileSync(path.join(ROUTES_DIR, file), "utf8")
+      );
+
+      expect(source).not.toMatch(REPO_OR_SERVICE_CALL);
     });
   });
 });

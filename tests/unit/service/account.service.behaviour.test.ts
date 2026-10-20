@@ -53,6 +53,7 @@ const make = (user: Record<string, unknown> | null, members: unknown[] = []) => 
 
   const repo = {
     findByMember: jest.fn().mockResolvedValue(members),
+    findById: jest.fn(async (id: string) => ({ id, memberUids: ["uid-123", "uid-a", "uid-b"] })),
     // Returns the id that WON the claim — normally the one it was handed.
     createWithContext: jest.fn(async (a: { id: string }) => {
       if (stored) stored.lastActiveAccountId = a.id;
@@ -402,12 +403,12 @@ describe("adoptChannelIdentity — a channel gets its name from onboarding", () 
     await adoptChannelIdentity(repo as never, "acc-1", {
       brandName: "Acme Tech",
       userName: "https://youtube.com/@acmetech",
-    });
+    }, "owner");
 
     expect(repo.update).toHaveBeenCalledWith("acc-1", {
       displayName: "Acme Tech",
       handle: "@acmetech",
-    });
+    }, "owner");
   });
 
   /**
@@ -426,10 +427,10 @@ describe("adoptChannelIdentity — a channel gets its name from onboarding", () 
 
     await adoptChannelIdentity(repo as never, "acc-1", {
       userName: "https://youtube.com/@cooking",
-    });
+    }, "owner");
 
     // The name it already has is untouched; only the handle is added.
-    expect(repo.update).toHaveBeenCalledWith("acc-1", { handle: "@cooking" });
+    expect(repo.update).toHaveBeenCalledWith("acc-1", { handle: "@cooking" }, "owner");
   });
 
   it("does not overwrite a handle the channel already has", async () => {
@@ -440,7 +441,7 @@ describe("adoptChannelIdentity — a channel gets its name from onboarding", () 
 
     await adoptChannelIdentity(repo as never, "acc-1", {
       userName: "https://youtube.com/@new",
-    });
+    }, "owner");
 
     expect(repo.update).not.toHaveBeenCalled();
   });
@@ -453,9 +454,9 @@ describe("adoptChannelIdentity — a channel gets its name from onboarding", () 
       update: jest.fn(async () => undefined),
     };
 
-    await adoptChannelIdentity(repo as never, "acc-1", { niche: "Cooking" });
+    await adoptChannelIdentity(repo as never, "acc-1", { niche: "Cooking" }, "owner");
 
-    expect(repo.update).toHaveBeenCalledWith("acc-1", { displayName: "Cooking" });
+    expect(repo.update).toHaveBeenCalledWith("acc-1", { displayName: "Cooking" }, "owner");
   });
 
   it("leaves a channel the owner renamed alone", async () => {
@@ -464,7 +465,7 @@ describe("adoptChannelIdentity — a channel gets its name from onboarding", () 
     // which is also why no "was this derived?" flag is needed.
     const repo = repoWith("My Cooking Channel");
 
-    await adoptChannelIdentity(repo as never, "acc-1", { brandName: "Acme Tech" });
+    await adoptChannelIdentity(repo as never, "acc-1", { brandName: "Acme Tech" }, "owner");
 
     expect(repo.update).not.toHaveBeenCalled();
   });
@@ -472,7 +473,7 @@ describe("adoptChannelIdentity — a channel gets its name from onboarding", () 
   it("leaves the placeholder rather than writing it back when nothing is usable", async () => {
     const repo = repoWith(PLACEHOLDER_CHANNEL_NAME);
 
-    await adoptChannelIdentity(repo as never, "acc-1", { targetAudience: "founders" });
+    await adoptChannelIdentity(repo as never, "acc-1", { targetAudience: "founders" }, "owner");
 
     expect(repo.update).not.toHaveBeenCalled();
   });
@@ -480,7 +481,7 @@ describe("adoptChannelIdentity — a channel gets its name from onboarding", () 
   it("does nothing when the account is gone", async () => {
     const repo = { findById: jest.fn(async () => null), update: jest.fn() };
 
-    await adoptChannelIdentity(repo as never, "acc-1", { brandName: "Acme" });
+    await adoptChannelIdentity(repo as never, "acc-1", { brandName: "Acme" }, "owner");
 
     expect(repo.update).not.toHaveBeenCalled();
   });

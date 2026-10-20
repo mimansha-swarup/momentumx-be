@@ -45,6 +45,13 @@ export const OTHER_ACCOUNT_ID = "acc-99999999-8888-4777-8666-555555555555";
  *   jest.mock("../../src/middleware/account", () =>
  *     require("../helpers/account").passthroughAccountMiddleware());
  */
+/**
+ * The role the passthrough hands to the route, mutable so a single test can act
+ * as a viewer without a second module mock. Defaults to owner, which is what
+ * every existing caller assumed.
+ */
+export const passthroughRole = { value: "owner" };
+
 export function passthroughAccountMiddleware(accountId = TEST_ACCOUNT_ID) {
   const pass = (
     req: { accountId?: string; role?: string },
@@ -52,12 +59,14 @@ export function passthroughAccountMiddleware(accountId = TEST_ACCOUNT_ID) {
     next: () => void
   ) => {
     req.accountId = accountId;
-    req.role = "owner";
+    req.role = passthroughRole.value;
     next();
   };
   return {
     ACCOUNT_HEADER: "x-account-id",
-    FALLBACK_ALLOWS_WRITES: true,
+    // Mirrors the real module (flipped in Phase 07). The passthrough above
+    // ignores it entirely — it is here so the mock's shape stays honest.
+    FALLBACK_ALLOWS_WRITES: false,
     accountMiddleware: pass,
     resolveAccountFromProject: pass,
     roleFor: () => "owner",

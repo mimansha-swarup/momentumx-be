@@ -1,3 +1,5 @@
+import StepRunner from "../../src/service/step-runner";
+import { unmeteredSteps } from "../helpers/step-runner";
 jest.mock("firebase-admin", () => ({
   apps: [],
   initializeApp: jest.fn(),
@@ -50,7 +52,7 @@ import ContentRepository from "../../src/repository/content.repository";
 import UserRepository from "../../src/repository/user.repository";
 import ResearchContextService from "../../src/service/research-context.service";
 import { generateContent } from "../../src/utlils/ai";
-import { formatCreatorsData } from "../../src/utlils/content";
+import { formatCreatorsData, formatGeneratedIdea, getClusteredTitles } from "../../src/utlils/content";
 import { IDEA_USER_PROMPT } from "../../src/constants/prompt";
 import { makeTestAccountService, testOwner, fakeAccountRepo } from "../helpers/account";
 
@@ -117,18 +119,58 @@ describe("ContentService.generateIdeas", () => {
       websiteContent: "",
       competitors: [],
     });
+    repo.batchSaveIdeas = jest.fn(async data => data) as any;
     userRepo.update = jest.fn().mockResolvedValue(undefined);
     researchContext.getIdeaSignals = jest.fn().mockResolvedValue("Live research signals:\nSome trend — 1.2M views");
     // Fresh stream per call — an async generator is single-use.
     mockGenerate.mockImplementation(async () => makeStream(IDEAS));
-    service = new ContentService(repo, userRepo, {} as any, channelRepo(), researchContext);
+    service = new ContentService(repo, userRepo, {} as any, channelRepo(), researchContext, unmeteredSteps);
+  });
+
+  it("starts research while previous-idea clustering is still pending", async () => {
+    let release!: (value: string[][]) => void;
+    (getClusteredTitles as jest.Mock).mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    const stages: string[] = [];
+    const pending = service.generateIdeas(testOwner("user-1"), true, undefined, stage => stages.push(stage));
+    await new Promise(resolve => setImmediate(resolve));
+    expect(researchContext.getIdeaSignals).toHaveBeenCalledWith("AI tools");
+    expect(mockGenerate).not.toHaveBeenCalled();
+    release([]);
+    await pending;
+    expect(stages).toEqual(["preparing", "research", "generating", "checking", "saving"]);
+    expect(repo.batchSaveIdeas).toHaveBeenCalledTimes(1);
+    expect((repo.batchSaveIdeas as jest.Mock).mock.calls[0][0][0]).toHaveProperty("embedding");
+  });
+
+  it("does not describe research as available when signals are empty", async () => {
+    researchContext.getIdeaSignals.mockResolvedValueOnce("");
+    const progress = jest.fn();
+    await service.generateIdeas(testOwner("user-1"), true, undefined, progress);
+    expect(progress).toHaveBeenCalledWith("generating", expect.stringContaining("no research signals were available"));
+  });
+
+  it("clears the provider-busy stage once the retry connects", async () => {
+    mockGenerate.mockImplementationOnce(async (...args) => {
+      args[5]?.();
+      return makeStream(IDEAS);
+    });
+    const progress = jest.fn();
+    await service.generateIdeas(testOwner("user-1"), true, undefined, progress);
+    const stages = progress.mock.calls.map(([stage]) => stage);
+    expect(stages.slice(stages.indexOf("provider_busy"), stages.indexOf("provider_busy") + 2)).toEqual(["provider_busy", "generating"]);
+  });
+
+  it("preserves generation when a noncritical lifetime counter fails", async () => {
+    userRepo.update.mockRejectedValueOnce(new Error("counter unavailable"));
+    await expect(service.generateIdeas(testOwner("user-1"))).resolves.toHaveLength(2);
+    expect(repo.batchSaveIdeas).toHaveBeenCalledTimes(1);
   });
 
   it("returns parsed idea objects and injects research signals into the prompt", async () => {
     const ideas = await service.generateIdeas(testOwner("user-1"));
 
     expect(ideas).toHaveLength(2);
-    expect(ideas[0]).toMatchObject({ workingTitle: "Working title one", type: "long" });
+    expect(ideas[0]).toMatchObject({ title: "Working title one", ideaType: "long" });
     expect(researchContext.getIdeaSignals).toHaveBeenCalledWith("AI tools");
 
     const [, userPrompt] = mockGenerate.mock.calls[0];
@@ -137,7 +179,7 @@ describe("ContentService.generateIdeas", () => {
   });
 
   it("degrades cleanly when no research context service is wired", async () => {
-    service = new ContentService(repo, userRepo, {} as any, channelRepo());
+    service = new ContentService(repo, userRepo, {} as any, channelRepo(), undefined, unmeteredSteps);
     const ideas = await service.generateIdeas(testOwner("user-1"));
 
     expect(ideas).toHaveLength(2);
@@ -230,6 +272,17 @@ describe("ContentService.generateIdeas", () => {
     expect(ideas).toHaveLength(2);
     expect(researchContext.getIdeaSignals).toHaveBeenCalledWith("Personal finance");
   });
+  it.each(["embeddings", "save"])("charges nothing when %s fails after model output", async stage => {
+    const charge = { debited: true };
+    const billing = { reserve: jest.fn().mockResolvedValue(charge), settle: jest.fn().mockResolvedValue(true) };
+    (service as any).steps = new StepRunner(billing as any);
+    if (stage === "embeddings") {
+      jest.mocked(formatGeneratedIdea).mockRejectedValueOnce(new Error("Embedding failed")).mockRejectedValueOnce(new Error("Embedding failed"));
+    } else repo.batchSaveIdeas.mockRejectedValueOnce(new Error("Save failed"));
+    await expect(service.generateIdeas(testOwner("user-1"))).rejects.toMatchObject({ detail: { charged: false } });
+    expect(billing.settle).toHaveBeenCalledWith(charge, true);
+    expect(billing.settle).not.toHaveBeenCalledWith(charge, false);
+  });
 });
 
 describe("IDEA_USER_PROMPT placeholders", () => {
@@ -244,4 +297,6 @@ describe("IDEA_USER_PROMPT placeholders", () => {
       .replace("{researchSignals}", "");
     expect(prompt).not.toMatch(/\{[a-zA-Z][a-zA-Z0-9]*\}/);
   });
+
+
 });

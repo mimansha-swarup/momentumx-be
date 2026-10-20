@@ -11,6 +11,11 @@
 import { fillTemplate } from "../../../src/utlils/prompt-blocks";
 
 describe("fillTemplate — verbatim insertion contract", () => {
+  it("does not expand template-looking source text a second time", () => {
+    expect(fillTemplate("{script} / {title}", { "{script}": "Keep {title} and $& literally", "{title}": "Real title" }))
+      .toBe("Keep {title} and $& literally / Real title");
+  });
+
   it.each([
     ["$&", "matches the whole match"],
     ["$`", "matches everything before the match"],

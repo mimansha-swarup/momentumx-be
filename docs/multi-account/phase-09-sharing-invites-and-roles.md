@@ -2,12 +2,45 @@
 title: "Phase 09 — Sharing: Invites and Roles"
 description: "Invite links, role enforcement, and read-only states across the UI."
 date: 2026-08-19
-last_updated: 2026-08-19
-status: "planned"
+last_updated: 2026-10-18
+status: "locally accepted — deployment not performed"
 tags: ["multi-account", "phase-09", "sharing", "permissions"]
 ---
 
 # Phase 09 — Sharing: Invites and Roles
+
+## Backend hardening — 2026-10-18
+
+Independent HTTP acceptance passes 29 checks, including deleted-channel preview privacy,
+stale/missing profile emails, member removal/demotion, fresh re-invitation, Auth deletion,
+submillisecond timestamp ordering, prototype-named UIDs and bounded/resumable cleanup.
+UID markers live in a subcollection and commit atomically with membership changes, so an
+old invite cannot restore revoked access. New links issued after the change remain usable.
+See [maintenance commands and deployment gates](./operational-readiness.md#backend-hardening--2026-10-18).
+
+## Local acceptance — 2026-09-26
+
+Implemented: owner-managed seven-day invite links and pending inbox, public masked
+preview, verified-email single-use transactional acceptance, revocation, member/role
+management, leave and ownership transfer, billing-owner/last-owner guards, server role
+gates and frontend viewer states. Frontend wrong-account/removed-member recovery and
+unsaved-text recovery are covered by mounted checks. No email is sent.
+
+Backend coverage includes real HTTP routers, expiry/replay/claim mismatches, concurrent
+acceptance and membership changes, atomic authorization before channel deletion, and
+safe wrong-account disclosure. Frontend acceptance is part of the 174-test/24-file suite,
+including 19 mounted interaction and 11 stream parser/status checks.
+
+There is **no app login-deletion API**. Direct Firebase SDK/admin deletion cannot be
+prevented by this backend; the separate `onDeleteUser` Function reconciles memberships.
+Deleting the last owner or billing payer explicitly orphans/freezes the channel for
+operator recovery while preserving its content. Ordinary member deletion does not
+freeze other members. This supersedes the unconditional login-deletion wording below.
+
+The remaining design text is historical detail; implemented behavior and exceptions
+above take precedence. Deploy invitation indexes and Functions, audit identity providers,
+and run staged acceptance before exposing sharing. See [operational readiness](./operational-readiness.md).
+
 
 **Size:** small backend, large frontend.
 **Depends on:** Phase 07.

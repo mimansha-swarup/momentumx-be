@@ -138,6 +138,7 @@ Each generated idea is saved to Firestore with:
   concept: string              // AI-generated video concept/theme
   ideaType: string             // "evergreen" | "trendy" | etc.
   evidence: string             // Grounding from research signals
+  accountId: string          // active channel tenancy key
   createdBy: string            // userId
   createdAt: Timestamp         // server-side
   embedding: number[]          // vector embedding (gemini-embedding-001) for KMeans
@@ -199,3 +200,9 @@ These are planned for future phases but explicitly not part of the current Resea
 - [Pipeline Status Model](../../product/pipeline-spec.md) — Full state machine spec and Firestore schema
 - [Research API Contract](./api.md) — Endpoint reference
 - [Product Roadmap](../../product/roadmap.md) — Phase timeline
+
+## Channel tenancy and roles
+
+Content is scoped by `accountId`, resolved from verified channel membership.
+`createdBy` records authorship only. Owners and editors may mutate/generate; viewers
+may read and export. Member management and channel deletion require owner.

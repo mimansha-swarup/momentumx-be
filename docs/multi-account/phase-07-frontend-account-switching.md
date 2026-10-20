@@ -2,12 +2,70 @@
 title: "Phase 07 — Frontend Account State and Switching"
 description: "The channel switcher, adding a channel, and per-channel onboarding. The one-way door."
 date: 2026-08-19
-last_updated: 2026-08-19
-status: "planned"
+last_updated: 2026-09-26
+status: "locally accepted — deployment not performed"
 tags: ["multi-account", "phase-07", "frontend"]
 ---
 
 # Phase 07 — Frontend Account State and Switching
+
+## Local acceptance — 2026-09-26
+
+Frontend validation passes: **174 tests in 24 files**, including 19 mounted interaction
+checks (15 independent lifecycle checks and four actual pipeline screens) and 11 stream
+parser/status checks. Production build passes; lint has zero errors and three existing
+warnings. Account bootstrap, switching, stale-response isolation, explicit generation,
+viewer empty states and recovery paths are covered. This is local acceptance, not a
+claim that the frontend, backend, indexes or Functions have been deployed.
+
+See [operational readiness](./operational-readiness.md) for the consolidated acceptance
+matrix and remaining deployment/data gates.
+
+
+> ## Built, and where this document is now wrong
+>
+> Everything below is the plan as written. Four things about it did not survive
+> contact with the code, and the code is the authority:
+>
+> 1. **"There is no test framework"** — there is. vitest, a `test` script and
+>    four test files already existed. The gate cost nothing to set up.
+> 2. **The identity stub is wrong here.** The plan preserves
+>    `{uid, email, name, photoURL}` with `isLoading: false`. `selectIsOnboarded`
+>    wants `userName`, or `niche + targetAudience`; a stub has neither, so
+>    `ProtectedLayout` reads it as `!isOnboarded` and redirects an
+>    already-onboarded channel into `/app/onboarding`, where `onboardedAtMount`
+>    is frozen `false` and will not let go. Shipped: rebuild `user` from
+>    `initialUserState` (`data: null`, `isLoading: true`) and carry only
+>    `isAuthenticated`, landing on the cold-boot loader until step 5's
+>    `getUser()` arrives.
+> 3. **`epochOf.clear()` disables the middleware it is in.** Clearing the map on
+>    switch loses every in-flight epoch, so the settle finds `undefined`, reads
+>    as *not stale*, and passes straight through to a reducer. Shipped without
+>    the clear; entries are bounded by their own settle.
+> 4. **No `isStreaming` redux flag.** Nothing renders from it — the only reader
+>    is a click handler. A 12-line module registry
+>    (`src/utils/streamControl.ts`) gives the switcher both the check and the
+>    teardown, with no action pair and no stuck-`true` failure mode.
+>
+> And one thing the plan does not mention at all, which blocks the flip:
+> **the first channel used to be minted by the first header-less write.** Once
+> the fallback goes read-only that write is a 400, and `listAccounts` does not
+> mint. `ensureChannel` (dispatched at sign-in) now calls the idempotent
+> `POST /v1/accounts/bootstrap` when the list comes back empty, then loads the
+> profile with the resolved header. The account middleware exemption permits
+> this initial request. Headerless profile reads still lazily create a channel;
+> both paths share the transactional claim, so concurrent tabs converge on one
+> channel. `POST /v1/accounts` remains the explicit add-another-channel action.
+
+**Review fixes (2026-09-26):** requests capture their channel synchronously before
+waiting for a token. A save already issued in A finishes in A after a switch;
+requests from an ended authentication session are cancelled. The request epoch
+protects reducers only, so async workflows also check the captured account context
+before follow-up writes, navigation, or rollback. Forced ejection resets data and
+streams before choosing a replacement channel; stale errors cannot eject it.
+Sign-out invalidates pending results, and stream cancellation covers token lookup
+and save polling. Editing a selected title synchronizes the project name within
+the backend packaging save, without requiring a later client mutation.
 
 **Size:** large — this is where users finally see the change.
 **Depends on:** Phase 06b (a hard gate), which in turn depends on Phase 06a. Phase 06 should

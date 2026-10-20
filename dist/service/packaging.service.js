@@ -2,15 +2,16 @@ import { PACKAGING_SYSTEM_PROMPT, GENERATE_TITLE_PROMPT, GENERATE_DESCRIPTION_PR
 import { GENERATION_CONFIG_TITLE_VARIATIONS, GENERATION_CONFIG_SHORTS, GENERATION_CONFIG_DESCRIPTION, GENERATION_CONFIG_THUMBNAIL, } from "../constants/firebase.js";
 import { collectJson, generateStreamingContent } from "../utlils/ai.js";
 import { firebase } from "../config/firebase.js";
-import { BadRequest, NotFound } from "../utlils/errors.js";
+import { BadRequest, NotFound, ServiceUnavailable } from "../utlils/errors.js";
 import { forbidCrossAccount } from "./account.service.js";
 import { buildCreatorContextBlock, buildHookSection, buildScriptSection, fillTemplate, THUMBNAIL_FORMAT_DIRECTIVE, resolveVideoFormat, } from "../utlils/prompt-blocks.js";
 class PackagingService {
-    constructor(repo, videoProjectService, contextService, accounts, researchContext) {
+    constructor(repo, videoProjectService, contextService, accounts, researchContext, steps) {
         this.videoProjectService = videoProjectService;
         this.contextService = contextService;
         this.accounts = accounts;
         this.researchContext = researchContext;
+        this.steps = steps;
         // Best-available context (phases 1D): channel context always, script/hook
         // resolved server-side from the project when not supplied by the client.
         // An explicit body script wins over the stored one (supports edited-but-
@@ -100,32 +101,44 @@ class PackagingService {
         // content back through /save. Each returns the persisted content plus the
         // packagingId. Without a videoProjectId it's a stateless preview (no persist).
         this.generateTitle = async (owner, script, videoProjectId) => {
-            const raw = await this.runTitle(owner, script, videoProjectId);
-            if (!videoProjectId)
-                return raw;
-            const { packagingId, canonical } = await this.persistGeneratedItem(owner, videoProjectId, "title", raw);
-            return { titles: canonical, packagingId };
+            return this.steps.run({ actor: owner, kind: "title", projectId: videoProjectId }, async (charge) => {
+                const raw = await this.runTitle(owner, script, videoProjectId);
+                this.rejectEmptyGeneration("title", raw);
+                if (!videoProjectId)
+                    return raw;
+                const { packagingId, canonical } = await this.persistGeneratedItem(owner, videoProjectId, "title", raw, ...(charge ? [charge] : []));
+                return { titles: canonical, packagingId };
+            });
         };
         this.generateDescription = async (owner, script, title, videoProjectId) => {
-            const raw = await this.runDescription(owner, script, title, videoProjectId);
-            if (!videoProjectId)
-                return raw;
-            const { packagingId, canonical } = await this.persistGeneratedItem(owner, videoProjectId, "description", raw);
-            return { description: canonical, packagingId };
+            return this.steps.run({ actor: owner, kind: "description", projectId: videoProjectId }, async (charge) => {
+                const raw = await this.runDescription(owner, script, title, videoProjectId);
+                this.rejectEmptyGeneration("description", raw);
+                if (!videoProjectId)
+                    return raw;
+                const { packagingId, canonical } = await this.persistGeneratedItem(owner, videoProjectId, "description", raw, ...(charge ? [charge] : []));
+                return { description: canonical, packagingId };
+            });
         };
         this.generateThumbnail = async (owner, script, title, videoProjectId) => {
-            const raw = await this.runThumbnail(owner, script, title, videoProjectId);
-            if (!videoProjectId)
-                return raw;
-            const { packagingId, canonical } = await this.persistGeneratedItem(owner, videoProjectId, "thumbnail", raw);
-            return { descriptions: canonical, packagingId };
+            return this.steps.run({ actor: owner, kind: "thumbnail", projectId: videoProjectId }, async (charge) => {
+                const raw = await this.runThumbnail(owner, script, title, videoProjectId);
+                this.rejectEmptyGeneration("thumbnail", raw);
+                if (!videoProjectId)
+                    return raw;
+                const { packagingId, canonical } = await this.persistGeneratedItem(owner, videoProjectId, "thumbnail", raw, ...(charge ? [charge] : []));
+                return { descriptions: canonical, packagingId };
+            });
         };
         this.generateShorts = async (owner, script, duration, videoProjectId) => {
-            const raw = await this.runShorts(owner, script, duration, videoProjectId);
-            if (!videoProjectId)
-                return raw;
-            const { packagingId, canonical } = await this.persistGeneratedItem(owner, videoProjectId, "shorts", raw);
-            return { ...canonical, packagingId };
+            return this.steps.run({ actor: owner, kind: "shorts", projectId: videoProjectId }, async (charge) => {
+                const raw = await this.runShorts(owner, script, duration, videoProjectId);
+                this.rejectEmptyGeneration("shorts", raw);
+                if (!videoProjectId)
+                    return raw;
+                const { packagingId, canonical } = await this.persistGeneratedItem(owner, videoProjectId, "shorts", raw, ...(charge ? [charge] : []));
+                return { ...canonical, packagingId };
+            });
         };
         // Persist one freshly generated item into the project's packaging doc and
         // advance the right pipeline step. Title is its own step (generating starts it,
@@ -134,7 +147,25 @@ class PackagingService {
         // + status snapshot is a single atomic repo transaction so two generations
         // racing can't split into two docs or both skip completion. Content write is
         // critical; pipeline transitions are best-effort (logged), matching savePackaging.
-        this.persistGeneratedItem = async (owner, videoProjectId, item, rawContent) => {
+        /**
+         * Reject an unusable generation BEFORE the preview/persist branch.
+         *
+         * `isEmptyField` already guarded the persist path (inside `persistGeneratedItem`),
+         * but the stateless preview returns `raw` and never reaches it — so a model that
+         * produced "" was billed as a success and handed back as an empty result. The
+         * reservation is only released if we throw, which is why this must run before the
+         * early return, not after it.
+         *
+         * 503, matching the persist path: the client did nothing wrong, the model did, and
+         * a retryable status is what lets the caller try again.
+         */
+        this.rejectEmptyGeneration = (item, raw) => {
+            const field = item === "title" ? "titles" : item;
+            if (this.isEmptyField(field, this.normalizeField(field, raw))) {
+                throw ServiceUnavailable(`Couldn't generate the ${item}. Please try again.`);
+            }
+        };
+        this.persistGeneratedItem = async (owner, videoProjectId, item, rawContent, charge) => {
             const { userId } = owner;
             // Ownership check (throws if the project isn't the caller's).
             await this.videoProjectService.getById(videoProjectId, owner);
@@ -142,22 +173,36 @@ class PackagingService {
             // BEFORE the write so malformed content throws here (no orphaned doc).
             const field = item === "title" ? "titles" : item;
             const canonical = this.normalizeField(field, rawContent);
-            const { packagingId, created, statuses } = await this.repo.upsertGeneratedItem(videoProjectId, owner, field, item, canonical);
+            // Refuse USABLE-LOOKING but empty output before anything is persisted.
+            //
+            // `{"description":""}` satisfies the response schema and passes
+            // `normalizeField`, which only checks the TYPE. Persisting it marked the item
+            // completed, kept the charge, and — when regenerating over existing content —
+            // destroyed the text it replaced. `isEmptyField` already encoded "unusable"
+            // for the manual-save path; it just was not on the generate path.
+            //
+            // 503 rather than 400: the client did nothing wrong, the model did, and a
+            // retryable status is what lets the caller try again. Thrown BEFORE the write,
+            // so `step-runner` releases the reservation and the user is not charged.
+            if (this.isEmptyField(field, canonical)) {
+                throw ServiceUnavailable(`Couldn't generate the ${item}. Please try again.`);
+            }
+            const { packagingId, created, statuses } = await this.repo.upsertGeneratedItem(videoProjectId, owner, field, item, canonical, ...(charge ? [charge] : []));
             const step = item === "title" ? "title" : "packaging";
             // Pipeline sync is best-effort: the content is already saved, so a transition
             // hiccup must not fail generation.
             try {
                 if (created) {
-                    await this.videoProjectService.linkResource(videoProjectId, "packaging", packagingId, owner);
+                    await this.videoProjectService.linkResource(videoProjectId, "packaging", packagingId, owner, ...(charge ? [charge] : []));
                 }
-                await this.videoProjectService.startStep(videoProjectId, step, owner);
+                await this.videoProjectService.startStep(videoProjectId, step, owner, ...(charge ? [charge] : []));
                 // Packaging completes when its three items exist; the title step completes
                 // on selection, never here.
                 if (step === "packaging" &&
                     statuses.description === "completed" &&
                     statuses.thumbnail === "completed" &&
                     statuses.shorts === "completed") {
-                    await this.videoProjectService.completeStep(videoProjectId, "packaging", owner);
+                    await this.videoProjectService.completeStep(videoProjectId, "packaging", owner, ...(charge ? [charge] : []));
                 }
             }
             catch (pipelineError) {
@@ -197,15 +242,29 @@ class PackagingService {
                     return raw;
             }
         };
+        // "Meaningful text" = a non-blank string. Titles/segments carry their text in
+        // an object field (`title` / `content`); thumbnail briefs are bare strings.
+        // Shared by every array/object branch below so a blank-but-schema-valid
+        // response (all elements present, all text empty) reads as empty too.
+        this.hasText = (value) => typeof value === "string" && value.trim().length > 0;
         this.isEmptyField = (field, value) => {
             if (value == null)
                 return true;
             if (field === "shorts") {
-                return !Array.isArray(value.segments) ||
-                    value.segments.length === 0;
+                const segments = value.segments;
+                if (!Array.isArray(segments) || segments.length === 0)
+                    return true;
+                return !segments.some((s) => this.hasText(s?.content));
             }
-            if (Array.isArray(value))
-                return value.length === 0;
+            if (Array.isArray(value)) {
+                if (value.length === 0)
+                    return true;
+                if (field === "titles") {
+                    return !value.some((t) => this.hasText(typeof t === "string" ? t : t?.title));
+                }
+                // thumbnail (and any other bare-string array field)
+                return !value.some((v) => this.hasText(v));
+            }
             if (typeof value === "string")
                 return value.trim() === "";
             return false;
@@ -257,6 +316,13 @@ class PackagingService {
                 if (field in data && data[field] != null) {
                     normalized[field] = this.normalizeField(field, data[field]);
                 }
+            }
+            // Snapshot BEFORE dropping "unhydrated blank" fields below: the selected-title
+            // validation further down must see what the caller actually submitted (so a
+            // blank/invalid title paired with a selectedTitleIndex still 400s), not the
+            // post-drop state where that same content has already been discarded as empty.
+            const submitted = { ...normalized };
+            for (const field of PackagingService.ITEM_FIELDS) {
                 // A save carries EDITS, and empty content is never an edit — it's a client
                 // that hasn't hydrated yet posting its blank initial state (the Title screen
                 // sends the whole snapshot, including a description it may not have loaded).
@@ -298,6 +364,25 @@ class PackagingService {
             // and thumbnail click, an ordinary keystroke would silently un-stale the whole
             // package. Generation/regeneration own those statuses after creation.
             const existing = await this.repo.get(projectId);
+            const merged = { ...(existing ?? {}), ...normalized };
+            // Validated against `submitted` (pre-drop), not `merged` — see the comment
+            // at the snapshot above.
+            const mergedForValidation = { ...(existing ?? {}), ...submitted };
+            let selectedTitle;
+            if (("titles" in submitted || "selectedTitleIndex" in submitted)
+                && mergedForValidation.selectedTitleIndex != null) {
+                const index = mergedForValidation.selectedTitleIndex;
+                if (typeof index !== "number" || !Number.isInteger(index) || index < 0
+                    || !Array.isArray(mergedForValidation.titles) || index >= mergedForValidation.titles.length) {
+                    throw BadRequest("Invalid title index");
+                }
+                const selected = mergedForValidation.titles[index];
+                const text = typeof selected === "string" ? selected : selected?.title;
+                if (typeof text !== "string" || !text.trim()) {
+                    throw BadRequest("Selected title has no text");
+                }
+                selectedTitle = text.trim();
+            }
             let result;
             if (existing) {
                 // `projectId`, not `existing.id as string`. The packaging document is
@@ -322,12 +407,17 @@ class PackagingService {
                     createdAt: firebase.firestore.FieldValue.serverTimestamp(),
                 });
             }
+            // Keep the selected title and project name in this account-scoped request.
+            // This failure must surface: retry repeats the rename even if the package
+            // already contains the edit. Only selectTitle completes the Title step.
+            if (selectedTitle !== undefined) {
+                await this.videoProjectService.update(projectId, owner, { title: selectedTitle });
+            }
             // Completion is earned by CONTENT, never by the act of saving. A save is an
             // edit, and edits arrive from the Title screen too — unconditionally completing
             // here marked packaging done (and the project finished) the moment someone
             // renamed a title variation, with no description, thumbnail or Shorts written.
             // Same rule persistGeneratedItem uses: the three packaging items must exist.
-            const merged = { ...(existing ?? {}), ...normalized };
             const settled = this.buildItemStatuses(merged);
             const packagingComplete = settled.description === "completed" &&
                 settled.thumbnail === "completed" &&
@@ -431,15 +521,21 @@ class PackagingService {
             if ((item === "description" || item === "thumbnail") && !title) {
                 throw BadRequest("title is required for description and thumbnail regeneration");
             }
-            // Save previous item status for rollback on failure
-            const currentStatuses = pkg.itemStatuses ?? {};
-            const statusKey = item;
-            let result;
-            let fieldKey;
-            try {
-                // Pure generation (run*, not the public persisting generate*): regenerate
-                // does its own targeted update + stale handling below, so it must not
-                // double-persist through the public wrappers.
+            return this.steps.run({ actor: owner, kind: item, projectId: videoProjectId, mode: "regenerate" }, async (charge) => {
+                // Save previous item status for rollback on failure
+                const currentStatuses = pkg.itemStatuses ?? {};
+                const statusKey = item;
+                let result;
+                let fieldKey;
+                // No rollback here, deliberately. This used to try/catch and write
+                // `itemStatuses.<item>` back to the value it had just READ, because
+                // regenerate calls the pure `run*` generators, and the only writer of
+                // item statuses (`persistGeneratedItem` → `upsertGeneratedItem`) is on
+                // the `generate*` path. Nothing between the read above and a thrown
+                // generation error can change the status, so the "rollback" was a write
+                // of the current value — a bare catch-and-rethrow, letting it propagate
+                // unchanged is the same behavior with less code.
+                // If a status is ever set before generation starts, restore it here.
                 if (item === "title") {
                     result = await this.runTitle(owner, resolved.script, videoProjectId);
                     fieldKey = "titles";
@@ -458,114 +554,109 @@ class PackagingService {
                     result = await this.runShorts(owner, resolved.script, duration ?? 60, videoProjectId);
                     fieldKey = "shorts";
                 }
-            }
-            catch (genError) {
-                // No rollback here, deliberately. This used to write
-                // `itemStatuses.<item>` back to the value it had just READ,
-                // because regenerate calls the pure `run*` generators, and the only writer
-                // of item statuses (`persistGeneratedItem` → `upsertGeneratedItem`) is on
-                // the `generate*` path. Nothing between the read above and this catch can
-                // change the status, so the "rollback" was a write of the current value.
-                // If a status is ever set before generation starts, restore it here.
-                throw genError;
-            }
-            // Normalize once: store AND return the canonical shape, so the regenerate
-            // response matches what a subsequent GET / export returns (no wrapper-vs-stored split).
-            const canonical = this.normalizeField(fieldKey, result);
-            const updateData = {
-                [fieldKey]: canonical,
-                [`itemStatuses.${statusKey}`]: "completed",
-            };
-            // Fresh briefs replace the old ones, so a stored selection now points at a
-            // brief that no longer exists — reset it (and the hint below follows suit).
-            if (item === "thumbnail") {
-                updateData.selectedThumbnailIndex = 0;
-            }
-            // Same for titles, but with a bigger blast radius: the selected title is also
-            // the PROJECT'S NAME. Leaving the old index behind meant the header and
-            // dashboard kept a title that no longer appears in the list, and "Continue"
-            // later renamed the project to whatever happened to land at that index.
-            if (item === "title") {
-                updateData.selectedTitleIndex = null;
-            }
-            // Check if clearing stale flag is needed.
-            //
-            // THREE items, not four — `title` is deliberately excluded. Since P6A, Title
-            // is its own pipeline step: it starts on generate-title and completes on
-            // select-title, and the Packaging step covers description + thumbnail +
-            // shorts. The completion check below (`packagingComplete`) already uses those
-            // three; this condition used all four, and the mismatch deadlocked the stale
-            // banner.
-            //
-            // How it deadlocked: `markStale` flips EVERY completed item to stale,
-            // title included. The client then regenerates only the packaging-owned items
-            // (`ProjectPackaging/index.tsx:223` filters `item !== "title"`, correctly —
-            // regenerating title there would discard the user's selected title and
-            // collide with the Title screen's own flow). So `itemStatuses.title` stayed
-            // "stale" forever, `anyStillStale` stayed true, `isStale` was never cleared
-            // and `refreshPackagingStep` never ran. The user regenerated all three items,
-            // watched them succeed, and the amber "needs update" banner never went away.
-            // Only "Keep as-is" could dismiss it.
-            //
-            // Title staleness is not lost — it lives on `pipeline.title` and is cleared
-            // by select-title / reopenTitleStep, which is the step that owns it.
-            const PACKAGING_OWNED_ITEMS = ["description", "thumbnail", "shorts"];
-            const anyStillStale = PACKAGING_OWNED_ITEMS.some((k) => k !== statusKey && currentStatuses[k] === "stale");
-            if (!anyStillStale) {
-                updateData.isStale = false;
-                updateData.staleReason = null;
-                updateData.staleSince = null;
-            }
-            await this.repo.update(packagingId, updateData);
-            // Packaging is fresh again — clear the project's stale packaging step so the
-            // dashboard "needs update" badge actually clears. Best-effort: a sync failure
-            // must not fail the already-saved regeneration.
-            if (!anyStillStale && videoProjectId) {
-                try {
-                    await this.videoProjectService.refreshPackagingStep(videoProjectId, owner);
+                // Normalize once: store AND return the canonical shape, so the regenerate
+                // response matches what a subsequent GET / export returns (no wrapper-vs-stored split).
+                const canonical = this.normalizeField(fieldKey, result);
+                // Same guard on the regenerate path, where the erasure is the whole risk:
+                // this write REPLACES content the user already had.
+                if (this.isEmptyField(fieldKey, canonical)) {
+                    throw ServiceUnavailable(`Couldn't regenerate the ${item}. Please try again.`);
                 }
-                catch (syncError) {
-                    console.error(JSON.stringify({ event: "stale_cascade_clear_failed", projectId: videoProjectId, packagingId, userId, message: syncError?.message }));
+                const updateData = {
+                    [fieldKey]: canonical,
+                    [`itemStatuses.${statusKey}`]: "completed",
+                };
+                // Fresh briefs replace the old ones, so a stored selection now points at a
+                // brief that no longer exists — reset it (and the hint below follows suit).
+                if (item === "thumbnail") {
+                    updateData.selectedThumbnailIndex = 0;
                 }
-            }
-            if (videoProjectId) {
-                try {
-                    if (item === "title") {
-                        // The pick is gone with the old variations — reopen the step so the
-                        // creator is asked to choose again rather than shown a green step over
-                        // a project name that no longer matches any title on screen.
-                        await this.videoProjectService.reopenTitleStep(videoProjectId, owner);
+                // Same for titles, but with a bigger blast radius: the selected title is also
+                // the PROJECT'S NAME. Leaving the old index behind meant the header and
+                // dashboard kept a title that no longer appears in the list, and "Continue"
+                // later renamed the project to whatever happened to land at that index.
+                if (item === "title") {
+                    updateData.selectedTitleIndex = null;
+                }
+                // Check if clearing stale flag is needed.
+                //
+                // THREE items, not four — `title` is deliberately excluded. Since P6A, Title
+                // is its own pipeline step: it starts on generate-title and completes on
+                // select-title, and the Packaging step covers description + thumbnail +
+                // shorts. The completion check below (`packagingComplete`) already uses those
+                // three; this condition used all four, and the mismatch deadlocked the stale
+                // banner.
+                //
+                // How it deadlocked: `markStale` flips EVERY completed item to stale,
+                // title included. The client then regenerates only the packaging-owned items
+                // (`ProjectPackaging/index.tsx:223` filters `item !== "title"`, correctly —
+                // regenerating title there would discard the user's selected title and
+                // collide with the Title screen's own flow). So `itemStatuses.title` stayed
+                // "stale" forever, `anyStillStale` stayed true, `isStale` was never cleared
+                // and `refreshPackagingStep` never ran. The user regenerated all three items,
+                // watched them succeed, and the amber "needs update" banner never went away.
+                // Only "Keep as-is" could dismiss it.
+                //
+                // Title staleness is not lost — it lives on `pipeline.title` and is cleared
+                // by select-title / reopenTitleStep, which is the step that owns it.
+                const PACKAGING_OWNED_ITEMS = ["description", "thumbnail", "shorts"];
+                const anyStillStale = PACKAGING_OWNED_ITEMS.some((k) => k !== statusKey && currentStatuses[k] === "stale");
+                if (!anyStillStale) {
+                    updateData.isStale = false;
+                    updateData.staleReason = null;
+                    updateData.staleSince = null;
+                }
+                await this.repo.update(packagingId, updateData, ...(charge ? [charge] : []));
+                // Packaging is fresh again — clear the project's stale packaging step so the
+                // dashboard "needs update" badge actually clears. Best-effort: a sync failure
+                // must not fail the already-saved regeneration.
+                if (!anyStillStale && videoProjectId) {
+                    try {
+                        await this.videoProjectService.refreshPackagingStep(videoProjectId, owner, ...(charge ? [charge] : []));
                     }
-                    else {
-                        // Regenerating the item that was MISSING is how a creator recovers from a
-                        // partial generation failure. `refreshPackagingStep` only ever un-stales,
-                        // so without this the step stayed in_progress forever: every item present,
-                        // the project stuck on "In progress", and the celebration never firing.
-                        const settled = { ...currentStatuses, [statusKey]: "completed" };
-                        if (settled.description === "completed" &&
-                            settled.thumbnail === "completed" &&
-                            settled.shorts === "completed") {
-                            await this.videoProjectService.startStep(videoProjectId, "packaging", owner);
-                            await this.videoProjectService.completeStep(videoProjectId, "packaging", owner);
+                    catch (syncError) {
+                        console.error(JSON.stringify({ event: "stale_cascade_clear_failed", projectId: videoProjectId, packagingId, userId, message: syncError?.message }));
+                    }
+                }
+                if (videoProjectId) {
+                    try {
+                        if (item === "title") {
+                            // The pick is gone with the old variations — reopen the step so the
+                            // creator is asked to choose again rather than shown a green step over
+                            // a project name that no longer matches any title on screen.
+                            await this.videoProjectService.reopenTitleStep(videoProjectId, owner, ...(charge ? [charge] : []));
+                        }
+                        else {
+                            // Regenerating the item that was MISSING is how a creator recovers from a
+                            // partial generation failure. `refreshPackagingStep` only ever un-stales,
+                            // so without this the step stayed in_progress forever: every item present,
+                            // the project stuck on "In progress", and the celebration never firing.
+                            const settled = { ...currentStatuses, [statusKey]: "completed" };
+                            if (settled.description === "completed" &&
+                                settled.thumbnail === "completed" &&
+                                settled.shorts === "completed") {
+                                await this.videoProjectService.startStep(videoProjectId, "packaging", owner, ...(charge ? [charge] : []));
+                                await this.videoProjectService.completeStep(videoProjectId, "packaging", owner, ...(charge ? [charge] : []));
+                            }
                         }
                     }
+                    catch (stepError) {
+                        console.error(JSON.stringify({ event: "pipeline_transition_failed", step: item === "title" ? "title" : "packaging", projectId: videoProjectId, packagingId, userId, message: stepError?.message }));
+                    }
                 }
-                catch (stepError) {
-                    console.error(JSON.stringify({ event: "pipeline_transition_failed", step: item === "title" ? "title" : "packaging", projectId: videoProjectId, packagingId, userId, message: stepError?.message }));
+                // The thumbnail content changed -> refresh the project's dashboard thumbnailHint
+                // (best-effort; otherwise it stays the brief captured at save time).
+                if (item === "thumbnail" && videoProjectId) {
+                    try {
+                        const briefs = updateData.thumbnail;
+                        await this.videoProjectService.setThumbnailHint(videoProjectId, briefs?.[0] ?? null, owner, ...(charge ? [charge] : []));
+                    }
+                    catch (hintError) {
+                        console.error(JSON.stringify({ event: "thumbnail_hint_refresh_failed", projectId: videoProjectId, packagingId, userId, message: hintError?.message }));
+                    }
                 }
-            }
-            // The thumbnail content changed -> refresh the project's dashboard thumbnailHint
-            // (best-effort; otherwise it stays the brief captured at save time).
-            if (item === "thumbnail" && videoProjectId) {
-                try {
-                    const briefs = updateData.thumbnail;
-                    await this.videoProjectService.setThumbnailHint(videoProjectId, briefs?.[0] ?? null, owner);
-                }
-                catch (hintError) {
-                    console.error(JSON.stringify({ event: "thumbnail_hint_refresh_failed", projectId: videoProjectId, packagingId, userId, message: hintError?.message }));
-                }
-            }
-            return { id: packagingId, item, data: canonical };
+                return { id: packagingId, item, data: canonical };
+            });
         };
         this.exportPackaging = async (owner, packagingId) => {
             const pkg = await this.repo.get(packagingId);

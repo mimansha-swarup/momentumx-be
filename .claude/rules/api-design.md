@@ -56,18 +56,16 @@ Order matters: `accountMiddleware` reads `req.userId`, so mounted first it would
 account for `undefined` on every request. Both mounts, and their order, are pinned by
 `tests/unit/auth-coverage.test.ts`.
 
-**Account-context exception:** `GET /v1/accounts` and `POST /v1/accounts` mount
-`authMiddleware` but NOT `accountMiddleware`. You cannot present an `X-Account-Id` for a
-channel you do not have yet, and a brand-new user's first list call has no channel at all —
-with the middleware in front, that request falls into the header-less fallback, which mints
-a channel as a side effect of *reading the list*, and once Phase 07 flips
-`FALLBACK_ALLOWS_WRITES` to `false` it rejects `POST /v1/accounts` outright: the one call
-whose purpose is producing the id the header needs.
+**Account-context exceptions:** `GET /v1/accounts`, `POST /v1/accounts`, and
+`POST /v1/accounts/bootstrap` mount `authMiddleware` but NOT `accountMiddleware`.
+Listing is read-only, creation explicitly adds a channel, and bootstrap atomically
+adopts a live membership or creates the first channel. They all scope to `req.userId`.
+Bootstrap is separate from creation so concurrent first tabs cannot mint extra channels.
+The frontend resolves bootstrap before fetching the profile; older clients' headerless
+GETs still retain lazy first-channel creation through the same transactional claim.
 
-The exemption covers those two COLLECTION routes only. Everything under `/:id` sits below
-the mount and is account-checked like every other route. Both are still authenticated, and
-both scope to `req.userId`. `tests/unit/auth-coverage.test.ts` names them in a shrink-only
-allowlist, so a third cannot be added without an explicit edit and a written reason.
+Everything under `/:id` sits below the account middleware. The three exemptions are
+explicitly named in `tests/unit/auth-coverage.test.ts`; additions need a written reason.
 
 **SSE exception:** `GET /v1/scripts/stream/:projectId` uses `?token=` query param.
 Reason: browser EventSource API cannot send Authorization headers.
@@ -112,7 +110,7 @@ failure this is, because **403 cannot mean one thing**:
 | `account_forbidden` | Not a member of this channel at all | Clear the active account, go to the channel list |
 | `wrong_account` | Member of the resource's channel, but acting in a different one | Offer a one-click switch — `detail` carries `{ accountId, displayName }` |
 | `role_forbidden` | Member, but the role doesn't allow it | Inline message, stay put |
-| `insufficient_credits` | Phase 08 | Show the balance and the reset date |
+| `insufficient_credits` (HTTP 402) | Phase 08 | Show the balance and the reset date |
 
 Without the discriminator a viewer clicking a button the UI failed to disable gets
 **ejected from the channel**, and a bookmarked project living in the user's other channel
@@ -130,9 +128,13 @@ Use the named factories in `utlils/errors.ts` (`AccountForbidden()`, `WrongAccou
 would be three loosely-typed trailing parameters in a row, which is the positional trap that
 put a `batchId` in an `accountId` slot during Phase 03.
 
-`code` and `detail` are forwarded **only for 4xx `HttpError`s**. An unexpected throw gets
-neither, so nothing internal leaks and no caller can forge a `code` that drives the client's
-branch.
+`code` never crosses the 5xx boundary, and arbitrary `detail` doesn't either — only a
+curated `{ charged: false }` marker does, deliberately, because a failed generation is
+never charged and the client needs to know that without any other internal detail leaking
+(`error_handler.ts`, `tests/unit/error_handler.test.ts`). Everything else — the full `code`
+and `detail` an `HttpError` carries — is forwarded only for 4xx. An unexpected throw gets
+none of it, so nothing internal leaks and no caller can forge a `code` that drives the
+client's branch.
 
 ---
 
@@ -168,9 +170,14 @@ two disagreeing is what made `POST /v1/accounts/:id/activate` a 204 that changed
 for every data route, and made onboarding a newly created channel overwrite the first
 channel's niche, audience and website. A pointer at a tombstoned or departed channel falls
 through rather than 410ing: with no header this is a guess, and a bad guess must not lock a
-user out of channels that still work. **Phase 07 flips `FALLBACK_ALLOWS_WRITES` to
-`false`** in the same commit that makes the frontend send the header, at which point the
-fallback becomes read-only.
+user out of channels that still work.
+
+**Phase 07 flipped `FALLBACK_ALLOWS_WRITES` to `false`.** The fallback is now READ-ONLY: a
+header-less GET still resolves `lastActiveAccountId`, and a header-less POST/PATCH/DELETE is
+a **400**. The frontend sends the header on every call — one axios request interceptor
+reading a module-level value hydrated from `localStorage` at sign-in — so a missing header is
+no longer a client catching up. Reads keep the fallback deliberately: refusing to *show* a
+cold tab anything is worse than showing it the channel the user last activated.
 
 **SSE exception.** `GET /v1/scripts/stream/:projectId` cannot send headers (`EventSource`),
 so it mounts `resolveAccountFromProject` instead, which derives the account from the
@@ -206,6 +213,7 @@ JSON-encoding the chunk keeps embedded newlines in multi-line content (scripts) 
 | Bad request / missing fields | 400 |
 | Not authenticated — missing, malformed or invalid token | **401** |
 | Authenticated, but not allowed to touch this resource | **403** |
+| Configured credit allowance exhausted | **402** |
 | Resource not found | 404 |
 | Channel tombstoned (existed, now deleted) | **410** |
 | Server error / service failure | 500 |
@@ -303,6 +311,8 @@ Snapshot of the API surface. When exact behavior matters, verify against `src/ro
   POST  /                      — create a channel. EMPTY BODY, deliberately —
                                  onboarding runs against the new id afterwards.
                                  EXEMPT FROM accountMiddleware (see below)
+  POST  /bootstrap             — idempotently resolve or create the first channel
+                                 EXEMPT FROM accountMiddleware
   GET   /:id                   — one channel in full (settings screen)
   PATCH /:id                   — rename (owner only)
   POST  /:id/activate          — set lastActiveAccountId. 204.
@@ -396,3 +406,32 @@ step then covers description + thumbnail + shorts, and auto-completes once those
 exist. Legacy projects created before the title step default `pipeline.title` on read.
 
 Note: `/v1/ideas` generates **ideas** (video concepts with `concept`/`workingTitle`/`ideaType`/`evidence`), grounded in live trending + keyword research. (The legacy `/v1/topics` path + all "topic" naming were renamed to "idea" in P6A — step 1 is **Idea**; **Title** is now its own post-script pipeline step, distinct from **Packaging** (description/thumbnail/shorts); "topic" is retired.) The former `/v1/title-intelligence` routes were retired in phase 2 — `title-intelligence.service.ts` remains as the engine reserved for the post-script Title step; the research half lives in `research-context.service.ts`.
+
+## Sharing and role enforcement (Phase 09)
+
+`GET /v1/invites/:token` is the second unauthenticated endpoint after health: its
+43-character, 256-bit secret token authorizes a masked preview, never an email address.
+`GET /v1/invites` and `POST /v1/invites/:token/accept` require authentication but no
+account context: the verified token email discovers invitations or creates membership.
+Acceptance compares lowercased exact emails, verifies expiry inside its transaction,
+and consumes the invite atomically with all three membership fields. No emails are sent.
+
+Under `/v1/accounts/:id`, owners can GET members and invites, POST invites
+(`{email,role:editor|viewer}`), DELETE invites/:token, PATCH members/:uid (`{role}`),
+DELETE members/:uid, and POST transfer-ownership (`{userId}`). Any member can POST
+leave. The last owner and billing owner cannot be removed or demoted; an ownership
+transfer promotes the recipient, demotes the caller and transfers billing if the caller
+is its current owner. Transactional checks use current membership, not middleware snapshots.
+
+Apply `requireRole` by effect: all channel mutations require editor, member management
+and channel rename/deletion require owner. `GET /scripts/stream/:projectId` generates
+and requires editor; `GET /research/*` consumes shared quota and requires editor.
+Reads/exports remain viewer-accessible. Personal channel creation/bootstrap/activation
+remain available regardless of the current channel role. Role refusals use `role_forbidden`.
+
+There is no login-deletion API. Firebase SDK/admin deletion is reconciled by
+`onDeleteUser`: ordinary memberships are removed atomically; missing last owners or
+billing payers mark channels orphaned, retain their content, and deny access pending
+operator recovery. Orphaned channels are excluded from account discovery/bootstrap.
+An already-open generation stream can finish its work after a membership change;
+subsequent requests re-check access.

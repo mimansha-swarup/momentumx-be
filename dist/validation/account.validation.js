@@ -15,9 +15,17 @@ export const createAccountSchema = z.object({}).strict();
 /**
  * `PATCH /v1/accounts/:id` — channel edits.
  *
- * `displayName` only, for now. It is what the switcher renders, so an empty one
- * is a row with nothing to click; the service trims and refuses blanks, and this
- * bounds the length before it gets there.
+ * `displayName` is what the switcher renders, so an empty one is a row with
+ * nothing to click; the service trims and refuses blanks, and this bounds the
+ * length before it gets there.
+ *
+ * `handle` is editable here because it was otherwise PERMANENT. It is filled by
+ * `adoptChannelIdentity` from whatever channel URL onboarding was given — and
+ * onboarding is `requireRole("editor")`, while rename is owner-only. So an editor
+ * could set a bare channel's handle to anything, once, and no route could ever
+ * change it again: adoption only fills a BLANK handle, and this patch used to
+ * accept `displayName` alone. Owner-editable closes the asymmetry without
+ * blocking an editor from doing the onboarding they are there to do.
  *
  * Everything that decides permissions — `memberUids`, `ownerUids`, `members`,
  * `billingOwnerUid`, `deletedAt` — is absent deliberately and rejected by
@@ -26,6 +34,11 @@ export const createAccountSchema = z.object({}).strict();
  */
 export const updateAccountSchema = z
     .object({
-    displayName: z.string().trim().min(1, "displayName is required").max(120),
+    displayName: z.string().trim().min(1, "displayName is required").max(120).optional(),
+    // Nullable so an owner can clear a wrong handle outright, not just replace it.
+    handle: z.string().trim().max(120).nullable().optional(),
 })
-    .strict();
+    .strict()
+    .refine((patch) => patch.displayName !== undefined || patch.handle !== undefined, {
+    message: "displayName or handle is required",
+});

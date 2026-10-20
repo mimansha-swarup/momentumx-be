@@ -178,6 +178,7 @@ Document ID: Firestore auto-generated.
 ```typescript
 interface VideoProject {
   id: string;                     // Firestore auto-generated doc ID
+  accountId: string          // active channel tenancy key
   createdBy: string;              // from req.userId
   title: string;           // from idea.title at creation; can be renamed
 
@@ -215,7 +216,8 @@ interface StepState {
 
 ```
 id                auto-id
-createdBy         req.userId
+accountId         req.accountId
+createdBy         req.userId (authorship only)
 title      from idea.title
 ideaId           from request body
 scriptId             null
@@ -237,10 +239,10 @@ pipeline.packaging  { status: "not_started", startedAt: null, completedAt: null 
 ### Indexes Required
 
 ```
-Composite index 1: isDeleted ASC, createdBy ASC, updatedAt DESC, __name__ DESC
+Composite index 1: isDeleted ASC, accountId ASC, updatedAt DESC, __name__ DESC
   → powers dashboard list query
 
-Composite index 2: isDeleted ASC, createdBy ASC, overallStatus ASC, updatedAt DESC, __name__ DESC
+Composite index 2: isDeleted ASC, accountId ASC, overallStatus ASC, updatedAt DESC, __name__ DESC
   → powers filtered list (e.g., "show only in_progress")
 ```
 
@@ -285,3 +287,9 @@ For Research (Regenerate All), the cascade fans out to all projects on each arch
 - [Video Project API Reference](./api.md)
 - [Pipeline Spec](../../product/pipeline-spec.md)
 - [Product Roadmap](../../product/roadmap.md)
+
+## Channel tenancy and roles
+
+Content is scoped by `accountId`, resolved from verified channel membership.
+`createdBy` records authorship only. Owners and editors may mutate/generate; viewers
+may read and export. Member management and channel deletion require owner.

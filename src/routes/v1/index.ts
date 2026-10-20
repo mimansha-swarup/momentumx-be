@@ -1,3 +1,6 @@
+import inviteRouter from "./invite.route.js";
+import sharingRouter from "./sharing.route.js";
+import billingRouter from "./billing.route.js";
 import { Router, Request, Response } from "express";
 import accountRouter from "./account.route.js";
 import userRouter from "./user.route.js";
@@ -11,6 +14,9 @@ import hooksRouter from "./hooks.route.js";
 const router = Router();
 
 router.use("/accounts", accountRouter);
+router.use("/accounts", sharingRouter);
+router.use("/invites", inviteRouter);
+router.use("/billing", billingRouter);
 router.use("/user", userRouter);
 router.use("/ideas", ideasRouter);
 router.use("/scripts", scriptsRouter);

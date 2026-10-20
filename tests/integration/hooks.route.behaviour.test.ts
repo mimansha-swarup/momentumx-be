@@ -56,7 +56,8 @@ jest.mock("../../src/service/hooks.service", () => ({
 import request from "supertest";
 import app from "../../src/app";
 import { useSharedServer } from "./shared-server";
-import { testOwner } from "../helpers/account";
+import { testOwner, TEST_ACCOUNT_ID, OTHER_ACCOUNT_ID } from "../helpers/account";
+import { AccountForbidden, NotFound, WrongAccount } from "../../src/utlils/errors";
 
 // One HTTP server for the whole file. `request(app)` starts and tears down a
 // FRESH ephemeral server per call; across ~113 requests that intermittently
@@ -64,13 +65,28 @@ import { testOwner } from "../helpers/account";
 // socket hang up) on an arbitrary test, never reproducible in isolation.
 const server = useSharedServer(app);
 
-function makeServiceError(message: string, statusCode: number) {
-  const err = new Error(message) as Error & { statusCode: number };
-  err.statusCode = statusCode;
-  return err;
-}
-
 const AUTH_HEADER = ["Authorization", "Bearer valid-token"] as const;
+
+/**
+ * A real `IHooksBatch` (src/types/routes/hooks.ts), not a two-key stand-in.
+ *
+ * Every fixture in this file used to be `{ id, hooks }`, which cannot exist —
+ * `videoProjectId`, `accountId`, `createdBy` and `hookFeedback` are all required
+ * on the type. Paired with `data: expect.any(Object)`, the response body was
+ * asserted by nothing: `{}` passed, and so did a batch with no hooks in it.
+ */
+const FIVE_HOOKS = ["Hook one", "Hook two", "Hook three", "Hook four", "Hook five"];
+
+const hooksBatch = (overrides: Record<string, unknown> = {}) => ({
+  id: "hooks-1",
+  videoProjectId: "proj-1",
+  createdBy: "user-1",
+  accountId: TEST_ACCOUNT_ID,
+  hooks: FIVE_HOOKS,
+  hookFeedback: {},
+  createdAt: "2026-01-01T00:00:00.000Z",
+  ...overrides,
+});
 
 beforeEach(() => {
   mockVerifyIdToken.mockReset();
@@ -91,7 +107,7 @@ beforeEach(() => {
 
 describe("POST /v1/hooks/generate", () => {
   it("returns 200 with the generated batch on success", async () => {
-    mockHooksService.generate.mockResolvedValueOnce({ id: "hooks-1", hooks: ["h1", "h2", "h3", "h4", "h5"] });
+    mockHooksService.generate.mockResolvedValueOnce(hooksBatch());
 
     const res = await request(server())
       .post("/v1/hooks/generate")
@@ -99,7 +115,16 @@ describe("POST /v1/hooks/generate", () => {
       .send({ videoProjectId: "proj-1", script: "the script" });
 
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ success: true, data: expect.any(Object) });
+    expect(res.body.success).toBe(true);
+    // The batch id and the five hooks are the response: the client selects by
+    // index against this array and posts back to `/:hooksId/select`. A body with
+    // the id but no hooks renders five empty cards, and `expect.any(Object)`
+    // could not tell them apart.
+    expect(res.body.data).toMatchObject({
+      id: "hooks-1",
+      videoProjectId: "proj-1",
+      hooks: FIVE_HOOKS,
+    });
     expect(mockHooksService.generate).toHaveBeenCalledWith(
       testOwner("user-1"), "proj-1", "the script");
   });
@@ -116,7 +141,7 @@ describe("POST /v1/hooks/generate", () => {
   });
 
   it("allows an omitted script — resolved server-side from the project", async () => {
-    mockHooksService.generate.mockResolvedValueOnce({ id: "hooks-1", hooks: [] });
+    mockHooksService.generate.mockResolvedValueOnce(hooksBatch());
 
     const res = await request(server())
       .post("/v1/hooks/generate")
@@ -129,7 +154,7 @@ describe("POST /v1/hooks/generate", () => {
   });
 
   it("returns 404 when the video project does not exist", async () => {
-    mockHooksService.generate.mockRejectedValueOnce(makeServiceError("Video project not found", 404));
+    mockHooksService.generate.mockRejectedValueOnce(NotFound("Video project not found"));
 
     const res = await request(server())
       .post("/v1/hooks/generate")
@@ -139,15 +164,41 @@ describe("POST /v1/hooks/generate", () => {
     expect(res.status).toBe(404);
   });
 
-  it("returns 403 when the video project is not owned by the requester", async () => {
-    mockHooksService.generate.mockRejectedValueOnce(makeServiceError("Forbidden", 403));
+  // A cross-channel refusal, with the reason. The fixture used to be a bare
+  // `Error` carrying `statusCode: 403` — a shape no service produces: `generate`
+  // resolves the project through `videoProjectService.getById`, which calls
+  // `forbidCrossAccount`, and that only ever throws `WrongAccount` or
+  // `AccountForbidden`. Asserting the status alone let the two collapse into one.
+  it("offers a switch for a project in the caller's OTHER channel", async () => {
+    // HARM PREVENTED: generating hooks against a project bookmarked from the
+    // user's other channel must offer "Switch to «Finance»", not eject them from
+    // the channel they are standing in.
+    mockHooksService.generate.mockRejectedValueOnce(
+      WrongAccount({ accountId: OTHER_ACCOUNT_ID, displayName: "Finance Channel" })
+    );
 
     const res = await request(server())
       .post("/v1/hooks/generate")
       .set(...AUTH_HEADER)
-      .send({ videoProjectId: "someone-elses-project", script: "s" });
+      .send({ videoProjectId: "project-in-my-other-channel", script: "s" });
 
     expect(res.status).toBe(403);
+    expect(res.body.code).toBe("wrong_account");
+    expect(res.body.detail).toMatchObject({ accountId: OTHER_ACCOUNT_ID, displayName: "Finance Channel" });
+  });
+
+  it("ejects for a project in a channel the caller is not a member of", async () => {
+    mockHooksService.generate.mockRejectedValueOnce(AccountForbidden());
+
+    const res = await request(server())
+      .post("/v1/hooks/generate")
+      .set(...AUTH_HEADER)
+      .send({ videoProjectId: "a-strangers-project", script: "s" });
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("account_forbidden");
+    // Nothing about a channel the caller has no membership in is disclosed.
+    expect(res.body.detail).toBeUndefined();
   });
 });
 
@@ -156,7 +207,7 @@ describe("POST /v1/hooks/generate", () => {
 // ---------------------------------------------------------------------------
 
 describe("POST /v1/hooks/:hooksId/select", () => {
-  it("returns 200 on success", async () => {
+  it("echoes back the PROJECT id, the batch id and the chosen index", async () => {
     mockHooksService.select.mockResolvedValueOnce({ id: "proj-1", hooksId: "hooks-1", selectedHookIndex: 2 });
 
     const res = await request(server())
@@ -165,7 +216,11 @@ describe("POST /v1/hooks/:hooksId/select", () => {
       .send({ hookIndex: 2 });
 
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ success: true, data: expect.any(Object) });
+    // `id` here is the PROJECT (VideoProjectService.setSelectedHook), which is
+    // what the pipeline view re-reads — not the hooks batch. Dropping
+    // `selectedHookIndex` would leave the UI showing no hook selected right after
+    // the user selected one.
+    expect(res.body.data).toEqual({ id: "proj-1", hooksId: "hooks-1", selectedHookIndex: 2 });
   });
 
   it("returns 400 when hookIndex is missing", async () => {
@@ -194,11 +249,11 @@ describe("POST /v1/hooks/:hooksId/select", () => {
       testOwner("user-1"), "hooks-1", 1);
   });
 
-  it("returns 404 for another user's hooks batch (never that user's data)", async () => {
-    mockHooksService.select.mockRejectedValueOnce(makeServiceError("Hooks batch not found", 404));
+  it("returns 404 for a hooks batch that does not exist", async () => {
+    mockHooksService.select.mockRejectedValueOnce(NotFound("Hooks batch not found"));
 
     const res = await request(server())
-      .post("/v1/hooks/someone-elses-batch/select")
+      .post("/v1/hooks/no-such-batch/select")
       .set(...AUTH_HEADER)
       .send({ hookIndex: 0 });
 
@@ -212,7 +267,11 @@ describe("POST /v1/hooks/:hooksId/select", () => {
 
 describe("POST /v1/hooks/:hooksId/regenerate", () => {
   it("returns 200 with the regenerated batch", async () => {
-    mockHooksService.regenerate.mockResolvedValueOnce({ id: "hooks-1", hooks: ["a", "b", "c", "d", "e"] });
+    mockHooksService.regenerate.mockResolvedValueOnce({
+      id: "hooks-1",
+      hooks: FIVE_HOOKS,
+      hookFeedback: {},
+    });
 
     const res = await request(server())
       .post("/v1/hooks/hooks-1/regenerate")
@@ -220,11 +279,15 @@ describe("POST /v1/hooks/:hooksId/regenerate", () => {
       .send({ script: "updated script" });
 
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ success: true, data: expect.any(Object) });
+    expect(res.body.data).toEqual({ id: "hooks-1", hooks: FIVE_HOOKS, hookFeedback: {} });
+    // Regeneration clears per-hook feedback, because the hooks it referred to are
+    // gone. A response that carried the old feedback would show likes against
+    // hooks the creator has never seen.
+    expect(res.body.data.hookFeedback).toEqual({});
   });
 
   it("derives the owning project server-side — a body-supplied videoProjectId is not read", async () => {
-    mockHooksService.regenerate.mockResolvedValueOnce({ id: "hooks-1", hooks: [] });
+    mockHooksService.regenerate.mockResolvedValueOnce({ id: "hooks-1", hooks: FIVE_HOOKS, hookFeedback: {} });
 
     await request(server())
       .post("/v1/hooks/hooks-1/regenerate")
@@ -236,7 +299,7 @@ describe("POST /v1/hooks/:hooksId/regenerate", () => {
   });
 
   it("returns 404 for a nonexistent hooks batch", async () => {
-    mockHooksService.regenerate.mockRejectedValueOnce(makeServiceError("Hooks batch not found", 404));
+    mockHooksService.regenerate.mockRejectedValueOnce(NotFound("Hooks batch not found"));
 
     const res = await request(server())
       .post("/v1/hooks/missing/regenerate")
@@ -253,18 +316,18 @@ describe("POST /v1/hooks/:hooksId/regenerate", () => {
 
 describe("GET /v1/hooks/:hooksId/export", () => {
   it("returns 200 with exported text", async () => {
-    mockHooksService.exportHooks.mockResolvedValueOnce({ text: "1. hook one", count: 5 });
+    mockHooksService.exportHooks.mockResolvedValueOnce({ text: `Hooks\n1. ${FIVE_HOOKS[0]}`, count: 5 });
 
     const res = await request(server()).get("/v1/hooks/hooks-1/export").set(...AUTH_HEADER);
 
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ success: true, data: { text: expect.any(String), count: 5 } });
+    expect(res.body.data).toEqual({ text: expect.stringContaining(FIVE_HOOKS[0]), count: 5 });
   });
 
-  it("returns 404 for another user's hooks batch", async () => {
-    mockHooksService.exportHooks.mockRejectedValueOnce(makeServiceError("Hooks batch not found", 404));
+  it("returns 404 for a hooks batch that does not exist", async () => {
+    mockHooksService.exportHooks.mockRejectedValueOnce(NotFound("Hooks batch not found"));
 
-    const res = await request(server()).get("/v1/hooks/someone-elses-batch/export").set(...AUTH_HEADER);
+    const res = await request(server()).get("/v1/hooks/no-such-batch/export").set(...AUTH_HEADER);
 
     expect(res.status).toBe(404);
   });
@@ -276,21 +339,43 @@ describe("GET /v1/hooks/:hooksId/export", () => {
 
 describe("GET /v1/hooks/:hooksId", () => {
   it("returns 200 with the saved batch", async () => {
-    mockHooksService.getById.mockResolvedValueOnce({ id: "hooks-1", hooks: ["a", "b", "c", "d", "e"] });
+    mockHooksService.getById.mockResolvedValueOnce(hooksBatch({ hookFeedback: { "0": "like" } }));
 
     const res = await request(server()).get("/v1/hooks/hooks-1").set(...AUTH_HEADER);
 
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ success: true, data: expect.any(Object) });
+    // This read exists so a refresh can show the hook itself, not just "Hook 3
+    // was selected" — so the hooks and the stored feedback are the contract.
+    expect(res.body.data).toMatchObject({
+      id: "hooks-1",
+      videoProjectId: "proj-1",
+      hooks: FIVE_HOOKS,
+      hookFeedback: { "0": "like" },
+    });
   });
 
-  it("returns 404 for another user's hooks batch (never that user's data)", async () => {
-    mockHooksService.getById.mockRejectedValueOnce(makeServiceError("Hooks batch not found", 404));
+  it("returns 404 for a hooks batch that does not exist", async () => {
+    mockHooksService.getById.mockRejectedValueOnce(NotFound("Hooks batch not found"));
 
-    const res = await request(server()).get("/v1/hooks/someone-elses-batch").set(...AUTH_HEADER);
+    const res = await request(server()).get("/v1/hooks/no-such-batch").set(...AUTH_HEADER);
 
     expect(res.status).toBe(404);
     expect(res.body.success).toBe(false);
+  });
+
+  // The read is where "offer the switch" matters most: this is the request a
+  // bookmarked link makes. Answering it without `wrong_account` is what renders a
+  // batch that is one channel-switch away as "not found, it may have been deleted".
+  it("names the owning channel when the batch lives in the caller's other channel", async () => {
+    mockHooksService.getById.mockRejectedValueOnce(
+      WrongAccount({ accountId: OTHER_ACCOUNT_ID, displayName: "Finance Channel" })
+    );
+
+    const res = await request(server()).get("/v1/hooks/batch-in-my-other-channel").set(...AUTH_HEADER);
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("wrong_account");
+    expect(res.body.detail).toMatchObject({ accountId: OTHER_ACCOUNT_ID, displayName: "Finance Channel" });
   });
 });
 

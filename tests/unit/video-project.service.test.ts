@@ -107,6 +107,9 @@ function makeMockRepo(): jest.Mocked<VideoProjectRepository> {
     findByIdeaId: jest.fn(),
     list: jest.fn(),
     update: jest.fn(),
+    // Defaults to "applied". The repair is conditional now: the real method declines
+    // when the statuses changed under the read, which the decline test below drives.
+    updateIfStatusesUnchanged: jest.fn().mockResolvedValue(true),
   } as unknown as jest.Mocked<VideoProjectRepository>;
 }
 
@@ -390,7 +393,7 @@ describe("VideoProjectService", () => {
   // --------------------------------------------------------------------------
 
   describe("getReconciledById(projectId, userId)", () => {
-    it("promotes a not_started/in_progress step to completed when its resource is linked, without writing", async () => {
+    it("promotes a not_started/in_progress step to completed when its resource is linked, and persists repaired status", async () => {
       repo.findById.mockResolvedValue(
         makeProject({
           scriptId: "script-1",
@@ -411,7 +414,89 @@ describe("VideoProjectService", () => {
       expect(result.pipeline.hooks.status).toBe("completed"); // selectedHookIndex set
       expect(result.pipeline.packaging.status).toBe("not_started"); // no packagingId
       expect(result.recommendedNextStep).toBe("title"); // first non-completed (title precedes packaging)
-      expect(repo.update).not.toHaveBeenCalled(); // computed, never persisted
+      // Conditional now, and the statuses it was computed FROM travel with it, so the
+      // repository can refuse a repair built on a read that has since been overtaken.
+      expect(repo.updateIfStatusesUnchanged).toHaveBeenCalledWith(
+        "proj-1",
+        expect.objectContaining({ script: "in_progress", hooks: "not_started" }),
+        expect.objectContaining({ "pipeline.script.status": "completed", "pipeline.hooks.status": "completed" })
+      );
+      expect(repo.update).not.toHaveBeenCalled();
+    });
+
+    it("serves the FRESH view when its repair is refused, instead of its own stale computation", async () => {
+      /**
+       * The race this exists for: a `markStale("script")` landing between the read and
+       * the write. The repair was unconditional and last-writer-wins, so it reset
+       * `pipeline.hooks.status` to "completed" while the concurrent write's
+       * `staleReason` survived — a project that is completed AND carries a stale
+       * reason, so the user ships packaging built from a script they regenerated.
+       *
+       * The repository now refuses a repair computed from an overtaken read. When it
+       * does, the caller must NOT return the view it computed: that is precisely the
+       * stale answer. It re-reads.
+       */
+      repo.updateIfStatusesUnchanged = jest.fn().mockResolvedValue(false);
+      const fresh = makeProject({
+        scriptId: "s-1",
+        selectedHookIndex: 0,
+        pipeline: {
+          research: { status: "completed", startedAt: null, completedAt: null },
+          script: { status: "stale", startedAt: null, completedAt: null },
+          hooks: { status: "stale", startedAt: null, completedAt: null },
+          title: { status: "not_started", startedAt: null, completedAt: null },
+          packaging: { status: "not_started", startedAt: null, completedAt: null },
+        },
+      });
+      // First read: the pre-race document. Second read: after the concurrent markStale.
+      repo.findById = jest.fn()
+        .mockResolvedValueOnce(makeProject({
+          scriptId: "s-1",
+          selectedHookIndex: 0,
+          pipeline: {
+            research: { status: "completed", startedAt: null, completedAt: null },
+            script: { status: "in_progress", startedAt: null, completedAt: null },
+            hooks: { status: "not_started", startedAt: null, completedAt: null },
+            title: { status: "not_started", startedAt: null, completedAt: null },
+            packaging: { status: "not_started", startedAt: null, completedAt: null },
+          },
+        }))
+        .mockResolvedValue(fresh);
+
+      const result = await service.getReconciledById("proj-1", testOwner("user-1"));
+
+      // The stale marking survives — it is NOT promoted back to completed.
+      expect(result.pipeline.script.status).toBe("stale");
+      expect(result.pipeline.hooks.status).toBe("stale");
+      expect(repo.findById).toHaveBeenCalledTimes(2);
+    });
+
+    it("shows a viewer the repaired view WITHOUT writing it", async () => {
+      // `GET /v1/video-projects/:id` has no role gate — reads are open to every
+      // member — so this repair was a read-only role mutating channel data, which
+      // contradicts the viewer contract and "GET has no side effects". It is also
+      // a last-writer-wins update, so it could clobber a concurrent change.
+      repo.findById.mockResolvedValue(
+        makeProject({
+          scriptId: "script-1",
+          selectedHookIndex: 2,
+          pipeline: {
+            research: { status: "completed", startedAt: null, completedAt: null },
+            script: { status: "in_progress", startedAt: null, completedAt: null },
+            hooks: { status: "not_started", startedAt: null, completedAt: null },
+            title: { status: "not_started", startedAt: null, completedAt: null },
+            packaging: { status: "not_started", startedAt: null, completedAt: null },
+          },
+        })
+      );
+
+      const result = await service.getReconciledById("proj-1", testOwner("user-1"), false);
+
+      // The viewer still sees the truth...
+      expect(result.pipeline.script.status).toBe("completed");
+      expect(result.pipeline.hooks.status).toBe("completed");
+      // ...the repair just waits for someone allowed to write.
+      expect(repo.update).not.toHaveBeenCalled();
     });
 
     it("never promotes a stale step", async () => {
@@ -434,7 +519,11 @@ describe("VideoProjectService", () => {
       expect(result.pipeline.hooks.status).toBe("stale");
       expect(result.overallStatus).toBe("stale");
       expect(result.recommendedNextStep).toBe("hooks"); // stale surfaces as next action
-      expect(repo.update).not.toHaveBeenCalled();
+      expect(repo.updateIfStatusesUnchanged).toHaveBeenCalledWith(
+        "proj-1",
+        expect.any(Object),
+        { overallStatus: "stale" }
+      );
     });
 
     it("recommendedNextStep is null when every step is completed", async () => {
@@ -621,7 +710,7 @@ describe("VideoProjectService", () => {
       );
     });
 
-    it("returns idempotently without writing when already deleted", async () => {
+    it("returns idempotently WITHOUT writing when already deleted", async () => {
       repo.findById.mockResolvedValue(makeProject({ isDeleted: true }));
 
       await service.delete("proj-1", testOwner("user-1"));
@@ -1162,6 +1251,7 @@ describe("VideoProjectService", () => {
       expect(repo.update).toHaveBeenCalledWith("proj-1", {
         "pipeline.title.status": "in_progress",
         "pipeline.title.completedAt": null,
+        overallStatus: "in_progress",
       });
     });
 
@@ -1276,7 +1366,7 @@ describe("VideoProjectService", () => {
       );
     });
 
-    it("returns without writing when no steps need to be staled", async () => {
+    it("returns WITHOUT writing when no steps need to be staled", async () => {
       repo.findById.mockResolvedValue(
         makeProject({
           pipeline: {

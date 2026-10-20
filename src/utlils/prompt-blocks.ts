@@ -6,24 +6,13 @@ import { IChannelContext, VideoFormat } from "../types/routes/context.js";
  * {placeholder} is ever left unreplaced in an assembled prompt.
  */
 
-/**
- * Fill `{placeholder}` slots with untrusted values (scripts, titles, niche,
- * research signals). Uses split/join instead of String.replace because the
- * replacement form of `.replace()` treats `$&`, `$'`, `` $` ``, and `$$` in the
- * VALUE as special patterns — a user script containing e.g. `$&` would silently
- * corrupt the prompt. split/join inserts every value verbatim and replaces all
- * occurrences of each token (subsuming the old `/{token}/g` sites).
- * Constant, trusted substitutions (format directives) may stay on plain
- * `.replace()`; use this whenever the value carries user/external content.
- */
+/** Insert each value once, without interpreting dollar signs or placeholders inside it. */
 export const fillTemplate = (
   template: string,
   values: Record<string, string>
-): string =>
-  Object.entries(values).reduce(
-    (acc, [token, value]) => acc.split(token).join(value),
-    template
-  );
+): string => template.replace(/\{[a-zA-Z][a-zA-Z0-9]*\}/g, token =>
+  Object.prototype.hasOwnProperty.call(values, token) ? values[token] : token
+);
 
 export const resolveVideoFormat = (value: unknown): VideoFormat =>
   value === "faceless" ? "faceless" : "talking_head";
@@ -36,7 +25,7 @@ export const SCRIPT_FORMAT_STYLE: Record<VideoFormat, string> = {
 
 export const THUMBNAIL_FORMAT_DIRECTIVE: Record<VideoFormat, string> = {
   talking_head:
-    "- Feature the creator where impactful — expressive close-up faces with strong emotion perform well for talking-head channels; combine with text, graphics, and scene imagery",
+    "- Use a genuine supplied creator image only when relevant; if unavailable, offer an object or diagram composition. Never invent a face or reaction",
   faceless:
     "- Do not suggest faces, people, or facial expressions — these are faceless videos; use text, graphics, icons, and scene imagery",
 };
@@ -47,12 +36,14 @@ export const buildCreatorContextBlock = (
   if (!channel) return "";
   const lines: string[] = [];
   if (channel.brandName) lines.push(`Brand: ${channel.brandName}`);
+  if (channel.format) lines.push(`Video format: ${channel.format}`);
+  if (channel.channelDescription) lines.push(`Channel description: ${channel.channelDescription}`);
   if (channel.niche) lines.push(`Niche: ${channel.niche}`);
   if (channel.targetAudience) {
     lines.push(`Target audience: ${channel.targetAudience}`);
   }
   if (channel.topTitles?.length) {
-    lines.push("Creator's top-performing titles:");
+    lines.push("Creator's reference titles (voice and topic context, not evidence):");
     channel.topTitles.slice(0, 5).forEach((title) => lines.push(`- ${title}`));
   }
   if (lines.length === 0) return "";

@@ -1,3 +1,4 @@
+import { publicProject } from "../utlils/public-response.js";
 import { asyncHandler } from "../middleware/async_handler.js";
 import { ownerOf } from "../utlils/content.js";
 import { BadRequest } from "../utlils/errors.js";
@@ -19,7 +20,7 @@ class VideoProjectController {
                 ideaId,
                 title,
             });
-            res.sendSuccess({ data, message: "Video project created successfully", statusCode: 201 });
+            res.sendSuccess({ data: publicProject(data), message: "Video project created successfully", statusCode: 201 });
         });
         this.list = asyncHandler(async (req, res) => {
             const { status, limit, cursor } = req.query;
@@ -28,12 +29,15 @@ class VideoProjectController {
                 limit: parseListLimit(limit, PROJECTS_PAGE),
                 cursor,
             });
-            res.sendSuccess({ data, message: "Video projects retrieved successfully" });
+            res.sendSuccess({ data: { ...data, projects: data.projects.map(publicProject) }, message: "Video projects retrieved successfully" });
         });
         this.getById = asyncHandler(async (req, res) => {
             const { projectId } = req.params;
-            const data = await this.service.getReconciledById(projectId, ownerOf(req));
-            res.sendSuccess({ data, message: "Video project retrieved successfully" });
+            // A viewer reads the repaired view but does not persist it — see
+            // `getReconciledById`. This route has no role gate by design (reads are open
+            // to every member), so the distinction has to be made here.
+            const data = await this.service.getReconciledById(projectId, ownerOf(req), req.role !== "viewer");
+            res.sendSuccess({ data: publicProject(data), message: "Video project retrieved successfully" });
         });
         this.update = asyncHandler(async (req, res) => {
             const { projectId } = req.params;
@@ -44,7 +48,7 @@ class VideoProjectController {
         this.delete = asyncHandler(async (req, res) => {
             const { projectId } = req.params;
             const data = await this.service.delete(projectId, ownerOf(req));
-            res.sendSuccess({ data, message: "Video project deleted successfully" });
+            res.sendSuccess({ data: { id: data.id, isDeleted: data.isDeleted }, message: "Video project deleted successfully" });
         });
         // startStep has no route: the generation endpoints (script stream, hooks
         // generate, packaging save) own the in_progress transition server-side.

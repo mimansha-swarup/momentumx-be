@@ -1,3 +1,5 @@
+import BillingRepository from "../../src/repository/billing.repository";
+import { unmeteredSteps } from "../helpers/step-runner";
 /**
  * Phase 06's reason for existing: one channel's data must never reach another.
  *
@@ -141,8 +143,8 @@ const wire = () => {
   return {
     projects,
     context,
-    content: new ContentService(contentRepo, userRepo, projects, accounts()),
-    packaging: new PackagingService(packagingRepo, projects, context, accounts()),
+    content: new ContentService(contentRepo, userRepo, projects, accounts(), undefined, unmeteredSteps),
+    packaging: new PackagingService(packagingRepo, projects, context, accounts(), undefined, unmeteredSteps),
     hooks: new HooksService(hooksRepo, projects, context, {
       run: async (_s: unknown, g: () => unknown) => g(),
     } as never,
@@ -154,7 +156,31 @@ const wire = () => {
 // A cross-channel refusal by ONE user who owns both channels. The `code` is the
 // load-bearing half: without it the client cannot tell this from "you are not in
 // this channel" and ejects the user instead of offering the switch.
-const forbidden = { statusCode: 403, code: "wrong_account" };
+//
+// `detail` is the other half, and it was missing from this matcher. `wrong_account`
+// exists so the client can render "Switch to «Channel B»?" — it needs the id to
+// switch TO and the name to put on the button, and neither can be invented on the
+// frontend. A matcher that stopped at the code would have passed a
+// `WrongAccount({})`, which renders a switch offer naming a channel the user has
+// never heard of (or an empty one).
+//
+// Every refusal below is `inA` reaching for a `*-b` document, so the owning channel
+// is always ACC_B.
+const forbidden = {
+  statusCode: 403,
+  code: "wrong_account",
+  detail: { accountId: ACC_B, displayName: "Channel B" },
+};
+
+/**
+ * The OTHER 403: the caller is not a member of the owning channel at all.
+ *
+ * Kept distinct on purpose. `account_forbidden` tells the client to clear the
+ * active channel and show the list; answering it where `wrong_account` belongs
+ * ejects a member, and answering `wrong_account` here offers a switch into a
+ * channel the caller cannot enter — and leaks its display name doing so.
+ */
+const ejected = { statusCode: 403, code: "account_forbidden", detail: undefined };
 
 describe("listing one channel never returns the same user's other channel", () => {
   const content = () => new ContentRepository();
@@ -236,7 +262,7 @@ describe("reaching another channel's document by id is refused", () => {
   });
 
   it("a project, on delete", async () => {
-    await expect(vpService().delete("proj-b", inA)).rejects.toMatchObject({ statusCode: 403 });
+    await expect(vpService().delete("proj-b", inA)).rejects.toMatchObject(forbidden);
     // And it stayed alive.
     expect(db.all("videoProjects").find((p) => p.id === "proj-b")!.isDeleted).toBe(false);
   });
@@ -250,9 +276,7 @@ describe("reaching another channel's document by id is refused", () => {
   });
 
   it("a project, on a pipeline step transition", async () => {
-    await expect(vpService().completeStep("proj-b", "hooks", inA)).rejects.toMatchObject({
-      statusCode: 403,
-    });
+    await expect(vpService().completeStep("proj-b", "hooks", inA)).rejects.toMatchObject(forbidden);
   });
 
   it("a hooks batch", async () => {
@@ -264,9 +288,9 @@ describe("reaching another channel's document by id is refused", () => {
       accounts()
     );
 
-    await expect(hooks.getById(inA, "hooks-b")).rejects.toMatchObject({ statusCode: 403 });
-    await expect(hooks.exportHooks(inA, "hooks-b")).rejects.toMatchObject({ statusCode: 403 });
-    await expect(hooks.select(inA, "hooks-b", 0)).rejects.toMatchObject({ statusCode: 403 });
+    await expect(hooks.getById(inA, "hooks-b")).rejects.toMatchObject(forbidden);
+    await expect(hooks.exportHooks(inA, "hooks-b")).rejects.toMatchObject(forbidden);
+    await expect(hooks.select(inA, "hooks-b", 0)).rejects.toMatchObject(forbidden);
   });
 
   // The body-supplied-id case the route list alone misses: the project is yours,
@@ -274,13 +298,13 @@ describe("reaching another channel's document by id is refused", () => {
   it("a foreign resource id linked onto a project you do own", async () => {
     await expect(
       vpService().linkResource("proj-a", "hooks", "hooks-b", inA)
-    ).rejects.toMatchObject({ statusCode: 403 });
+    ).rejects.toMatchObject(forbidden);
 
     expect(db.all("videoProjects").find((p) => p.id === "proj-a")!.hooksId).toBeUndefined();
   });
 
   it("a foreign idea used to create a project", async () => {
-    await expect(vpService().create(inA, "idea-b")).rejects.toMatchObject({ statusCode: 403 });
+    await expect(vpService().create(inA, "idea-b")).rejects.toMatchObject(forbidden);
   });
 });
 
@@ -315,12 +339,18 @@ describe("a co-member of the channel is allowed, even on documents they did not 
     expect(ids(rows)).toEqual(["idea-a", "idea-a2"]);
   });
 
-  it("is still refused in a channel they are not a member of", async () => {
+  it("is still refused in a channel they are not a member of — and ejected, not offered a switch", async () => {
     // Membership itself is accountMiddleware's job — this asserts the layer below
     // agrees: the account on the request is the only thing that decides.
+    //
+    // And it asserts WHICH refusal. `uidMate` is a member of A only, so channel B
+    // is not a switch target: `forbidCrossAccount` must answer `account_forbidden`
+    // and disclose nothing about B. Offering `wrong_account` here would put a
+    // "Switch to «Channel B»" button in front of someone who cannot enter it, and
+    // leak that channel's name to them.
     await expect(
       vpService().getById("proj-b", { userId: uidMate, accountId: ACC_A })
-    ).rejects.toMatchObject({ statusCode: 403 });
+    ).rejects.toMatchObject(ejected);
   });
 });
 
@@ -337,18 +367,23 @@ describe("the account is what decides, not the author", () => {
       accounts()
     );
 
-    await expect(service.getById("proj-b", inA)).rejects.toMatchObject({ statusCode: 403 });
+    await expect(service.getById("proj-b", inA)).rejects.toMatchObject(forbidden);
     await expect(service.getById("proj-b", inB)).resolves.toMatchObject({ id: "proj-b" });
   });
 
   it("refuses a step lock taken from the wrong channel, inside the transaction", async () => {
-    // acquireStep re-checks ownership inside its own transaction, because a check
-    // performed outside it guarantees nothing about the write.
-    const repo = new VideoProjectRepository();
-
+    // BOTH channels are seeded, because this file's premise is that one person owns
+    // both. Only ACC_A was, so `reserve` could not find the owning channel and fell
+    // through to `account_forbidden` — a fixture artefact that contradicted the
+    // premise and, asserted as a bare 403, read as if it were the intended answer.
+    // The intent is `wrong_account`: the actor IS a member of the project's channel.
+    db.seed("accounts", [
+      { id: ACC_A, displayName: "Channel A", billingOwnerUid: uidOwner, members: { [uidOwner]: { role: "owner" } } },
+      { id: ACC_B, displayName: "Channel B", billingOwnerUid: uidOwner, members: { [uidOwner]: { role: "owner" } } },
+    ]);
     await expect(
-      repo.acquireStep("proj-b", "hooks", inA, { requires: [], lockMs: 1000 })
-    ).rejects.toMatchObject({ statusCode: 403 });
+      new BillingRepository().reserve({ actor: inA, kind: "hooks", projectId: "proj-b" })
+    ).rejects.toMatchObject(forbidden);
   });
 });
 
